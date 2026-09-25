@@ -190,6 +190,7 @@ def _compact(value: Any, unit: str) -> str:
 def decorate_edition(report: dict[str, Any]) -> None:
     """Only saved fields feed historical visuals; page reads require no new quotes."""
     from runner_web.report_company import price_chart
+    from runner_web.report_narrative import build_narrative
 
     post = report["report_type"] == "post_market"
     for leader in report["leaders"]:
@@ -253,3 +254,4 @@ def decorate_edition(report: dict[str, Any]) -> None:
         ),
         "breadth_total": int(breadth["candidates"]) if segments else None,
     }
+    report["narrative"] = build_narrative(report)

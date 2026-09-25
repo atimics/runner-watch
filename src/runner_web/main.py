@@ -2390,7 +2390,14 @@ def _generate_market_report_commentary(request: dict[str, Any]) -> dict[str, Any
             else "The session is finished: review how the watch board and the saved Flash "
             "targets actually scored. Name the hits, the misses, and what the day taught."
         )
-        + " Then write one short comment for each supplied voice, in that voice's focus. "
+        + " Write an engaging market column with a concrete headline and three short paragraphs. "
+        "Connect three to five supplied companies when available: lead with the biggest story, "
+        "bring in a contrasting move or volume story, and end with the next question to watch. "
+        "Use blank lines between paragraphs. Describe price and volume as observations. "
+        "Use supplied evidence for each claim and reserve dramatic words such as blockbuster "
+        "for moves of at least 15 percent with relative volume of at least 3. "
+        "Keep company events and causes tied to explicit supplied evidence. "
+        "Then write one short comment for each supplied voice, in that voice's focus. "
         "Return one JSON object with an analysis object (headline, narrative, points) and a "
         "comments array. Each comment entry needs voice_id and comment. Keep the narrative "
         "under 900 characters and every comment under 240 characters. Give at most four "
@@ -3403,8 +3410,15 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
     )
 
     pick_label = "COMPANY IN FOCUS" if pick and pick.get("editorial") else "WATCH LEADER"
-    draw.text((95, 152), pick_label if pick else "MARKET TURN", "#9fb2a8", font=font(21, True))
-    if pick:
+    narrative = report.get("narrative") or {}
+    if narrative.get("stories"):
+        draw.text((95, 152), "THE SESSION STORY", "#9fb2a8", font=font(21, True))
+        headline_lines = textwrap.wrap(_card_text(narrative["headline"]), width=38)[:3]
+        draw.multiline_text(
+            (95, 187), "\n".join(headline_lines), fill="#f4f8f6", font=font(46, True), spacing=6
+        )
+    elif pick:
+        draw.text((95, 152), pick_label, "#9fb2a8", font=font(21, True))
         draw.text((95, 182), f"${pick['ticker']}", "#f4f8f6", font=font(76, True))
         _draw_pick_verdict(draw, pick, is_post)
         draw.text((95, 282), _card_text(_pick_line(pick, is_post)), "#cfe0d7", font=font(28))
@@ -3413,7 +3427,9 @@ def _market_report_card_png(report: dict[str, Any]) -> bytes:
 
     analysis = report.get("analysis") or {}
     lead = _card_text(
-        pick["reason"]
+        narrative["intro"]
+        if narrative.get("stories")
+        else pick["reason"]
         if pick and pick.get("editorial")
         else analysis.get("headline") or report["summary"]
     )
@@ -13146,10 +13162,12 @@ def _record_channel_post(
 
 
 def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, Any]]:
+    from runner_web.report_narrative import build_narrative
+
     rows = database.execute(
         """
         SELECT r.id,r.report_day,r.report_type,r.headline,r.summary,r.leaders_json,
-               r.spotlight_json,r.created_at
+               r.spotlight_json,r.metrics_json,r.as_of,r.created_at
         FROM market_session_reports r
         LEFT JOIN telegram_channel_posts p
           ON p.kind='market_report' AND p.subject=r.id
@@ -13175,6 +13193,12 @@ def _pending_market_report_rows(database: Any, *, limit: int) -> list[dict[str, 
         except (TypeError, ValueError):
             spotlight = None
         item["spotlight"] = spotlight if isinstance(spotlight, dict) else None
+        try:
+            metrics = json.loads(str(item.pop("metrics_json", None) or "{}"))
+        except (TypeError, ValueError):
+            metrics = {}
+        item["metrics"] = metrics if isinstance(metrics, dict) else {}
+        item["narrative"] = build_narrative(item)
         if item["spotlight"] and report_type == "post_market":
             item["headline"] = f"{item['spotlight']['ticker']} is the company in focus"
         item["label"] = REPORT_LABELS.get(report_type, report_type.replace("_", " "))
@@ -13338,6 +13362,7 @@ def _activity_payload(
                 "report_type": str(report.get("report_type") or ""),
                 "leaders": list(report.get("leaders") or []),
                 "spotlight": report.get("spotlight"),
+                "narrative": report.get("narrative"),
                 "summary": report.get("summary"),
             }
         )
