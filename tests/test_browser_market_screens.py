@@ -78,7 +78,10 @@ def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, sco
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing("sports", [event]))
     expect(page.locator(".sports-team.is-highlighted")).to_have_text("NYK")
-    expect(page.locator(".prediction-glyph")).to_have_attribute("aria-label", "BOS: RATi 60.0%")
+    expect(page.locator(".prediction-glyph [role=img]")).to_have_attribute(
+        "aria-label",
+        re.compile(r"BOS: sentiment pending a fresh model and comparable market price"),
+    )
     expect(page.locator(".ticker-value strong")).to_have_text(f"{scores[0]} – {scores[1]}")
     identity = page.locator(".ticker-name").bounding_box()
     score = page.locator(".ticker-value").bounding_box()

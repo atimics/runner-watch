@@ -3767,6 +3767,12 @@ def _migration_089_prediction_tickers(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_090_sports_market_activity(db: DatabaseConnection) -> None:
+    _ensure_column(
+        db, "sports_prediction_market_snapshots", "metadata_json TEXT NOT NULL DEFAULT '{}'"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3863,6 +3869,7 @@ MIGRATIONS = (
     ),
     Migration(88, "golf_match_results", _migration_088_golf_match_results),
     Migration(89, "prediction_tickers", _migration_089_prediction_tickers),
+    Migration(90, "sports_market_activity", _migration_090_sports_market_activity),
 )
 
 

@@ -1,3 +1,4 @@
+{% from '_sports_indicator.html' import sports_indicator_legend %}
 {% from '_stock_indicator.html' import indicator_glyph, verified_check, indicator_legend, sentiment_reading %}
 {% macro score_pie(item) -%}
 {%- if item.indicator is defined -%}
@@ -51,7 +52,7 @@
   <link rel="stylesheet" href="/static/market-screen.css?v={{ static_version }}">
   {% if screen is defined and screen.market in ['memecoins', 'sports'] %}<link rel="stylesheet" href="/static/market-anchor.css?v={{ static_version }}">{% endif %}
   {% if screen is defined and screen.market == 'sports' %}<link rel="stylesheet" href="/static/sports-row.css?v={{ static_version }}"><link rel="stylesheet" href="/static/prediction-ticker.css?v={{ static_version }}">{% endif %}
-  {% if screen is defined and screen.market in ["stocks", "memecoins"] %}<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">{% endif %}
+  {% if screen is defined and screen.market in ["stocks", "memecoins", "sports"] %}<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">{% endif %}
   {% block detail_head %}{% endblock %}
   <meta name="description" content="{% block screen_description %}{% if share %}{{ screen.item.subtitle }}{% endif %}{% endblock %}">
   {% if share %}<meta property="og:title" content="{{ share.title }}"><meta property="og:description" content="{{ share.summary }}"><meta property="og:image" content="{{ app_origin }}{{ share.card_path }}"><meta name="twitter:card" content="summary_large_image">{% endif %}
@@ -158,6 +159,7 @@
   {% endif %}
   {% endblock %}
   {% if screen is defined and screen.market in ["stocks", "memecoins"] and screen.kind != "detail" %}{{ indicator_legend(screen.market) }}{% endif %}
+  {% if screen is defined and screen.market == "sports" and screen.kind != "detail" %}{{ sports_indicator_legend() }}{% endif %}
   </main>
 </div>
 {% if user and flash_wallet %}{% include "_flash_release_modal.html" %}{% endif %}

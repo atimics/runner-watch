@@ -1,3 +1,4 @@
+{% from '_sports_indicator.html' import sports_indicator_reading %}
 {% from '_prediction_glyph.html' import prediction_glyph %}
 {% set ticker = screen.ticker %}
 {% set contract = ticker.contract %}
@@ -40,6 +41,7 @@
     {% for venue in selected.venues %}<tr><th scope="row">{% if venue.url %}<a href="{{ venue.url }}" target="_blank" rel="noopener noreferrer">{{ venue.label }} ↗</a>{% else %}{{ venue.label }}{% endif %}<small>{{ venue.basis }}{% if venue.spread_pct is not none and venue.spread_pct is defined %} · {{ venue.spread_pct }} pp spread{% endif %}</small></th><td>{{ venue.percent }}%</td><td>{{ '%+.1f'|format(venue.gap) ~ ' pp' if venue.gap is not none else venue.status }}</td><td>{{ venue.saved_label }}</td></tr>{% endfor %}
   </tbody></table></div>
   {% endif %}
+  {{ sports_indicator_reading(ticker.indicator) }}
   <details class="prediction-method"><summary>Model, data, and settlement</summary><p>{{ contract.method }}</p><p>{{ contract.rules }}</p><p>Model version: {{ contract.model_version }}. Gaps compare saved values before fees. A positive gap means RATi values this outcome more highly than the quoted market.</p>{% if screen.market_source %}<p>Source: {{ screen.market_source }}</p>{% endif %}
     {% if screen.item.matchup is defined and screen.item.matchup.forecast and screen.item.matchup.forecast.factors %}<dl class="prediction-factors">{% for factor in screen.item.matchup.forecast.factors %}<div><dt>{{ factor.label }} · {{ screen.item.matchup.forecast.team }}</dt><dd>{{ '%+.1f'|format(factor.value) }} pp</dd></div>{% endfor %}</dl>{% endif %}
     {% for venue in selected.venues if venue.rules %}<p><strong>{{ venue.label }} settlement</strong> {{ venue.rules }}</p>{% endfor %}

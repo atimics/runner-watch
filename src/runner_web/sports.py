@@ -2722,7 +2722,7 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
               ON latest.event_id=p.event_id AND latest.model_version=p.model_version
         )
         SELECT * FROM ranked
-        WHERE history_rank<=24
+        WHERE history_rank<=160
         ORDER BY event_id,observed_at DESC,id DESC
         """,
         parameters,
@@ -2743,7 +2743,7 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
             ) AS latest_rank FROM sports_prediction_market_snapshots q
             JOIN sports_events e ON e.id=q.event_id
             WHERE q.event_id IN ({placeholders}) AND q.observed_at<e.start_time
-        ) latest WHERE latest_rank=1""",
+        ) latest WHERE latest_rank<=160 ORDER BY observed_at,id""",
         parameters,
     ).fetchall()
     venues_by_event: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -2760,16 +2760,19 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
             FROM sports_news_articles n
             WHERE event_id IN ({placeholders})
         ) latest
-        WHERE latest_rank=1
+        WHERE latest_rank<=8
+        ORDER BY published_at DESC,id DESC
         """,
         parameters,
     ).fetchall()
     news_by_event: dict[str, tuple[int, dict[str, Any]]] = {}
+    news_history: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in news_rows:
         item = dict(row)
         count = int(item.pop("event_news_count"))
         item.pop("latest_rank", None)
-        news_by_event[str(item["event_id"])] = (count, item)
+        news_by_event.setdefault(str(item["event_id"]), (count, item))
+        news_history[str(item["event_id"])].append(item)
 
     promoted_rows = database.execute(
         f"""
@@ -2798,11 +2801,19 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
             has_bookmaker_rows=bool(event_bookmaker_rows),
         )
         event["prediction"] = prediction
-        event["prediction_markets"] = venues_by_event.get(event_id, [])
+        venue_history: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for venue in venues_by_event.get(event_id, []):
+            venue_history[venue["source"]].append(venue)
+        event["prediction_markets"] = [history[-1] for history in venue_history.values()]
+        event["prediction_market_history"] = dict(venue_history)
+        event["prediction_history"] = [
+            _prediction_item(row) for row in reversed(prediction_history.get(event_id, []))
+        ]
+        event["news"] = news_history.get(event_id, [])
         event["edge_history"] = _edge_sparkline_from_rows(
             event,
             prediction,
-            prediction_history.get(event_id, []),
+            prediction_history.get(event_id, [])[:24],
         )
         event["news_count"], event["latest_news"] = news_by_event.get(event_id, (0, None))
         event["was_promoted"] = event_id in promoted_ids
@@ -2895,7 +2906,7 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
             from runner_web.golf_markets import quote_history
 
             event["analysis"] = saved_cup_analysis()
-            event["contract_quotes"] = quote_history(event["id"], latest=True)
+            event["contract_quotes"] = quote_history(event["id"])
     return {
         "events": events,
         "sport": "golf",

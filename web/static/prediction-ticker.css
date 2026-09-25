@@ -6,11 +6,7 @@
 .tag-above,.tag-below,.tag-level,.tag-model,.tag-pending { background:transparent; border-color:currentColor; }
 .chip-above i,.chip-below i,.chip-level i,.chip-model i,.chip-pending i { background:currentColor; }
 .prediction-glyph { display:inline-flex; width:40px; height:40px; flex:none; }
-.prediction-glyph svg { width:100%; height:100%; }
-.prediction-glyph circle { fill:none; stroke-width:3; transform:rotate(-90deg); transform-origin:20px 20px; }
-.prediction-ring-track { stroke:var(--line); }
-.prediction-ring-model { stroke:var(--green); }
-.prediction-ring-market { stroke:var(--blue); }
+.prediction-glyph .indicator-glyph { margin:0; display:grid; place-items:center; }
 .anchor-sports .ticker:has(.sports-identity) { grid-template-columns:96px minmax(0,1fr) minmax(116px,max-content) 74px 20px; gap:18px; }
 .anchor-sports .sports-identity .sports-row-opinion { color:var(--soft); font-size:11px; line-height:1.5; white-space:normal; }
 .sports-row-opinion b { color:var(--green); font-size:13px; }
@@ -103,3 +99,9 @@
 @media (max-width:600px) { .cup-roster-grid { grid-template-columns:1fr; gap:12px; } }
 .prediction-outcomes a { min-width:0; max-width:100%; }
 .prediction-outcomes a span { overflow-wrap:anywhere; }
+
+.sports-indicator-reading dl { display:grid; gap:14px; }
+.sports-indicator-reading dt { color:var(--muted); font-size:11px; }
+.sports-indicator-reading dd { margin:4px 0 0; color:var(--text); }
+.sports-indicator-reading h3 { font-size:12px; margin:20px 0 8px; }
+.sports-indicator-reading li { color:var(--soft); line-height:1.7; }

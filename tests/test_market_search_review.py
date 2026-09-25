@@ -112,7 +112,9 @@ def test_sports_route_searches_full_names(board_context, monkeypatch, query):
 def test_sports_forecast_and_tag_name_the_same_outcome(board_context, side):
     response = main._simple_board(request(""), None, "sports", [game(side)], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    assert html.select_one(".prediction-glyph")["aria-label"] == "BOS: RATi 63.0%"
+    assert html.select_one(".prediction-glyph [role=img]")["aria-label"].startswith(
+        "BOS: sentiment pending a fresh model and comparable market price."
+    )
     assert html.select_one(".tag").get_text() == "MODEL"
     assert html.select_one(".tag")["title"] == ("BOS: saved model; comparable fresh prices pending")
 
@@ -120,7 +122,9 @@ def test_sports_forecast_and_tag_name_the_same_outcome(board_context, side):
 def test_selected_team_falls_back_to_full_name(board_context):
     response = main._simple_board(request(""), None, "sports", [game(home_abbreviation="")], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    assert html.select_one(".prediction-glyph")["aria-label"] == ("Boston Celtics: RATi 63.0%")
+    assert html.select_one(".prediction-glyph [role=img]")["aria-label"].startswith(
+        "Boston Celtics: sentiment pending a fresh model and comparable market price."
+    )
     assert [team.get_text() for team in html.select(".sports-team")] == ["LAL", "Boston Celtics"]
 
 
