@@ -259,6 +259,8 @@
     put('[data-value]', next.item.value);
     put('[data-change]', next.item.change);
     put('[data-time]', next.item.time);
+    const quoteScope = document.querySelector('.asset-quote .quote-scope');
+    if (quoteScope && next.market === 'sports') quoteScope.hidden = next.item.time === next.item.change;
     const assessment = document.querySelector('[data-assessment-state]');
     if (assessment) {
       put('[data-assessment-tag]', next.item.tag);
