@@ -101,6 +101,11 @@ strength is its player average. Its share of the two sides' strength is the win
 chance conditional on a decisive match. A fixed 12% tie assumption leaves 88%
 for the two wins. A win adds one point and a tie adds half a point.
 
+Match input comes from ESPN's structured leaderboard feed, which supplies team
+points, player pairings, and completed results in one response. Production checks
+found a different page format in ESPN's HTML response, so the forecast uses the
+same data feed as the scoring view.
+
 An exact probability calculation combines the remaining matches with the earned
 team points. Announced matches use their named players. Future pairings use the
 roster averages. The output includes USA win, International win, a 15–15 tie, and

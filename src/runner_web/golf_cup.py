@@ -18,7 +18,9 @@ from runner_web.ingestion import record_source_fetch
 
 EVENT_ID = "golf:401824815"
 MODEL_VERSION = "cup-ranking-v1"
-MATCH_URL = "https://www.espn.com/golf/leaderboard?tournamentId=401824815"
+MATCH_URL = (
+    "https://site.web.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga&event=401824815"
+)
 ROSTER_URL = "https://www.presidentscup.com/teams"
 RANK_URL = (
     "https://site.web.api.espn.com/apis/site/v2/sports/golf/all/rankings?region=us&lang=en&polls=1"
@@ -44,15 +46,22 @@ def _name(value: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", value).lower() if c.isalnum())
 
 
-def parse_matches(html: str) -> dict[str, Any]:
-    marker = "window['__espnfitt__']="
-    offset = html.index(marker) + len(marker)
-    state, _ = json.JSONDecoder().raw_decode(html[offset:])
-    match_data = state["page"]["content"]["leaderboard"]["mtch"]
-    header = match_data["hdr"]
-    if "~e:401824815~" not in header.get("uid", ""):
+def parse_matches(text: str) -> dict[str, Any]:
+    payload = json.loads(text)
+    event = next(
+        (event for event in payload.get("events", []) if str(event.get("id")) == "401824815"),
+        None,
+    )
+    if event is None:
         raise ValueError("Unexpected Cup event")
-    totals = {str(team["teamId"]): _number(team.get("score")) for team in header["competitors"]}
+    competitions = [match for group in event.get("competitions", []) for match in group]
+    headers = [match for match in competitions if (match.get("type") or {}).get("id") == "1"]
+    if len(headers) != 1:
+        raise ValueError("Cup team points are incomplete")
+    totals = {
+        str(team.get("team", {}).get("id")): _number(team.get("score", {}).get("value"))
+        for team in headers[0].get("competitors", [])
+    }
     if set(totals) != set(TEAM_NAMES) or any(value is None for value in totals.values()):
         raise ValueError("Cup team points are incomplete")
     if any(value < 0 or value > 30 or value * 2 != int(value * 2) for value in totals.values()):
@@ -61,44 +70,48 @@ def parse_matches(html: str) -> dict[str, Any]:
         raise ValueError("Cup point totals are inconsistent")
     matches = []
     seen = set()
-    for group in match_data.get("grps", []):
-        for raw in group.get("competitions", []):
+    for raw in competitions:
+        if raw is not headers[0]:
             match_id = str(raw["id"])
             if match_id in seen:
                 continue
             seen.add(match_id)
             sides: dict[str, dict[str, Any]] = {}
             for player in raw.get("competitors", []):
-                team_id = str(player.get("teamId", ""))
+                team_id = str(player.get("team", {}).get("id", ""))
                 if team_id not in TEAM_NAMES:
                     raise ValueError("Unexpected Cup pairing team")
                 side = sides.setdefault(team_id, {"players": [], "winner": False})
-                name = str(player.get("displayName") or "").strip()
-                if name and name not in side["players"]:
-                    side["players"].append(name)
+                roster = player.get("roster") or [{"athlete": player.get("athlete", {})}]
+                for entry in roster:
+                    name = str(entry.get("athlete", {}).get("displayName") or "").strip()
+                    if name and name not in side["players"]:
+                        side["players"].append(name)
+                score = player.get("score") or {}
                 side.update(
-                    winner=side["winner"] or bool(player.get("winner")),
-                    score=str(player.get("score") or "—"),
-                    holes_remaining=player.get("holesRemaining"),
+                    winner=side["winner"] or bool(score.get("winner")),
+                    score=str(score.get("displayValue") or "—"),
+                    holes_remaining=score.get("holesRemaining"),
                 )
             if set(sides) != set(TEAM_NAMES) or any(not side["players"] for side in sides.values()):
                 raise ValueError("Cup pairing names are incomplete")
-            status = raw.get("status", {})
+            status = (raw.get("status") or {}).get("type") or {}
             matches.append(
                 {
                     "id": match_id,
-                    "session": str(group.get("name") or raw.get("name") or "Match play"),
+                    "session": str(raw.get("description") or "Match play"),
                     "start_time": str(raw.get("date") or ""),
                     "state": str(status.get("state") or raw.get("statusState") or "pre"),
-                    "completed": bool(raw.get("completed")) or status.get("state") == "post",
+                    "completed": bool(status.get("completed")) or status.get("state") == "post",
                     "status": str(status.get("detail") or status.get("shortDetail") or "Scheduled"),
                     "sides": sides,
                 }
             )
+    status = (event.get("status") or {}).get("type") or {}
     return {
         "points": totals,
-        "state": header.get("statusState", "pre"),
-        "completed": bool(header.get("completed")),
+        "state": status.get("state", "pre"),
+        "completed": bool(status.get("completed")),
         "matches": matches,
     }
 

@@ -1,0 +1,766 @@
+{
+  "events": [
+    {
+      "id": "401824815",
+      "status": {
+        "type": {
+          "id": "2",
+          "name": "STATUS_IN_PROGRESS",
+          "state": "in",
+          "completed": false,
+          "description": "In Progress"
+        }
+      },
+      "competitions": [
+        [
+          {
+            "id": "12093",
+            "date": "2026-09-24T16:35Z",
+            "description": "tournament",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "35",
+                "name": "STATUS_PLAY_COMPLETE",
+                "state": "post",
+                "description": "Play Complete",
+                "detail": "Play Complete",
+                "shortDetail": "Play Complete"
+              }
+            },
+            "type": {
+              "id": "1",
+              "text": "tournament"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 3.0,
+                  "displayValue": "3",
+                  "draw": false
+                },
+                "team": {
+                  "id": "1"
+                }
+              },
+              {
+                "score": {
+                  "value": 2.0,
+                  "displayValue": "2",
+                  "draw": false
+                },
+                "team": {
+                  "id": "3"
+                }
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "id": "12094",
+            "date": "2026-09-24T16:35Z",
+            "description": "Thursday Four-Balls",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "3",
+                "name": "STATUS_FINAL",
+                "state": "post",
+                "description": "Final",
+                "detail": "Final",
+                "shortDetail": "Final"
+              }
+            },
+            "type": {
+              "id": "4",
+              "text": "fourball"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 1.0,
+                  "displayValue": "1 Up",
+                  "holesRemaining": 0,
+                  "draw": false,
+                  "winner": true
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Scottie Scheffler"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Sam Burns"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "",
+                  "holesRemaining": 0,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Sungjae Im"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Min Woo Lee"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "12095",
+            "date": "2026-09-24T16:53Z",
+            "description": "Thursday Four-Balls",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "3",
+                "name": "STATUS_FINAL",
+                "state": "post",
+                "description": "Final",
+                "detail": "Final",
+                "shortDetail": "Final"
+              }
+            },
+            "type": {
+              "id": "4",
+              "text": "fourball"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 3.0,
+                  "displayValue": "3 & 1",
+                  "holesRemaining": 1,
+                  "draw": false,
+                  "winner": true
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Hideki Matsuyama"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Ryo Hisatsune"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "",
+                  "holesRemaining": 1,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Xander Schauffele"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Cameron Young"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "12096",
+            "date": "2026-09-24T17:11Z",
+            "description": "Thursday Four-Balls",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "3",
+                "name": "STATUS_FINAL",
+                "state": "post",
+                "description": "Final",
+                "detail": "Final",
+                "shortDetail": "Final"
+              }
+            },
+            "type": {
+              "id": "4",
+              "text": "fourball"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "",
+                  "holesRemaining": 3,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Corey Conners"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Nico Echavarria"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 4.0,
+                  "displayValue": "4 & 3",
+                  "holesRemaining": 3,
+                  "draw": false,
+                  "winner": true
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Justin Thomas"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Jackson Koivun"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "12097",
+            "date": "2026-09-24T17:29Z",
+            "description": "Thursday Four-Balls",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "3",
+                "name": "STATUS_FINAL",
+                "state": "post",
+                "description": "Final",
+                "detail": "Final",
+                "shortDetail": "Final"
+              }
+            },
+            "type": {
+              "id": "4",
+              "text": "fourball"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "",
+                  "holesRemaining": 2,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Adam Scott"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Ryan Fox"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 3.0,
+                  "displayValue": "3 & 2",
+                  "holesRemaining": 2,
+                  "draw": false,
+                  "winner": true
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Collin Morikawa"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Wyndham Clark"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "12098",
+            "date": "2026-09-24T17:47Z",
+            "description": "Thursday Four-Balls",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "3",
+                "name": "STATUS_FINAL",
+                "state": "post",
+                "description": "Final",
+                "detail": "Final",
+                "shortDetail": "Final"
+              }
+            },
+            "type": {
+              "id": "4",
+              "text": "fourball"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 3.0,
+                  "displayValue": "3 & 2",
+                  "holesRemaining": 2,
+                  "draw": false,
+                  "winner": true
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Si Woo Kim"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Tom Kim"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "",
+                  "holesRemaining": 2,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Patrick Cantlay"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Chris Gotterup"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        [
+          {
+            "id": "12099",
+            "date": "2026-09-25T18:05Z",
+            "description": "Friday Foursomes",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "1",
+                "name": "STATUS_SCHEDULED",
+                "state": "pre",
+                "description": "Scheduled",
+                "detail": "Scheduled",
+                "shortDetail": "Scheduled"
+              }
+            },
+            "type": {
+              "id": "5",
+              "text": "foursome"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Scottie Scheffler"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Sam Burns"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Nick Taylor"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Corey Conners"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "12100",
+            "date": "2026-09-25T18:19Z",
+            "description": "Friday Foursomes",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "1",
+                "name": "STATUS_SCHEDULED",
+                "state": "pre",
+                "description": "Scheduled",
+                "detail": "Scheduled",
+                "shortDetail": "Scheduled"
+              }
+            },
+            "type": {
+              "id": "5",
+              "text": "foursome"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Hideki Matsuyama"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Sungjae Im"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Russell Henley"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Jacob Bridgeman"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "12101",
+            "date": "2026-09-25T18:33Z",
+            "description": "Friday Foursomes",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "1",
+                "name": "STATUS_SCHEDULED",
+                "state": "pre",
+                "description": "Scheduled",
+                "detail": "Scheduled",
+                "shortDetail": "Scheduled"
+              }
+            },
+            "type": {
+              "id": "5",
+              "text": "foursome"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Collin Morikawa"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Wyndham Clark"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Ryan Fox"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Min Woo Lee"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "12102",
+            "date": "2026-09-25T18:47Z",
+            "description": "Friday Foursomes",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "1",
+                "name": "STATUS_SCHEDULED",
+                "state": "pre",
+                "description": "Scheduled",
+                "detail": "Scheduled",
+                "shortDetail": "Scheduled"
+              }
+            },
+            "type": {
+              "id": "5",
+              "text": "foursome"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Justin Thomas"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Cameron Young"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Adam Scott"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Christiaan Bezuidenhout"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "12103",
+            "date": "2026-09-25T19:01Z",
+            "description": "Friday Foursomes",
+            "status": {
+              "period": 1,
+              "type": {
+                "id": "1",
+                "name": "STATUS_SCHEDULED",
+                "state": "pre",
+                "description": "Scheduled",
+                "detail": "Scheduled",
+                "shortDetail": "Scheduled"
+              }
+            },
+            "type": {
+              "id": "5",
+              "text": "foursome"
+            },
+            "competitors": [
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "1"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Patrick Cantlay"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Xander Schauffele"
+                    }
+                  }
+                ]
+              },
+              {
+                "score": {
+                  "value": 0.0,
+                  "displayValue": "-",
+                  "holesRemaining": 18,
+                  "draw": false,
+                  "winner": false
+                },
+                "team": {
+                  "id": "3"
+                },
+                "roster": [
+                  {
+                    "athlete": {
+                      "displayName": "Si Woo Kim"
+                    }
+                  },
+                  {
+                    "athlete": {
+                      "displayName": "Tom Kim"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      ]
+    }
+  ]
+}
