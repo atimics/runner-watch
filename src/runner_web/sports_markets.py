@@ -105,7 +105,8 @@ def _reading(
 ) -> dict[str, Any]:
     digest = hashlib.sha256(
         json.dumps(
-            [source, market_id, round(away, 6), round(home, 6)], separators=(",", ":")
+            [source, market_id, round(away, 6), round(home, 6), at.isoformat()],
+            separators=(",", ":"),
         ).encode()
     ).hexdigest()
     return {

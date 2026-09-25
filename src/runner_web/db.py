@@ -3737,6 +3737,33 @@ def _migration_087_sports_prediction_market_snapshots(db: DatabaseConnection) ->
     )
 
 
+def _migration_089_prediction_tickers(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_golf_analysis (
+            event_id TEXT NOT NULL REFERENCES sports_golf_events(id) ON DELETE CASCADE,
+            input_hash TEXT NOT NULL,
+            captured_at TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            PRIMARY KEY(event_id,input_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_golf_analysis_time
+            ON sports_golf_analysis(event_id,captured_at DESC);
+        CREATE TABLE IF NOT EXISTS prediction_contract_quotes (
+            event_id TEXT NOT NULL,
+            contract_key TEXT NOT NULL,
+            outcome_key TEXT NOT NULL,
+            source TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY(event_id,contract_key,outcome_key,source,observed_at)
+        );
+        CREATE INDEX IF NOT EXISTS prediction_contract_event_time
+            ON prediction_contract_quotes(event_id,observed_at DESC);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3832,6 +3859,7 @@ MIGRATIONS = (
         87, "sports_prediction_market_snapshots", _migration_087_sports_prediction_market_snapshots
     ),
     Migration(88, "golf_match_results", _migration_088_golf_match_results),
+    Migration(89, "prediction_tickers", _migration_089_prediction_tickers),
 )
 
 

@@ -1732,7 +1732,8 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
             input_state_hash = _input_hash(event, prediction)
             previous_prediction = database.execute(
                 """
-                SELECT id,input_state_hash,input_hash,factors_json FROM sports_predictions
+                SELECT id,input_state_hash,input_hash,factors_json,observed_at
+                FROM sports_predictions
                 WHERE event_id=? AND model_version=?
                 ORDER BY observed_at DESC,id DESC LIMIT 1
                 """,
@@ -1748,7 +1749,18 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                 and previous_prediction["factors_json"] in (None, "{}")
                 and _parse_time(timestamp) <= _parse_time(event["start_time"])
             )
-            if previous_input_state != input_state_hash or needs_pregame_factors:
+            rechecked_pregame = bool(
+                previous_prediction
+                and event.get("status") == "pre"
+                and _parse_time(timestamp) < _parse_time(event["start_time"])
+                and _parse_time(timestamp) - _parse_time(previous_prediction["observed_at"])
+                >= timedelta(minutes=10)
+            )
+            if (
+                previous_input_state != input_state_hash
+                or needs_pregame_factors
+                or rechecked_pregame
+            ):
                 input_hash = hashlib.sha256(
                     _json(
                         {
@@ -2015,7 +2027,17 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
                 news_errors[league] = str(exc)[:240]
     prediction_markets = refresh_prediction_markets(market_events, current)
     try:
-        golf_counts = store_golf_events(fetch_golf(at), observed_at=current)
+        golf_events = fetch_golf(at)
+        golf_counts = store_golf_events(golf_events, observed_at=current)
+        from runner_web.golf_cup import EVENT_ID, refresh_cup_analysis
+        from runner_web.golf_markets import refresh_cup_markets
+
+        if any(
+            event["id"] == EVENT_ID and current <= event["end_time"] + timedelta(days=1)
+            for event in golf_events
+        ):
+            golf_counts["cup"] = refresh_cup_analysis(current)
+            golf_counts["markets"] = refresh_cup_markets(current)
     except Exception as exc:
         golf_error = str(exc)[:240]
     settled = settle_picks()
@@ -2714,6 +2736,20 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
         if history
     }
 
+    venue_rows = database.execute(
+        f"""SELECT * FROM (
+            SELECT q.*,ROW_NUMBER() OVER(
+                PARTITION BY q.event_id,q.source ORDER BY q.observed_at DESC,q.id DESC
+            ) AS latest_rank FROM sports_prediction_market_snapshots q
+            JOIN sports_events e ON e.id=q.event_id
+            WHERE q.event_id IN ({placeholders}) AND q.observed_at<e.start_time
+        ) latest WHERE latest_rank=1""",
+        parameters,
+    ).fetchall()
+    venues_by_event: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for venue in venue_rows:
+        venues_by_event[str(venue["event_id"])].append(dict(venue))
+
     news_rows = database.execute(
         f"""
         SELECT * FROM (
@@ -2762,6 +2798,7 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
             has_bookmaker_rows=bool(event_bookmaker_rows),
         )
         event["prediction"] = prediction
+        event["prediction_markets"] = venues_by_event.get(event_id, [])
         event["edge_history"] = _edge_sparkline_from_rows(
             event,
             prediction,
@@ -2852,6 +2889,13 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
             """,
             (SOURCE, GOLF_FEED),
         ).fetchone()
+    for event in events:
+        if event["id"] == "golf:401824815":
+            from runner_web.golf_cup import saved_cup_analysis
+            from runner_web.golf_markets import quote_history
+
+            event["analysis"] = saved_cup_analysis()
+            event["contract_quotes"] = quote_history(event["id"], latest=True)
     return {
         "events": events,
         "sport": "golf",
@@ -2885,6 +2929,13 @@ def golf_event(event_id: str) -> dict[str, Any] | None:
             event["leaderboard"].append(entry)
     event["leader"] = next(iter(event["leaderboard"]), None)
     event["display_status"] = _golf_display_status(event, datetime.now(UTC))
+    if event_id == "golf:401824815":
+        from runner_web.golf_cup import saved_cup_analysis, saved_cup_history
+        from runner_web.golf_markets import quote_history
+
+        event["analysis"] = saved_cup_analysis()
+        event["analysis_history"] = saved_cup_history()
+        event["contract_quotes"] = quote_history(event_id)
     return event
 
 
@@ -3294,6 +3345,7 @@ def _build_model_alpha(league: str) -> dict[str, Any]:
                    p.id AS prediction_id,p.model_version,p.input_hash,
                    p.observed_at AS prediction_observed_at,
                    p.home_probability,p.away_probability,p.selection,p.signal,p.edge,
+                   p.home_market_probability AS model_market_probability,
                    ep.id AS edge_prediction_id,ep.observed_at AS edge_observed_at,
                    ep.selection AS edge_selection,ep.signal AS edge_signal,ep.edge AS edge_value,
                    ep.home_market_probability AS edge_home_market_probability,
@@ -3345,6 +3397,8 @@ def _build_model_alpha(league: str) -> dict[str, Any]:
     clv_values: list[float] = []
     correct = 0
     brier_total = 0.0
+    paired_model_brier = paired_market_brier = 0.0
+    paired_games = 0
     history_points: list[dict[str, Any]] = []
     receipt_rows: list[dict[str, Any]] = []
     for row in current_rows:
@@ -3359,6 +3413,11 @@ def _build_model_alpha(league: str) -> dict[str, Any]:
         correct += int(model_won)
         brier = (home_probability - int(home_won)) ** 2
         brier_total += brier
+        market_probability = _number(row.get("model_market_probability"))
+        if market_probability is not None and 0 <= market_probability <= 1:
+            paired_games += 1
+            paired_model_brier += brier
+            paired_market_brier += (market_probability - int(home_won)) ** 2
         confidence = max(home_probability, 1 - home_probability)
         confidence_label = (
             "50–55%" if confidence < 0.55 else "55–60%" if confidence < 0.60 else "60%+"
@@ -3499,6 +3558,11 @@ def _build_model_alpha(league: str) -> dict[str, Any]:
         "losses": sample - correct,
         "accuracy": round(correct / sample * 100, 1) if sample else None,
         "brier": round(brier_total / sample, 3) if sample else None,
+        "paired_games": paired_games,
+        "paired_model_brier": round(paired_model_brier / paired_games, 4) if paired_games else None,
+        "paired_market_brier": round(paired_market_brier / paired_games, 4)
+        if paired_games
+        else None,
         "edge_calls": edge_calls,
         "edge_wins": edge_wins,
         "edge_losses": edge_calls - edge_wins,
@@ -4135,6 +4199,16 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
         )
         receipt_odds = _odds_at_or_before(database, event_id, prediction_cutoff)
         event["prediction"] = prediction
+        event["prediction_history"] = [
+            dict(row)
+            for row in reversed(
+                database.execute(
+                    "SELECT * FROM sports_predictions WHERE event_id=? AND observed_at<? "
+                    "ORDER BY observed_at DESC,id DESC LIMIT 2000",
+                    (event_id, event["start_time"]),
+                ).fetchall()
+            )
+        ]
         event["odds"] = receipt_odds
         event["edge_history"] = _edge_sparkline(database, event, prediction)
         event.update(_event_attention(event))

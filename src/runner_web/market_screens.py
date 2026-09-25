@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 from runner_web.market_assessments import assessment
+from runner_web.prediction_tickers import ticker as prediction_ticker
 from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
@@ -298,6 +299,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
         return {
             "id": str(item["id"]),
+            "ticker": prediction_ticker(item),
             "name": str(item.get("name") or "Tournament"),
             "subtitle": (
                 " vs ".join(str(team.get("name") or "Team") for team in teams)
@@ -343,6 +345,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "id": str(item["id"]),
+            "ticker": prediction_ticker(item),
             "name": f"{away} · {home}",
             "matchup": sports_matchup(item, state),
             "subtitle": str(item.get("league") or "Sports").upper(),
@@ -658,6 +661,8 @@ def detail(
     *,
     active_call: dict[str, Any] | None = None,
     my_pick: dict[str, Any] | None = None,
+    outcome: str = "",
+    contract: str = "",
 ) -> dict[str, Any]:
     source = (
         data.get("coin", {})
@@ -691,6 +696,11 @@ def detail(
         "refresh_url": f"/api/screens/{market}/{quote(item['id'], safe='')}/detail",
     }
     identifier = quote(item["id"], safe="")
+    if market == "sports":
+        from urllib.parse import urlencode
+
+        result["ticker"] = prediction_ticker(data, outcome=outcome, contract=contract)
+        result["refresh_url"] += "?" + urlencode({"outcome": outcome, "contract": contract})
     if market == "sports" and item["id"].startswith("golf:"):
         result["teams"] = [
             {
