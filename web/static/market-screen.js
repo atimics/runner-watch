@@ -353,7 +353,7 @@
     if (!surface || surface.contains(document.activeElement) || document.querySelector('dialog[open]')) return;
     const key = pageKey(), version = ++surfaceRequestNumber;
     try {
-      const response = await fetch(location.href);
+      const response = await fetch(screen?.surface_url || location.href);
       if (!response.ok || response.redirected) return;
       const html = await response.text();
       if (pageKey() !== key || version !== surfaceRequestNumber) return;
@@ -450,7 +450,15 @@
       const url = new URL(item.href, location.origin);
       const prefix = market === 'stocks' ? '/stock/' : market === 'memecoins' ? '/memecoins/coin/' : '/game/';
       if (url.origin !== location.origin || !url.pathname.startsWith(prefix)) return null;
-      return {name:item.name.slice(0,100), subtitle:String(item.subtitle || '').slice(0,160), href:url.pathname};
+      const selection = new URLSearchParams();
+      if (market === 'sports') {
+        for (const key of ['contract', 'outcome']) {
+          const value = url.searchParams.get(key);
+          if (value && /^[a-z0-9-]{1,64}$/.test(value)) selection.set(key, value);
+        }
+      }
+      const href = url.pathname + (selection.size ? `?${selection}` : '');
+      return {name:item.name.slice(0,100), subtitle:String(item.subtitle || '').slice(0,160), href};
     } catch (_) { return null; }
   }
   try { const saved = JSON.parse(localStorage.getItem(key) || '[]'); if (Array.isArray(saved)) recent = saved.map(safe).filter(Boolean).slice(0,10); } catch (_) { /* Keep this visit usable when storage is unavailable. */ }

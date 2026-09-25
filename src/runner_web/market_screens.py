@@ -307,7 +307,9 @@ def _outcome_tag(ticker: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
+def row(
+    market: str, item: dict[str, Any], *, outcome: str = "", contract: str = ""
+) -> dict[str, Any]:
     if market == "sports" and str(item.get("id", "")).startswith("golf:"):
         from runner_web.sports import _golf_display_status
 
@@ -319,7 +321,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
-        ticker = prediction_ticker(item, history=False)
+        ticker = prediction_ticker(item, outcome=outcome, contract=contract, history=False)
         golf_matchup = None
         if match_play and len(teams) == 2:
             scores = [number(team.get("points")) for team in teams]
@@ -366,7 +368,9 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "research_label": "Team points" if match_play else "Round scores",
             "tone": "neutral",
             "time": stamp(item.get("start_time")),
-            "href": "/game/" + quote(str(item["id"]), safe=":"),
+            "href": "/game/"
+            + quote(str(item["id"]), safe=":")
+            + (ticker.get("selected") or {}).get("href", ""),
             "mark": "PG",
             **_outcome_tag(ticker),
             "risk": saved_risk,
@@ -382,7 +386,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
-        ticker = prediction_ticker(item, history=False)
+        ticker = prediction_ticker(item, outcome=outcome, contract=contract, history=False)
         started = state.get("started") or item.get("status") in {"in", "post"}
         scores = [item.get(f"{side}_score") for side in ("away", "home")]
         value = (
@@ -414,7 +418,9 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             ),
             "tone": "neutral",
             "time": stamp(item.get("start_time")),
-            "href": "/game/" + quote(str(item["id"]), safe=":"),
+            "href": "/game/"
+            + quote(str(item["id"]), safe=":")
+            + (ticker.get("selected") or {}).get("href", ""),
             "mark": away[:2],
             "event_status": state.get("label") or item.get("status_detail") or "Upcoming",
             "assessment": rating,
@@ -728,7 +734,7 @@ def detail(
         }
     if market == "memecoins":
         source = {**source, "findings": data.get("findings") or source.get("findings") or []}
-    item = row(market, source)
+    item = row(market, source, outcome=outcome, contract=contract)
     if market == "stocks":
         item["score_trace"] = source.get("score_trace") or {}
     result = {
@@ -745,10 +751,12 @@ def detail(
     }
     identifier = quote(item["id"], safe="")
     if market == "sports":
-        from urllib.parse import urlencode
-
-        result["ticker"] = prediction_ticker(data, outcome=outcome, contract=contract)
-        result["refresh_url"] += "?" + urlencode({"outcome": outcome, "contract": contract})
+        ticker = prediction_ticker(data, outcome=outcome, contract=contract)
+        result["ticker"] = ticker
+        item.update(_outcome_tag(ticker))
+        selection = (ticker.get("selected") or {}).get("href", "")
+        item["href"] = "/game/" + quote(item["id"], safe=":") + selection
+        result["refresh_url"] += selection
     if market == "sports" and item["id"].startswith("golf:"):
         result["teams"] = [
             {
@@ -764,6 +772,7 @@ def detail(
         if data.get("venue"):
             result["facts"].append({"label": "Venue", "value": str(data["venue"])})
         result.pop("refresh_url")
+        result["surface_url"] = item["href"]
         return result
     if market == "sports":
         state = sports_state(data)
