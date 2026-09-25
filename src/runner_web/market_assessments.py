@@ -142,9 +142,22 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
         }.get(signal, ("", ""))
         observed = prediction.get("observed_at")
         team = str(item.get(f"{side}_team_name") or item.get(f"{side}_abbreviation") or "")
+        team_label = str(item.get(f"{side}_abbreviation") or team)
+        market_probability = (
+            _probability(prediction.get(f"{side}_market_probability"))
+            if side in {"home", "away"}
+            else None
+        )
+        edge = _number(prediction.get("edge"))
         result.update(
             status="saved",
             selected_team=team,
+            selected_team_label=team_label,
+            selected_model_percent=round(probability * 100, 1) if probability is not None else None,
+            selected_market_percent=(
+                round(market_probability * 100, 1) if market_probability is not None else None
+            ),
+            edge_pp=round(edge * 100, 1) if edge is not None else None,
             reason=_prediction_reason(team, observed),
             tag=tag,
             tag_tone=tone,
@@ -162,16 +175,14 @@ def assessment(market: str, item: dict[str, Any]) -> dict[str, Any]:
             )
         # Model and market probabilities are separate measures, not additive score slices.
         for key, label, value, unit in (
-            ("model_probability", "Model win chance", probability, "%"),
+            ("model_probability", f"{team_label} model win chance", probability, "%"),
             (
                 "market_probability",
-                "Market win chance",
-                _probability(prediction.get(f"{side}_market_probability"))
-                if side in {"home", "away"}
-                else None,
+                f"{team_label} market win chance",
+                market_probability,
                 "%",
             ),
-            ("edge", "Model edge", _number(prediction.get("edge")), "pp"),
+            ("edge", f"{team_label} model edge", edge, "pp"),
         ):
             if value is not None:
                 result["drivers"].append(

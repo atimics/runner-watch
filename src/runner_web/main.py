@@ -10284,6 +10284,10 @@ def screen_detail_state(
         story = None
     if story:
         screen["story"] = story
+    if market == "sports":
+        screen["opinion_html"] = templates.env.get_template("_sports_opinion.html").render(
+            screen=screen
+        )
     return JSONResponse(screen, headers={"Cache-Control": "private, no-store"})
 
 

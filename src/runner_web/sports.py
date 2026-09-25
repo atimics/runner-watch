@@ -2282,6 +2282,8 @@ def _edge_sparkline_from_rows(
         points.append(
             {
                 "observed_at": str(row["observed_at"]),
+                "model_pct": round(float(model_probability) * 100, 1),
+                "market_pct": round(float(market_probability) * 100, 1),
                 "edge_pct": round(
                     (float(model_probability) - float(market_probability)) * 100,
                     1,

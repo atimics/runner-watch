@@ -1,40 +1,76 @@
 {% from '_sports_opinion_glyph.html' import sports_opinion_glyph %}
-{% set forecast = screen.item.matchup.forecast %}
+{% set matchup = screen.item.matchup %}
+{% set forecast = matchup.forecast %}
+{% set value_team = matchup.value_team %}
+{% set assessment = screen.item.assessment %}
 {% if forecast %}
-<section class="sports-opinion" aria-label="Saved pregame opinion">
+<section class="sports-opinion" aria-label="Pregame model and market">
   <header>
     <div>
-      <p class="eyebrow">RATi BASELINE · PREGAME</p>
-      <h2>{{ 'Even chance' if forecast.team == 'Even' else forecast.team ~ ' to win' }}</h2>
-      <small>{% if forecast.saved_label %}Saved {{ forecast.saved_label }}{% else %}Saved before the game{% endif %}{% if forecast.model_version %} · {{ forecast.model_version }}{% endif %}</small>
+      <p class="eyebrow">PREGAME · MODEL VS MARKET</p>
+      {% if value_team and value_team.market_gap_pp is defined %}
+      <h2>{{ value_team.label }} {{ 'above' if value_team.market_gap_pp > 0 else 'below' if value_team.market_gap_pp < 0 else 'in line with' }} market{% if value_team.market_gap_pp != 0 %} by {{ '%.1f'|format(value_team.market_gap_pp|abs) }} pp{% endif %}</h2>
+      {% else %}<h2>Both teams' win chances</h2>{% endif %}
+      <small>{% if forecast.saved_label %}Saved {{ forecast.saved_label }}{% else %}Saved before the game{% endif %}{% if forecast.model_version %} · {{ forecast.model_version }}{% endif %}{% if assessment.tag %} · {{ assessment.tag }}{% endif %}</small>
     </div>
-    <div class="sports-opinion-result">{{ sports_opinion_glyph(forecast, 'detail-opinion') }}<strong>{{ forecast.percent }}%</strong></div>
   </header>
-  {% if forecast.factors %}
-  <div class="sports-opinion-steps">
-    <p>Starting point <strong>50.0%</strong></p>
-    <ol>
-      {% for factor in forecast.factors if factor.value|abs >= 0.000001 %}
-      <li>
-        <span>{{ factor.label }}</span>
-        <span class="sports-opinion-track" aria-hidden="true"><i class="sports-opinion-bar sports-opinion-bar-{{ factor.key }}{% if factor.negative %} is-negative{% endif %}" style="left:{{ factor.bar_start }}%;width:{{ factor.bar_width }}%"></i></span>
-        <strong>{{ '%+.1f'|format(factor.value) }} pp</strong>
-      </li>
-      {% endfor %}
-    </ol>
-    <p>Saved forecast <strong>{{ forecast.percent }}%</strong></p>
-  </div>
-  <div class="sports-opinion-context">
-    {% for team in screen.item.matchup.teams %}
-      {% set record = forecast.records[team.side] %}
-      {% if record %}<span>{{ team.label }} season record {{ record.wins }}–{{ record.losses }}</span>{% endif %}
+  <div class="sports-opinion-sides" aria-label="Both teams' pregame win chances">
+    {% for team in matchup.teams %}
+    <div class="sports-opinion-side{% if team.value_side %} is-value{% elif team.model_favorite %} is-favorite{% endif %}">
+      <div class="sports-opinion-side-head">
+        <div class="sports-opinion-side-name"><strong>{{ team.label }}</strong><small>{{ team.name }}</small></div>
+        {% if team.label == forecast.team %}<span class="sports-opinion-result" title="{{ forecast.team }} model chance and factors">{{ sports_opinion_glyph(forecast, 'detail-opinion') }}</span>{% endif %}
+      </div>
+      <div class="sports-opinion-side-badges">{% if team.model_favorite %}<span>Model favorite</span>{% endif %}{% if team.value_side and assessment.tag != 'PASS' %}<span>Saved call</span>{% endif %}</div>
+      <dl>
+        <div><dt>Model</dt><dd>{{ team.model_percent }}%</dd></div>
+        <div><dt>Market</dt><dd>{{ team.market_percent ~ '%' if team.market_percent is defined else '—' }}</dd></div>
+      </dl>
+      {% if team.market_gap_pp is defined %}<p class="sports-opinion-gap {{ 'is-above' if team.market_gap_pp > 0 else 'is-below' if team.market_gap_pp < 0 else '' }}">{{ '%+.1f'|format(team.market_gap_pp) }} pp {{ 'above' if team.market_gap_pp > 0 else 'below' if team.market_gap_pp < 0 else 'in line with' }} market</p>{% endif %}
+    </div>
     {% endfor %}
-    {% if forecast.market_percent is defined %}<span>Market chance {{ forecast.market_percent }}% · gap {{ '%+.1f'|format(forecast.market_gap_pp) }} pp</span>{% endif %}
-    {% if forecast.value_side and forecast.value_side != forecast.team %}<span>Market value side {{ forecast.value_side }}</span>{% endif %}
-    {% if forecast.source_url %}<a href="{{ forecast.source_url }}" target="_blank" rel="noopener noreferrer">Game source ↗</a>{% endif %}
   </div>
-  {% else %}
-  <p class="sports-opinion-legacy">This earlier saved call has a win chance. Factor details appear with new model snapshots.</p>
+  <p class="sports-opinion-explainer">The two model chances are opposite sides of one game. The gap compares each team with its saved no-vig market chance.{% if screen.market_source %} Source: {{ screen.market_source }}.{% endif %} Gaps use the saved unrounded values.</p>
+  {% if screen.market_chart %}
+  {% set chart = screen.market_chart %}
+  <section class="sports-opinion-chart" aria-label="{{ chart.team }} pregame chance history" data-sports-market-chart>
+    <div class="sports-opinion-chart-heading"><h3>{{ chart.team }} chance over time</h3><small>{{ chart.count }} saved pregame {{ 'reading' if chart.count == 1 else 'readings' }}</small></div>
+    <div class="sports-opinion-chart-legend"><span class="is-model">Model {{ chart.model_last }}%</span><span class="is-market">Market {{ chart.market_last }}%</span></div>
+    <div class="sports-opinion-chart-plot"><span>{{ chart.high }}%</span>
+      <svg viewBox="0 0 100 68" preserveAspectRatio="none" role="img" aria-label="{{ chart.team }} model and market win chance from {{ chart.first_label }} to {{ chart.last_label }}. Latest model {{ chart.model_last }}%, market {{ chart.market_last }}%, gap {{ '%+.1f'|format(chart.gap_last) }} percentage points.">
+        <line class="sports-opinion-chart-grid" x1="8" y1="10" x2="92" y2="10"/>
+        <line class="sports-opinion-chart-grid" x1="8" y1="58" x2="92" y2="58"/>
+        {% if chart.count > 1 %}<polyline class="sports-opinion-chart-market" points="{{ chart.market_line }}"/><polyline class="sports-opinion-chart-model" points="{{ chart.model_line }}"/>{% endif %}
+        <circle class="sports-opinion-chart-market-dot" cx="{{ chart.market_dot[0] }}" cy="{{ chart.market_dot[1] }}" r="1.7"/>
+        <circle class="sports-opinion-chart-model-dot" cx="{{ chart.model_dot[0] }}" cy="{{ chart.model_dot[1] }}" r="1.7"/>
+      </svg>
+      <span>{{ chart.low }}%</span>
+    </div>
+    <div class="sports-opinion-chart-times"><span>{{ chart.first_label }}</span><span>{{ chart.last_label if chart.count > 1 else 'First saved reading' }}</span></div>
+    <p>{{ chart.team }} model gap: {{ '%+.1f'|format(chart.gap_first) }} pp first saved → {{ '%+.1f'|format(chart.gap_last) }} pp latest pregame</p>
+  </section>
   {% endif %}
+  {% if forecast.factors %}
+  <details class="sports-opinion-breakdown">
+    <summary>How the model reached {{ forecast.team }} {{ forecast.percent }}%</summary>
+    <div class="sports-opinion-steps">
+      <p>{{ forecast.team }} starting point <strong>50.0%</strong></p>
+      <ol>
+        {% for factor in forecast.factors if factor.value|abs >= 0.000001 %}
+        <li><span>{{ factor.label }}</span><span class="sports-opinion-track" aria-hidden="true"><i class="sports-opinion-bar sports-opinion-bar-{{ factor.key }}{% if factor.negative %} is-negative{% endif %}" style="left:{{ factor.bar_start }}%;width:{{ factor.bar_width }}%"></i></span><strong>{{ '%+.1f'|format(factor.value) }} pp</strong></li>
+        {% endfor %}
+      </ol>
+      <p>{{ forecast.team }} saved forecast <strong>{{ forecast.percent }}%</strong></p>
+    </div>
+    <div class="sports-opinion-context">
+      {% for team in matchup.teams %}
+        {% set record = forecast.records[team.side] %}
+        {% if record %}<span>{{ team.label }} season record {{ record.wins }}–{{ record.losses }}</span>{% endif %}
+      {% endfor %}
+      {% if forecast.source_url %}<a href="{{ forecast.source_url }}" target="_blank" rel="noopener noreferrer">Game source ↗</a>{% endif %}
+    </div>
+  </details>
+  {% else %}<p class="sports-opinion-legacy">Factor details appear with new model snapshots.</p>{% endif %}
+  {% if assessment.risks %}<details class="sports-opinion-risks"><summary>What to watch</summary><ul>{% for risk in assessment.risks %}<li>{{ risk }}</li>{% endfor %}</ul></details>{% endif %}
 </section>
 {% endif %}

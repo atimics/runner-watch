@@ -71,6 +71,76 @@ def sports_state(item: dict[str, Any]) -> dict[str, Any]:
     return item.get("view_state") or _game_view_state(item)
 
 
+def sports_market_chart(history: dict[str, Any]) -> dict[str, Any] | None:
+    """Plot one team's saved pregame model and market chances on the same clock."""
+    points = []
+    for raw in history.get("points") or []:
+        model = number(raw.get("model_pct"))
+        market = number(raw.get("market_pct"))
+        edge = number(raw.get("edge_pct"))
+        try:
+            observed = datetime.fromisoformat(str(raw.get("observed_at")).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if model is None or market is None or not (0 <= model <= 100 and 0 <= market <= 100):
+            continue
+        points.append(
+            (
+                observed if observed.tzinfo else observed.replace(tzinfo=UTC),
+                model,
+                market,
+                edge if edge is not None else round(model - market, 1),
+            )
+        )
+    if not points:
+        return None
+    points.sort(key=lambda point: point[0])
+    values = [value for _, model, market, _ in points for value in (model, market)]
+    low = max(0, math.floor((min(values) - 5) / 5) * 5)
+    high = min(100, math.ceil((max(values) + 5) / 5) * 5)
+    if high - low < 10:
+        low = max(0, low - 5)
+        high = min(100, high + 5)
+    span = max(1, high - low)
+    start = points[0][0].timestamp()
+    duration = points[-1][0].timestamp() - start
+
+    def xy(index: int, observed: datetime, value: float) -> str:
+        x = (
+            50
+            if len(points) == 1
+            else 8 + 84 * (observed.timestamp() - start) / duration
+            if duration > 0
+            else 8 + 84 * index / (len(points) - 1)
+        )
+        y = 58 - 48 * (value - low) / span
+        return f"{x:.1f},{y:.1f}"
+
+    model_line = " ".join(
+        xy(index, observed, model) for index, (observed, model, _, _) in enumerate(points)
+    )
+    market_line = " ".join(
+        xy(index, observed, market) for index, (observed, _, market, _) in enumerate(points)
+    )
+    last_model, last_market = points[-1][1:3]
+    return {
+        "team": history.get("team"),
+        "count": len(points),
+        "model_line": model_line,
+        "market_line": market_line,
+        "model_dot": model_line.split()[-1].split(","),
+        "market_dot": market_line.split()[-1].split(","),
+        "model_last": last_model,
+        "market_last": last_market,
+        "gap_first": round(points[0][3], 1),
+        "gap_last": round(points[-1][3], 1),
+        "first_label": stamp(points[0][0]),
+        "last_label": stamp(points[-1][0]),
+        "high": high,
+        "low": low,
+    }
+
+
 def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """Keep the scoreboard leader separate from the saved model and value side."""
     sides = ("away", "home")
@@ -113,6 +183,20 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
         }
         for side in sides
     ]
+    if valid_model:
+        for index, team in enumerate(teams):
+            team["model_percent"] = round(probabilities[index] * 100, 1)
+            team["model_favorite"] = team["side"] == favorite
+            market_probability = number(
+                prediction.get(f"{team['side']}_market_probability")
+            )
+            if market_probability is not None and 0 <= market_probability <= 1:
+                team["market_percent"] = round(market_probability * 100, 1)
+                team["market_gap_pp"] = round(
+                    (probabilities[index] - market_probability) * 100, 1
+                )
+            team["value_side"] = team["side"] == prediction.get("selection")
+    value_team = next((team for team in teams if team.get("value_side")), None)
     forecast = None
     if valid_model:
         index = sides.index(favorite) if favorite else 0
@@ -196,6 +280,7 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
     return {
         "teams": teams,
         "forecast": forecast,
+        "value_team": value_team,
         "emphasis": emphasis,
         "emphasis_label": emphasis_label if emphasis else "",
         "tied": bool(confirmed and scores[0] == scores[1]),
@@ -628,6 +713,10 @@ def detail(
     if market == "sports":
         state = sports_state(data)
         result["call"] = call_record(market, data, my_pick)
+        result["market_source"] = (data.get("odds") or {}).get("source_label")
+        edge_history = data.get("edge_history") or {}
+        if edge_history.get("side") == item["assessment"].get("selection"):
+            result["market_chart"] = sports_market_chart(edge_history)
         result["teams"] = [
             {
                 "name": str(

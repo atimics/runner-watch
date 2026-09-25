@@ -247,6 +247,15 @@
   const actionKey = a => a ? a.endpoint + ':' + (a.body?.selection || '') : '';
   const sameSubject = next => next?.market === screen?.market && next?.item?.id === screen?.item?.id;
   function renderDetail(next) {
+    if (next.market === 'sports' && typeof next.opinion_html === 'string') {
+      const current = document.querySelector('.sports-opinion');
+      const incoming = new DOMParser().parseFromString(next.opinion_html, 'text/html').querySelector('.sports-opinion');
+      if (current && incoming && current.outerHTML !== incoming.outerHTML) {
+        const openDetails = [...current.querySelectorAll('details[open]')].map(detail => detail.className);
+        incoming.querySelectorAll('details').forEach(detail => { detail.open = openDetails.includes(detail.className); });
+        if (!current.contains(document.activeElement)) current.replaceWith(incoming);
+      }
+    }
     put('[data-value]', next.item.value);
     put('[data-change]', next.item.change);
     put('[data-time]', next.item.time);
