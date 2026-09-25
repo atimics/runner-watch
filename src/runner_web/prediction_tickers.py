@@ -248,7 +248,12 @@ def _cup_contracts(event: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def ticker(
-    event: dict[str, Any], *, outcome: str = "", contract: str = "", now: datetime | None = None
+    event: dict[str, Any],
+    *,
+    outcome: str = "",
+    contract: str = "",
+    now: datetime | None = None,
+    history: bool = True,
 ) -> dict[str, Any]:
     """Build the same outcome view for team games and multi-outcome events."""
     current = now or datetime.now(UTC)
@@ -356,7 +361,7 @@ def ticker(
             )
             o["percent"] = round(o["model"] * 100, 1) if o["model"] is not None else None
             o["model_label"] = _stamp(o.get("model_at"))
-            o["chart"] = _chart(valid)
+            o["chart"] = _chart(valid) if history else None
             o["gap"] = o["benchmark"]["gap"] if o["benchmark"] else None
     outcomes = selected_contract["outcomes"]
     favorite = max(outcomes, key=lambda o: o["model"] if o["model"] is not None else -1)
@@ -373,4 +378,8 @@ def ticker(
     if selected["gap"] is not None:
         result["description"] += f", gap {selected['gap']:+.1f} percentage points"
     result["indicator"] = sports_indicator(event, result, reference, current)
+    if not history:
+        for c in contracts:
+            for o in c["outcomes"]:
+                o.pop("points", None)
     return result

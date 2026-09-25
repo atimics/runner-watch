@@ -415,3 +415,18 @@ def test_unmodeled_golf_keeps_missing_values_clear():
     assert glyph["risk"] == "unknown"
     assert glyph["sentiment"] == "unknown"
     assert glyph["score"] is None
+
+
+def test_list_keeps_same_glyph_with_compact_history_payload():
+    event = cup_event()
+    event["contract_quotes"] = [
+        quote(at=AT - timedelta(minutes=20), probability=0.8),
+        quote(),
+    ]
+    full = ticker(event, now=AT)
+    compact = ticker(event, now=AT, history=False)
+    assert compact["indicator"] == full["indicator"]
+    assert compact["selected"]["gap"] == full["selected"]["gap"]
+    assert "points" not in compact["selected"]
+    assert compact["selected"]["chart"] is None
+    assert full["selected"]["chart"]
