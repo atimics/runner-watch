@@ -108,20 +108,13 @@ def test_sports_route_searches_full_names(board_context, monkeypatch, query):
     assert [team.get_text() for team in html.select(".sports-team")] == ["LAL", "BOS"]
 
 
-@pytest.mark.parametrize(
-    "side, abbreviation",
-    [
-        ("home", "BOS"),
-        ("away", "LAL"),
-    ],
-)
-def test_sports_forecast_names_the_favorite_and_tag_names_the_value_side(
-    board_context, side, abbreviation
-):
+@pytest.mark.parametrize("side", ["home", "away"])
+def test_sports_forecast_and_tag_name_the_same_outcome(board_context, side):
     response = main._simple_board(request(""), None, "sports", [game(side)], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    assert html.select_one(".prediction-glyph")["aria-label"] == ("BOS: RATi 63.0%")
-    assert html.select_one(".tag")["title"] == f"{abbreviation} · lean signal"
+    assert html.select_one(".prediction-glyph")["aria-label"] == "BOS: RATi 63.0%"
+    assert html.select_one(".tag").get_text() == "MODEL"
+    assert html.select_one(".tag")["title"] == ("BOS: saved model; comparable fresh prices pending")
 
 
 def test_selected_team_falls_back_to_full_name(board_context):
