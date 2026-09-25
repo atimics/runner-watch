@@ -297,13 +297,39 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
+        golf_matchup = None
+        if match_play and len(teams) == 2:
+            scores = [number(team.get("points")) for team in teams]
+            leader_index = (
+                scores.index(max(scores))
+                if all(score is not None for score in scores) and scores[0] != scores[1]
+                else None
+            )
+            golf_matchup = {
+                "teams": [
+                    {
+                        "side": str(index),
+                        "label": team["name"],
+                        "name": team["name"],
+                        "emphasized": index == leader_index,
+                        "emphasis_label": (
+                            ("Winner" if item.get("completed") else "Leading")
+                            if index == leader_index
+                            else ""
+                        ),
+                    }
+                    for index, team in enumerate(teams)
+                ],
+                "forecast": None,
+            }
         return {
             "id": str(item["id"]),
             "ticker": prediction_ticker(item),
+            **({"matchup": golf_matchup} if golf_matchup else {}),
             "name": str(item.get("name") or "Tournament"),
             "subtitle": (
-                " vs ".join(str(team.get("name") or "Team") for team in teams)
-                if match_play and teams
+                str(item.get("name") or "Match play") + " · GOLF"
+                if golf_matchup
                 else str(leader.get("player_name") or "PGA Tour")
             ),
             "value": (

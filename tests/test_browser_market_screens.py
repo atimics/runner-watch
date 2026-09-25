@@ -901,3 +901,29 @@ def test_memecoin_list_uses_shared_glyph_with_readable_unknowns(page: Page, widt
     expect(glyphs.nth(3)).to_have_accessible_name(re.compile("Attention unavailable"))
     expect(page.get_by_text("Market quote", exact=True)).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_golf_score_and_glyph_share_the_team_row_columns(page: Page, width):
+    event = {
+        "id": "golf:401824815",
+        "name": "Presidents Cup",
+        "scoring_format": "match_play",
+        "status": "in",
+        "start_time": datetime.now(UTC).isoformat(),
+        "teams": [
+            {"name": "USA", "points": 3, "points_display": "3"},
+            {"name": "International", "points": 2, "points_display": "2"},
+        ],
+    }
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("sports", [event]))
+    expect(page.locator(".sports-team.is-highlighted")).to_have_text("USA")
+    name = page.locator(".ticker-name").bounding_box()
+    score = page.locator(".sports-score").bounding_box()
+    glyph = page.locator(".sports-forecast").bounding_box()
+    assert score["x"] >= name["x"] + name["width"]
+    assert glyph["x"] >= score["x"] + score["width"]
+    assert abs(glyph["y"] + glyph["height"] / 2 - score["y"] - score["height"] / 2) < 4
+    assert page.locator(".ticker-list > *").count() == 1
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
