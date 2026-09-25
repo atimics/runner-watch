@@ -55,3 +55,12 @@ def test_the_coin_card_route_serves_a_png(monkeypatch):
 
     assert card.status_code == 200
     assert card.headers["content-type"] == "image/png"
+
+
+def test_an_unreported_amount_is_left_off_the_share():
+    detail = {**DETAIL, "coin": {**DETAIL["coin"], "market_cap_label": "—"}}
+
+    share = web_main.memecoin_share(detail, "chain-abc")
+
+    assert "Market cap" not in share["summary"]
+    assert "Volume $1.2M" in share["summary"]

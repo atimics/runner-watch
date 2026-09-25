@@ -1181,3 +1181,29 @@ def test_a_scheduled_reopen_does_not_wake_dash_early():
 
     assert changes["reopened_halts"] == 0
     assert changes["any"] is False
+
+
+def test_a_desk_note_cut_off_by_the_token_cap_keeps_only_whole_sentences(monkeypatch):
+    from runner_web import main as web_main
+
+    cut = "NCPL flying 246 percent on a fresh 8-K. One memecoin, PvgENd3WRfbuuEsMTj"
+    monkeypatch.setattr(
+        web_main,
+        "_telegram_chat_completion",
+        lambda body: {"choices": [{"message": {"content": cut}, "finish_reason": "length"}]},
+    )
+    assert web_main._generate_desk_note({}) == "NCPL flying 246 percent on a fresh 8-K."
+
+    monkeypatch.setattr(
+        web_main,
+        "_telegram_chat_completion",
+        lambda body: {"choices": [{"message": {"content": "Up 21."}, "finish_reason": "length"}]},
+    )
+    assert web_main._generate_desk_note({}) == ""
+
+    monkeypatch.setattr(
+        web_main,
+        "_telegram_chat_completion",
+        lambda body: {"choices": [{"message": {"content": cut}, "finish_reason": "stop"}]},
+    )
+    assert web_main._generate_desk_note({}) == cut

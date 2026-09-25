@@ -2226,11 +2226,19 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
             },
         ],
         "provider": {"require_parameters": True, "zdr": True},
-        "max_tokens": 200,
+        # Room for the model's reasoning as well as the note: a contract address
+        # alone is dozens of tokens, and a tight cap cut notes off mid-address.
+        "max_tokens": 700,
     }
     result = _telegram_chat_completion(body)
-    choice = (result.get("choices") or [{}])[0].get("message") or {}
-    return str(choice.get("content") or "").strip()
+    first = (result.get("choices") or [{}])[0]
+    note = str((first.get("message") or {}).get("content") or "").strip()
+    if first.get("finish_reason") == "length":
+        # A cut note ends mid-word, often mid-address, and even a final "." may
+        # be a decimal point. Keep only the sentences that were followed by more.
+        end = max(note.rfind(mark) for mark in (". ", "! ", "? "))
+        note = note[: end + 1] if end >= 0 else ""
+    return note
 
 
 def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
@@ -3167,6 +3175,13 @@ def _coin_share_address(coin: dict[str, Any]) -> str:
     return address if COIN_ADDRESS_RE.fullmatch(address) else ""
 
 
+def _coin_amount(coin: dict[str, Any], key: str) -> str:
+    """A coin's amount label, or nothing when the market has not reported it."""
+
+    label = str(coin.get(f"{key}_label") or "")
+    return "" if label in {"", "—", "-"} else label
+
+
 COIN_ADDRESS_RE = re.compile(r"(?:[1-9A-HJ-NP-Za-km-z]{32,44}|0x[a-fA-F0-9]{40})")
 
 
@@ -3184,8 +3199,10 @@ def memecoin_share(detail: dict[str, Any], coin_id: str) -> dict[str, Any]:
     move = f"{change:+.1f}% 24h" if change is not None else None
     headline = " · ".join(part for part in (label, coin.get("price_label"), move) if part)
     facts = [
-        f"Volume {coin['volume_label']}" if coin.get("volume_label") else "",
-        f"Market cap {coin['market_cap_label']}" if coin.get("market_cap_label") else "",
+        f"Volume {_coin_amount(coin, 'volume')}" if _coin_amount(coin, "volume") else "",
+        f"Market cap {_coin_amount(coin, 'market_cap')}"
+        if _coin_amount(coin, "market_cap")
+        else "",
     ]
     flags = [str(item.get("title")) for item in coin.get("findings") or [] if item.get("title")]
     summary = " · ".join(part for part in (address, *facts, *flags[:1]) if part)
@@ -3227,8 +3244,8 @@ def _memecoin_card_png(detail: dict[str, Any]) -> bytes:
     ]
     _draw_card_chart(draw, {"points": points}, (95, 312, 690, 500))
     facts = [
-        ("VOLUME 24H", coin.get("volume_label")),
-        ("MARKET CAP", coin.get("market_cap_label")),
+        ("VOLUME 24H", _coin_amount(coin, "volume")),
+        ("MARKET CAP", _coin_amount(coin, "market_cap")),
         ("NETWORK", str(coin.get("network") or "").upper() or None),
     ]
     top = 312
