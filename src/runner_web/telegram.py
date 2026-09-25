@@ -617,19 +617,21 @@ def format_market_report_post_md(report, *, origin):
         )
     )
     header = f"\U0001f9ed *{label}*"
-    headline = escape_markdown_v2(bounded_text(report.get("headline")))
-    summary = escape_markdown_v2(bounded_text(report.get("summary"), 500))
+    narrative = report.get("narrative") or {}
+    headline = escape_markdown_v2(bounded_text(narrative.get("headline") or report.get("headline")))
+    summary = escape_markdown_v2(bounded_text(narrative.get("intro") or report.get("summary"), 500))
     blocks = [header]
     if headline:
         blocks.append(headline)
     if summary and summary != headline:
         blocks.append(summary)
-    # One story, not a roster. A list of three tickers reads like a table and
-    # none of them can be previewed anyway, so the briefing names who is out
-    # front and sends the reader to the report for the rest.
+    for story in narrative.get("stories", [])[:3]:
+        title = escape_markdown_v2(bounded_text(story.get("headline"), 120))
+        body = escape_markdown_v2(bounded_text(story.get("body"), 450))
+        blocks.append(f"*{title}*\n{body}")
     feature = report.get("spotlight") if raw_type == "post_market" else None
     leader = feature.get("snapshot") if feature else _lead_entry(report.get("leaders"))
-    if leader is not None:
+    if leader is not None and not narrative.get("stories"):
         ticker = escape_markdown_v2(str(leader.get("ticker") or "").strip().upper())
         lead_line = f"*{ticker}* company in focus" if feature else f"*{ticker}* leads the pack"
         metrics = _format_metrics_line(leader)

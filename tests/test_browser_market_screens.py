@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -49,8 +50,52 @@ def test_list_layout_and_navigation_are_shared(page: Page, market, width):
     expect(page.locator(".ticker-list")).to_be_visible()
     expect(page.locator(".ticker")).to_have_count(1)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    assert page.locator(".ticker").bounding_box()["y"] < 450
+    assert page.locator(".ticker").first.bounding_box()["y"] < 450
     expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_top_sports_rank_leads_and_fits_the_board(page: Page, width: int):
+    now = datetime.now(UTC)
+    event = {
+        **fixtures.sample("sports"),
+        "id": "nba:pick",
+        "status": "pre",
+        "start_time": (now + timedelta(hours=2)).isoformat(),
+        "view_state": {"started": False, "score_available": False, "label": "Upcoming"},
+        "prediction": {
+            "signal": "watch",
+            "selection": "away",
+            "away_probability": 0.61,
+            "home_probability": 0.39,
+            "away_market_probability": 0.53,
+            "home_market_probability": 0.47,
+            "edge": 0.08,
+            "observed_at": now.isoformat(),
+        },
+    }
+    lower = {
+        **event,
+        "id": "nba:lower",
+        "prediction": {
+            **event["prediction"],
+            "signal": "lean",
+            "away_market_probability": 0.58,
+            "home_market_probability": 0.42,
+            "edge": 0.03,
+        },
+    }
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("sports", [lower, event]))
+
+    expect(page.locator(".ticker").first).to_have_attribute(
+        "href", re.compile(r"^/game/nba:pick(\?|$)")
+    )
+    expect(page.locator(".ticker").first.locator(".rank-detail")).to_contain_text(
+        "61% win · +8.0 pp vs odds"
+    )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert page.locator(".ticker").first.bounding_box()["y"] < 450
 
 
 def test_tag_filter_chips_hide_and_show_rows(page: Page):
@@ -77,8 +122,9 @@ def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, sco
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing("sports", [event]))
     expect(page.locator(".sports-team.is-highlighted")).to_have_text("NYK")
-    expect(page.locator(".sports-chance-ring")).to_have_attribute(
-        "aria-label", "Pregame model: Boston Celtics 60% win chance."
+    expect(page.locator(".prediction-glyph [role=img]")).to_have_attribute(
+        "aria-label",
+        re.compile(r"BOS: sentiment pending a fresh model and comparable market price"),
     )
     expect(page.locator(".ticker-value strong")).to_have_text(f"{scores[0]} – {scores[1]}")
     identity = page.locator(".ticker-name").bounding_box()
@@ -90,7 +136,7 @@ def test_sports_leader_is_larger_and_score_stays_on_right(page: Page, width, sco
     assert forecast["x"] >= score["x"] + score["width"]
     tag = page.locator(".sports-matchup > .tag").bounding_box()
     assert tag["x"] + tag["width"] <= identity["x"]
-    expect(page.locator(".sports-identity > .sports-league")).to_have_text("NBA")
+    expect(page.locator(".sports-identity > .sports-league")).to_contain_text("NBA")
     assert page.locator(".ticker-list > *").count() == 1
     sizes = page.locator(".sports-team").evaluate_all(
         "teams => teams.map(team => parseFloat(getComputedStyle(team).fontSize))"
@@ -121,67 +167,11 @@ def test_sports_row_uses_stock_spacing_and_glyph_size(page: Page, width):
     assert page.locator(".ticker-list > *").count() == 1
 
 
-@pytest.mark.parametrize("width", [320, 390, 1280])
-def test_saved_sports_factors_appear_in_row_glyph_and_game_detail(page: Page, width):
+def game_with_forecasts():
+    now = datetime.now(UTC)
     event = fixtures.sample("sports")
     event.update(
-        league="mlb",
-        away_abbreviation="ARI",
-        away_team_name="Arizona",
-        home_abbreviation="COL",
-        home_team_name="Colorado",
-        status="in",
-        away_score=2,
-        home_score=4,
-        prediction={
-            "model_version": "team-form-v1",
-            "observed_at": "2026-09-23T19:00:00+00:00",
-            "home_probability": 0.433193,
-            "away_probability": 0.566807,
-            "home_market_probability": 0.489166,
-            "away_market_probability": 0.510834,
-            "edge": 0.055973,
-            "selection": "away",
-            "signal": "watch",
-            "factors": {
-                "baseline_pct": 50,
-                "home_record_delta_pp": -10.180723,
-                "home_venue_delta_pp": 3.5,
-                "home_clamp_delta_pp": 0,
-                "home_probability_pct": 43.319277,
-                "home_record": {"wins": 64, "losses": 86},
-                "away_record": {"wins": 90, "losses": 60},
-            },
-        },
-    )
-    page.set_viewport_size({"width": width, "height": 844})
-    open_screen(page, listing("sports", [event]))
-    expect(page.locator(".sports-team.is-highlighted")).to_have_text("COL")
-    expect(page.locator(".sports-chance-ring .sports-factor")).to_have_count(2)
-    expect(page.locator(".sports-chance-ring")).to_have_attribute(
-        "aria-label", re.compile(r"Season record \+10.2 points; Venue -3.5 points")
-    )
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-
-    open_screen(page, detail("sports", event))
-    opinion = page.get_by_role("region", name="Pregame model and market")
-    expect(opinion.locator(".sports-opinion-side")).to_have_count(2)
-    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("ARI")
-    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("56.7%")
-    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("51.1%")
-    expect(opinion.locator(".sports-opinion-side").last).to_contain_text("COL")
-    expect(opinion.locator(".sports-opinion-side").last).to_contain_text("43.3%")
-    opinion.locator(".sports-opinion-breakdown summary").click()
-    expect(page.locator(".sports-opinion-steps li")).to_have_count(2)
-    expect(page.get_by_text("ARI season record 90–60")).to_be_visible()
-    expect(page.get_by_text("ARI above market by 5.6 pp")).to_be_visible()
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-
-
-@pytest.mark.parametrize("width", [320, 1280])
-def test_sports_detail_keeps_favorite_and_market_value_side_clear(page: Page, width):
-    event = fixtures.sample("sports")
-    event.update(
+        id="nfl:123",
         league="nfl",
         away_abbreviation="ATL",
         away_team_name="Atlanta Falcons",
@@ -189,7 +179,10 @@ def test_sports_detail_keeps_favorite_and_market_value_side_clear(page: Page, wi
         home_team_name="Green Bay Packers",
         away_score=7,
         home_score=7,
+        start_time=(now + timedelta(minutes=5)).isoformat(),
         prediction={
+            "observed_at": now.isoformat(),
+            "model_version": "team-form-v1",
             "home_probability": 0.5914,
             "away_probability": 0.4086,
             "home_market_probability": 0.6846,
@@ -197,106 +190,158 @@ def test_sports_detail_keeps_favorite_and_market_value_side_clear(page: Page, wi
             "selection": "away",
             "signal": "watch",
             "edge": 0.0932,
-        },
-        edge_history={
-            "side": "away",
-            "team": "ATL",
-            "points": [
-                {
-                    "observed_at": "2026-09-24T21:00:00Z",
-                    "model_pct": 39.8,
-                    "market_pct": 34.0,
-                    "edge_pct": 5.8,
-                },
-                {
-                    "observed_at": "2026-09-24T22:48:00Z",
-                    "model_pct": 40.9,
-                    "market_pct": 31.5,
-                    "edge_pct": 9.3,
-                },
-            ],
+            "factors": {
+                "home_probability_pct": 59.14,
+                "home_record_delta_pp": 3.64,
+                "home_venue_delta_pp": 5.5,
+                "home_clamp_delta_pp": 0,
+            },
         },
     )
-    page.set_viewport_size({"width": width, "height": 844})
-    open_screen(page, detail("sports", event))
+    event["prediction_history"] = [
+        {**event["prediction"], "observed_at": (now - timedelta(minutes=10)).isoformat()},
+        event["prediction"],
+    ]
+    return event
 
-    opinion = page.get_by_role("region", name="Pregame model and market")
-    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("ATL")
-    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("40.9%")
-    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("31.5%")
-    expect(opinion.locator(".sports-opinion-side.is-value")).to_contain_text("+9.3 pp above market")
-    expect(opinion.locator(".sports-opinion-side.is-favorite")).to_contain_text("GB")
-    expect(opinion.locator(".sports-opinion-side.is-favorite")).to_contain_text("59.1%")
-    expect(opinion.locator(".sports-opinion-side.is-favorite")).to_contain_text("68.5%")
-    expect(opinion.locator(".sports-opinion-side.is-favorite")).to_contain_text(
-        "-9.3 pp below market"
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_value_row_opens_the_same_team_chart_and_glyph(page: Page, width):
+    event = game_with_forecasts()
+    board = listing("sports", [event])
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, board)
+    expect(page.locator(".sports-row-opinion")).to_have_text("ATL · +9.3 points vs market")
+    expect(page.locator(".prediction-glyph .indicator-glyph")).to_have_attribute(
+        "aria-label", re.compile("ATL: RATi 9.3 pp above Sportsbook")
     )
-    expect(
-        opinion.locator(".sports-opinion-side.is-favorite .sports-opinion-result svg")
-    ).to_be_visible()
-    chart = opinion.get_by_role("region", name="ATL pregame chance history")
+    assert page.locator(".ticker-list > *").count() == 1
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    screen = detail("sports", event, outcome="away", contract="winner")
+    href = board["rows"][0]["href"]
+    page.route(
+        "http://app.test" + href,
+        lambda r: r.fulfill(content_type="text/html", body=fixtures.render(screen)),
+    )
+    page.locator(".sports-matchup").click()
+    expect(page).to_have_url("http://app.test" + href)
+    expect(page.locator(".prediction-outcomes a[aria-current]")).to_contain_text("ATL")
+    expect(page.locator(".prediction-gap")).to_contain_text("ATL · RATi − market")
+    expect(page.locator(".prediction-gap")).to_contain_text("+9.3 pp")
+    expect(page.get_by_role("region", name="ATL probability history")).to_be_visible()
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_sports_detail_uses_one_outcome_and_market_gap(page: Page, width):
+    event = game_with_forecasts()
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, detail("sports", event, outcome="home"))
+    opinion = page.get_by_role("region", name="Outcome market")
+    expect(opinion.locator(".prediction-outcomes a[aria-current]")).to_contain_text("GB")
+    expect(opinion.locator(".prediction-quote")).to_contain_text("59.1%")
+    expect(opinion.locator(".prediction-quote")).to_contain_text("68.5%")
+    expect(opinion.locator(".prediction-gap")).to_contain_text("-9.3 pp")
+    expect(opinion.locator(".prediction-gap")).to_contain_text("Below Sportsbook")
+    chart = opinion.get_by_role("region", name="GB probability history")
     expect(chart.get_by_role("img")).to_be_visible()
-    expect(chart.locator("polyline")).to_have_count(2)
-    expect(chart).to_contain_text("+5.8 pp first saved → +9.3 pp latest pregame")
+    expect(chart.locator("path")).to_have_count(2)
+    glyph = opinion.locator(".indicator-glyph")
+    expect(glyph).to_have_attribute("data-sentiment", "negative")
+    expect(glyph).to_have_attribute("aria-label", re.compile("GB: RATi 9.3 pp below Sportsbook"))
+    opinion.get_by_text("Sentiment, attention, and risk", exact=True).click()
+    reading = opinion.locator("[data-sports-indicator-reading]")
+    expect(reading).to_contain_text("GB: RATi 9.3 pp below Sportsbook")
+    expect(reading).to_contain_text("Model and market limits apply")
+    opinion.get_by_text("Model, data, and settlement", exact=True).click()
+    expect(opinion.locator(".prediction-factors")).to_contain_text("Season record")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
+    # Each outcome link changes the whole comparison, including its chart.
+    other_screen = detail("sports", event, outcome="away")
+    html = fixtures.render(other_screen)
+    page.route(
+        "http://app.test/?contract=winner&outcome=away",
+        lambda r: r.fulfill(content_type="text/html", body=html),
+    )
+    opinion.get_by_role("link", name=re.compile(r"ATL 40.9%")).click()
+    expect(page.locator(".prediction-quote")).to_contain_text("40.9%")
+    expect(page.locator(".prediction-gap")).to_contain_text("+9.3 pp")
+    expect(page.locator(".prediction-glyph .indicator-glyph")).to_have_attribute(
+        "data-sentiment", "positive"
+    )
+    expect(page.get_by_role("region", name="ATL probability history")).to_be_visible()
 
-def test_sports_detail_poll_refreshes_saved_chances_and_chart(page: Page):
+
+def test_sports_detail_poll_refreshes_selected_outcome_and_chart(page: Page):
     page.clock.install()
-    event = fixtures.sample("sports")
-    event["prediction"] = {
-        "away_probability": 0.6,
-        "home_probability": 0.4,
-        "away_market_probability": 0.55,
-        "home_market_probability": 0.45,
-        "selection": "away",
-        "signal": "watch",
-        "edge": 0.05,
-    }
-    event["edge_history"] = {
-        "side": "away",
-        "team": "BOS",
-        "points": [
-            {
-                "observed_at": "2026-09-24T21:00:00Z",
-                "model_pct": 60,
-                "market_pct": 55,
-                "edge_pct": 5,
-            }
-        ],
-    }
-    open_screen(page, detail("sports", event))
-    expect(page.locator(".sports-opinion-chart")).to_contain_text("1 saved pregame reading")
+    event = game_with_forecasts()
+    event["prediction"]["observed_at"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    event["prediction_history"] = [event["prediction"]]
+    screen = detail("sports", event)
+    assert screen["refresh_url"].endswith("?contract=winner&outcome=away")
+    open_screen(page, screen)
+    expect(page.locator(".prediction-history")).to_contain_text("1 saved time")
     updated = {
         **event,
         "prediction": {
             **event["prediction"],
-            "away_market_probability": 0.52,
-            "home_market_probability": 0.48,
-            "edge": 0.08,
+            "observed_at": datetime.now(UTC).isoformat(),
+            "away_market_probability": 0.5,
+            "home_market_probability": 0.5,
         },
     }
-    updated["edge_history"] = {
-        **event["edge_history"],
-        "points": [
-            *event["edge_history"]["points"],
-            {
-                "observed_at": "2026-09-24T22:00:00Z",
-                "model_pct": 60,
-                "market_pct": 52,
-                "edge_pct": 8,
-            },
-        ],
-    }
-    next_screen = detail("sports", updated)
+    updated["prediction_history"] = [event["prediction"], updated["prediction"]]
+    next_screen = detail("sports", updated, outcome="away")
     next_screen["opinion_html"] = fixtures.web.templates.env.get_template(
         "_sports_opinion.html"
     ).render(screen=next_screen)
-    page.route("**/api/screens/sports/**/detail", lambda route: route.fulfill(json=next_screen))
+    page.route("http://app.test" + screen["refresh_url"], lambda r: r.fulfill(json=next_screen))
     page.clock.fast_forward(60000)
-    expect(page.locator(".sports-opinion-chart")).to_contain_text("2 saved pregame readings")
-    expect(page.locator(".sports-opinion-side.is-value")).to_contain_text("52.0%")
-    expect(page.locator(".sports-opinion-side.is-value")).to_contain_text("+8.0 pp above market")
+    expect(page.locator(".prediction-history")).to_contain_text("2 saved times")
+    expect(page.locator(".prediction-quote")).to_contain_text("50.0%")
+    expect(page.locator(".prediction-gap")).to_contain_text("-9.1 pp")
+    expect(page.locator(".prediction-outcomes a[aria-current]")).to_contain_text("ATL")
+
+
+def test_cup_full_page_refresh_keeps_outcome_when_value_moves_to_other_side(page: Page):
+    now = datetime.now(UTC).isoformat()
+    event = {
+        "id": "golf:401824815",
+        "name": "Presidents Cup",
+        "analysis": {
+            "captured_at": now,
+            "model_version": "cup-ranking-v1",
+            "prediction": {
+                "usa": 0.6,
+                "international": 0.3,
+                "tie": 0.1,
+                "expected_usa": 16,
+                "expected_international": 14,
+            },
+        },
+        "contract_quotes": [
+            {
+                "contract_key": "winner-half-tie",
+                "outcome_key": "international",
+                "source": "polymarket",
+                "probability": 0.25,
+                "observed_at": now,
+            }
+        ],
+    }
+    screen = detail("sports", event, contract="winner-half-tie")
+    page.clock.install()
+    open_screen(page, screen)
+    expect(page.locator(".prediction-outcomes a[aria-current]")).to_contain_text("International")
+    event["contract_quotes"][0]["probability"] = 0.45
+    updated = detail("sports", event, contract="winner-half-tie", outcome="international")
+    url = "http://app.test" + screen["surface_url"]
+    page.route(url, lambda r: r.fulfill(content_type="text/html", body=fixtures.render(updated)))
+    with page.expect_response(url):
+        page.clock.fast_forward(60000)
+    expect(page.locator(".prediction-outcomes a[aria-current]")).to_contain_text("International")
+    expect(page.locator(".prediction-gap")).to_contain_text("-10.0 pp")
+    expect(page.get_by_role("region", name="International probability history")).to_be_visible()
 
 
 def test_narrow_stock_rows_are_single_line(page: Page):
@@ -686,9 +731,7 @@ def test_the_barrier_forecast_is_three_labelled_chances(page):
     expect(line.locator("[data-chance-up]")).to_have_text("34% upper first")
     expect(line.locator("[data-chance-down]")).to_have_text("41% lower first")
     expect(line.locator("[data-chance-timeout]")).to_have_text("25% neither")
-    expect(line.locator("[data-chance-contract]")).to_have_text(
-        "+8% before -4% within 60 minutes"
-    )
+    expect(line.locator("[data-chance-contract]")).to_have_text("+8% before -4% within 60 minutes")
 
 
 def test_a_page_without_probabilities_shows_no_forecast_line(page):
@@ -740,10 +783,7 @@ def test_the_gap_is_drawn_as_an_honest_dashed_stretch(page):
     expect(page.locator(".chart-gap-note")).to_have_count(0)
     # The dashed stretch runs from the last bar to the clock, so the axis now
     # reaches the right edge instead of stopping at the saved data.
-    offsets = [
-        float(value)
-        for value in re.findall(r"[ML]([-\d.]+),", line.get_attribute("d"))
-    ]
+    offsets = [float(value) for value in re.findall(r"[ML]([-\d.]+),", line.get_attribute("d"))]
     assert offsets[0] != offsets[-1]
     assert offsets[-1] == pytest.approx(792, abs=1)
     label = page.locator(".price-chart").get_attribute("aria-label")
@@ -894,9 +934,10 @@ def test_search_typeahead_keyboard_and_mobile_layout(page, width, tmp_path):
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing("stocks", []))
     matches = listing("stocks", [fixtures.sample("stocks")])
-    page.route("http://app.test/?*", lambda route: route.fulfill(
-        content_type="text/html", body=fixtures.render(matches)
-    ))
+    page.route(
+        "http://app.test/?*",
+        lambda route: route.fulfill(content_type="text/html", body=fixtures.render(matches)),
+    )
     search = page.get_by_role("combobox")
     search.fill("TE")
     expect(page.get_by_role("option")).to_have_count(1)
@@ -979,10 +1020,37 @@ def test_memecoin_list_uses_shared_glyph_with_readable_unknowns(page: Page, widt
     expect(glyphs).to_have_count(4)
     sizes = [glyphs.nth(i).locator(".score-pie").bounding_box()["width"] for i in range(3)]
     assert sizes[0] < sizes[1] == sizes[2]
-    assert glyphs.nth(2).locator(".score-pie").evaluate(
-        "el => getComputedStyle(el).maskImage"
-    ) == "none"
+    assert (
+        glyphs.nth(2).locator(".score-pie").evaluate("el => getComputedStyle(el).maskImage")
+        == "none"
+    )
     expect(glyphs.nth(3)).to_have_attribute("data-mix", "unknown")
     expect(glyphs.nth(3)).to_have_accessible_name(re.compile("Attention unavailable"))
     expect(page.get_by_text("Market quote", exact=True)).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_golf_score_and_glyph_share_the_team_row_columns(page: Page, width):
+    event = {
+        "id": "golf:401824815",
+        "name": "Presidents Cup",
+        "scoring_format": "match_play",
+        "status": "in",
+        "start_time": datetime.now(UTC).isoformat(),
+        "teams": [
+            {"name": "USA", "points": 3, "points_display": "3"},
+            {"name": "International", "points": 2, "points_display": "2"},
+        ],
+    }
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("sports", [event]))
+    expect(page.locator(".sports-team.is-highlighted")).to_have_text("USA")
+    name = page.locator(".ticker-name").bounding_box()
+    score = page.locator(".sports-score").bounding_box()
+    glyph = page.locator(".sports-forecast").bounding_box()
+    assert score["x"] >= name["x"] + name["width"]
+    assert glyph["x"] >= score["x"] + score["width"]
+    assert abs(glyph["y"] + glyph["height"] / 2 - score["y"] - score["height"] / 2) < 4
+    assert page.locator(".ticker-list > *").count() == 1
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

@@ -509,7 +509,7 @@ def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
 def test_sports_list_opens_a_single_detail_screen(page: Page, monkeypatch) -> None:
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(_event("game-1", "ONE", "TWO"))), [])
     page.locator(".ticker").click()
-    expect(page).to_have_url("http://app.test/game/game-1")
+    expect(page).to_have_url("http://app.test/game/game-1?contract=winner&outcome=away")
     expect(page.get_by_text("Game detail")).to_be_visible()
     assert errors == []
 
