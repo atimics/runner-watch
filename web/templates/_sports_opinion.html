@@ -31,6 +31,21 @@
     {% endfor %}
   </div>
   <p class="sports-opinion-explainer">The two model chances are opposite sides of one game. The gap compares each team with its saved no-vig market chance.{% if screen.market_source %} Source: {{ screen.market_source }}.{% endif %} Gaps use the saved unrounded values.</p>
+  {% if screen.prediction_markets %}
+  <section class="sports-opinion-venues" aria-label="Prediction market comparison">
+    <h3>Prediction markets</h3>
+    <p>Each venue has its own saved pregame price. The gap uses the same saved RATi model chance.</p>
+    {% for venue in screen.prediction_markets %}
+    <div class="sports-opinion-venue">
+      <div><a href="{{ venue.url }}" target="_blank" rel="noopener noreferrer">{{ venue.source }} ↗</a><small>{{ venue.saved_label }}</small></div>
+      <strong>{{ venue.team }} {{ venue.chance }}%</strong>
+      {% if venue.gap_pp is not none %}<span class="{{ 'is-above' if venue.gap_pp > 0 else 'is-below' if venue.gap_pp < 0 else '' }}">RATi {{ '%+.1f'|format(venue.gap_pp) }} pp</span>{% endif %}
+      <small>{{ venue.count }} saved {{ 'reading' if venue.count == 1 else 'readings' }}{% if venue.count > 1 %} · venue {{ '%+.1f'|format(venue.change_pp) }} pp since first saved{% endif %}</small>
+    </div>
+    {% endfor %}
+    <p>Kalshi uses both game-winner bid/ask midpoints. Polymarket uses the listed moneyline outcomes. Each pair is normalized to 100%.</p>
+  </section>
+  {% endif %}
   {% if screen.market_chart %}
   {% set chart = screen.market_chart %}
   <section class="sports-opinion-chart" aria-label="{{ chart.team }} pregame chance history" data-sports-market-chart>

@@ -301,9 +301,7 @@ def test_league_range_records_partial_when_some_days_fail(
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
         if "dates=20260920" in request.full_url:
-            raise urllib.error.HTTPError(
-                request.full_url, 400, "Bad Request", {}, None
-            )
+            raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, None)
         return io.BytesIO(json.dumps({"events": []}).encode())
 
     monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
@@ -325,9 +323,7 @@ def test_league_range_raises_only_when_every_day_fails(
     recorded: list[Any] = []
 
     def fake_urlopen(request: Any, timeout: int) -> io.BytesIO:
-        raise urllib.error.HTTPError(
-                request.full_url, 400, "Bad Request", {}, None
-            )
+        raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, None)
 
     monkeypatch.setattr(sports_module.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(sports_module, "record_source_fetch", recorded.append)
@@ -2221,3 +2217,25 @@ def test_sports_call_preview_line_and_saved_result_on_actual_routes(sports_db, m
         assert settle_picks() == 0
     finally:
         client.close()
+
+
+def test_scoreboard_team_stats_are_saved_on_game_detail(sports_db) -> None:
+    raw = sample_event(completed=True)
+    for competitor in raw["competitions"][0]["competitors"]:
+        side = competitor["homeAway"]
+        competitor["statistics"] = [
+            {"name": "hits", "displayValue": "9" if side == "home" else "7"},
+            {"name": "errors", "displayValue": "0" if side == "home" else "1"},
+        ]
+    event = normalize_event("mlb", raw)
+    assert event is not None
+    store_events([event])
+    detail = sports_event(event["id"])
+    assert detail is not None
+    assert detail["team_stats"] == {
+        "away": {"hits": "7", "errors": "1"},
+        "home": {"hits": "9", "errors": "0"},
+    }
+    response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
+    assert b"Game statistics" in response.body
+    assert b"Hits" in response.body
