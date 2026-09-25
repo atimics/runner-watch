@@ -331,9 +331,16 @@ def send_reply(
     text: str,
     *,
     reply_to_message_id: int | None = None,
+    html: str = "",
+    preview_url: str = "",
     opener: Callable[..., Any] | None = None,
 ) -> Any:
-    """Reply in a chat, threaded onto the message being answered when given."""
+    """Reply in a chat, threaded onto the message being answered when given.
+
+    With html, the reply goes out formatted and unfurls preview_url. Telegram
+    answers a markup it cannot parse with a 400 and sends nothing, so the plain
+    text then goes out instead and the room still hears the answer.
+    """
 
     payload: dict[str, Any] = {
         "chat_id": chat_id,
@@ -345,7 +352,19 @@ def send_reply(
             "message_id": reply_to_message_id,
             "allow_sending_without_reply": True,
         }
-    return _api_call(config, "sendMessage", payload, opener=opener)
+    if not html or len(html) > MAX_MESSAGE_CHARS:
+        return _api_call(config, "sendMessage", payload, opener=opener)
+    formatted = {**payload, "text": html, "parse_mode": "HTML"}
+    formatted["link_preview_options"] = (
+        {"url": preview_url, "prefer_large_media": True} if preview_url else {"is_disabled": True}
+    )
+    try:
+        return _api_call(config, "sendMessage", formatted, opener=opener)
+    except RuntimeError as exc:
+        if "status 400" not in str(exc):
+            raise
+        LOG.warning("Telegram rejected a formatted reply; sending it as plain text")
+        return _api_call(config, "sendMessage", payload, opener=opener)
 
 
 def set_reaction(

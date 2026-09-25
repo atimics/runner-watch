@@ -15,6 +15,7 @@ is a worse cheetah, and someone saying "stop" has to be able to end it.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -113,6 +114,75 @@ def resolve_tickers(database: Any, text: str, *, limit: int | None = None) -> li
         if known:
             found.append(token)
     return found[:budget]
+
+
+# A Solana contract address: 32 to 44 base58 characters standing on their own.
+ADDRESS_PATTERN = re.compile(
+    r"(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])"
+)
+REPLY_TOKEN_PATTERN = re.compile(ADDRESS_PATTERN.pattern + r"|\$[A-Za-z]{1,6}\b|\b[A-Z]{3,6}\b")
+
+
+def reply_addresses(text: str) -> list[str]:
+    return list(dict.fromkeys(ADDRESS_PATTERN.findall(text)))
+
+
+def page_tickers(database: Any, text: str) -> set[str]:
+    """Symbols in a reply that have a stock page to link to.
+
+    A cashtag alone is not enough here: memecoin chatter uses them too, and a
+    link to a stock page that does not exist is worse than no link.
+    """
+
+    found = resolve_tickers(database, text, limit=8)
+    return {
+        symbol
+        for symbol in found
+        if database.execute(
+            "SELECT 1 FROM sec_companies WHERE UPPER(ticker)=? LIMIT 1", (symbol,)
+        ).fetchone()
+    }
+
+
+def format_reply(
+    text: str, *, origin: str, coins: dict[str, str], tickers: set[str]
+) -> tuple[str, str]:
+    """Dash's plain words as Telegram HTML, and the page to unfurl under them.
+
+    A contract address becomes monospace so one tap copies it. A stock symbol
+    links to its page. The first coin the reply names, or failing that the first
+    stock, unfurls as the page's share card. Everything else is escaped as text.
+    """
+
+    base = origin.rstrip("/")
+    parts: list[str] = []
+    pages: list[tuple[str, str]] = []
+    cursor = 0
+    for match in REPLY_TOKEN_PATTERN.finditer(text):
+        token = match.group(0)
+        if token in coins:
+            rendered = f"<code>{token}</code>"
+            pages.append(("coin", f"{base}/memecoins/coin/{coins[token]}"))
+        elif ADDRESS_PATTERN.fullmatch(token):
+            rendered = f"<code>{token}</code>"
+        elif token.lstrip("$").upper() in tickers and (token.startswith("$") or token.isupper()):
+            symbol = token.lstrip("$").upper()
+            url = f"{base}/stock/{symbol}"
+            rendered = f'<a href="{url}">{html.escape(token)}</a>'
+            pages.append(("stock", url))
+        else:
+            continue
+        parts.append(html.escape(text[cursor : match.start()]))
+        parts.append(rendered)
+        cursor = match.end()
+    parts.append(html.escape(text[cursor:]))
+    body = "".join(parts)
+    coin_pages = [url for kind, url in pages if kind == "coin"]
+    if coin_pages:
+        # The address itself stays copyable, so the coin page gets its own link.
+        body += f'\n\n<a href="{coin_pages[0]}">Open the coin page</a>'
+        return body, coin_pages[0]
+    return body, pages[0][1] if pages else ""
 
 
 def _utc(value: datetime | None = None) -> datetime:
@@ -352,8 +422,9 @@ CHEETAH_PERSONA = (
     "believed it, not because somebody asked you to. "
     "If you do speak, say something: an ellipsis or a bare acknowledgement reads "
     "as being ignored, so either answer the person or hold and say nothing. "
-    "The room gets your words as plain text, so write them that way: no "
-    "asterisks, no markdown, no bullet lists. "
+    "Write plain text: no asterisks, no markdown, no bullet lists, no URLs. "
+    "Name a coin by its full contract address and a stock as $SYMBOL; the room "
+    "turns those into copyable addresses, page links and a preview card for you. "
     "Keep it under about forty words unless someone asked for detail."
 )
 

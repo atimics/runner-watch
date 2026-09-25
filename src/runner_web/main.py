@@ -203,6 +203,7 @@ from runner_web.memecoin_calls import (
     expire_memecoin_calls,
     memecoin_calls,
 )
+from runner_web.memecoin_chain_parser import short_address
 from runner_web.memecoins import (
     REFRESH_SECONDS,
     memecoin_detail,
@@ -371,10 +372,16 @@ from runner_web.telegram_chat import (
     finish_update as telegram_finish_update,
 )
 from runner_web.telegram_chat import (
+    format_reply as telegram_format_reply,
+)
+from runner_web.telegram_chat import (
     mute_engagement as telegram_mute_engagement,
 )
 from runner_web.telegram_chat import (
     open_engagement as telegram_open_engagement,
+)
+from runner_web.telegram_chat import (
+    page_tickers as telegram_page_tickers,
 )
 from runner_web.telegram_chat import (
     parse_update as telegram_parse_update,
@@ -393,6 +400,9 @@ from runner_web.telegram_chat import (
 )
 from runner_web.telegram_chat import (
     record_update as telegram_record_update,
+)
+from runner_web.telegram_chat import (
+    reply_addresses as telegram_reply_addresses,
 )
 from runner_web.telegram_chat import (
     resolve_tickers as telegram_resolve_tickers,
@@ -1906,6 +1916,30 @@ def _telegram_identity() -> tuple[str, int] | None:
     return str(username), bot_id
 
 
+def _dash_reply_markup(database: Any, text: str) -> tuple[str, str]:
+    """Links, copyable addresses and a preview card for one of Dash's replies."""
+
+    coins: dict[str, str] = {}
+    addresses = telegram_reply_addresses(text)
+    if addresses:
+        try:
+            rows = memecoin_market(sort="volume")["rows"]
+        except Exception:
+            LOG.exception("Could not map Dash's contract addresses to coin pages")
+            rows = []
+        coins = {
+            str(row["token_address"]): str(row["id"])
+            for row in rows
+            if row.get("token_address") in addresses
+        }
+    return telegram_format_reply(
+        text,
+        origin=RUNNERS_ORIGIN,
+        coins=coins,
+        tickers=telegram_page_tickers(database, text),
+    )
+
+
 def _act_on_telegram_message(
     database: Any,
     config: Any,
@@ -1921,8 +1955,14 @@ def _act_on_telegram_message(
         if not text:
             action = "hold"
         else:
+            body, preview = _dash_reply_markup(database, text)
             send_telegram_reply(
-                config, message.chat_id, text, reply_to_message_id=message.message_id
+                config,
+                message.chat_id,
+                text,
+                reply_to_message_id=message.message_id,
+                html=body,
+                preview_url=preview,
             )
             telegram_record_action(database, message, "reply", text[:200], now)
             telegram_spend_engagement(database, message.chat_id, message.user_id, now)
@@ -2221,7 +2261,9 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
         return {"status": "error", "detail": type(exc).__name__}
     if not note:
         return {"status": "held"}
-    send_telegram_reply(config, chat_id, note)
+    with connection() as database:
+        body, preview = _dash_reply_markup(database, note)
+    send_telegram_reply(config, chat_id, note, html=body, preview_url=preview)
     worker_state("dash_desk_note_last_at", current.isoformat())
     worker_state("dash_desk_note_last_note", note[:500])
     return {"status": "sent", "chars": len(note)}
@@ -3113,6 +3155,116 @@ def ticker_card(ticker: str, request: Request) -> Response:
         map_data = {"events": []}
     return Response(
         _ticker_card_png(detail, chart, map_data),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+def _coin_share_address(coin: dict[str, Any]) -> str:
+    """The contract address, only when it is shaped like one, as the page shows it."""
+
+    address = str(coin.get("token_address") or "")
+    return address if COIN_ADDRESS_RE.fullmatch(address) else ""
+
+
+COIN_ADDRESS_RE = re.compile(r"(?:[1-9A-HJ-NP-Za-km-z]{32,44}|0x[a-fA-F0-9]{40})")
+
+
+def memecoin_share(detail: dict[str, Any], coin_id: str) -> dict[str, Any]:
+    """What a shared coin link should say about itself.
+
+    A launch can copy a famous coin's name, so a chain coin unfurls under its
+    contract address. The creator's name is left off the card entirely.
+    """
+
+    coin = detail.get("coin") or {}
+    address = _coin_share_address(coin)
+    label = short_address(address) if address else f"${coin.get('symbol') or ''}"
+    change = _number(coin.get("change_24h"))
+    move = f"{change:+.1f}% 24h" if change is not None else None
+    headline = " · ".join(part for part in (label, coin.get("price_label"), move) if part)
+    facts = [
+        f"Volume {coin['volume_label']}" if coin.get("volume_label") else "",
+        f"Market cap {coin['market_cap_label']}" if coin.get("market_cap_label") else "",
+    ]
+    flags = [str(item.get("title")) for item in coin.get("findings") or [] if item.get("title")]
+    summary = " · ".join(part for part in (address, *facts, *flags[:1]) if part)
+    version = hashlib.sha256(
+        "|".join(str(coin.get(key)) for key in ("price", "change_24h", "observed_at")).encode()
+    ).hexdigest()[:10]
+    return {
+        "title": headline,
+        "summary": (summary or "Memecoin evidence and price history.")[:200],
+        "path": f"/memecoins/coin/{coin_id}",
+        "card_path": f"/memecoins/coin/{coin_id}/card.png?v={version}",
+    }
+
+
+def _memecoin_card_png(detail: dict[str, Any]) -> bytes:
+    coin = detail.get("coin") or {}
+    address = _coin_share_address(coin)
+    change = _number(coin.get("change_24h"))
+    image = Image.new("RGB", (1200, 630), "#090b0b")
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle(
+        (55, 55, 1145, 575), radius=34, fill="#111514", outline="#57e389", width=3
+    )
+    draw.text((95, 84), _card_text("RATi RUNNERS · MEMECOIN"), "#87e8a9", font=font(26, True))
+    label = short_address(address) if address else f"${coin.get('symbol') or ''}"
+    draw.text((95, CARD_PRICE_Y), _card_text(label), "#f4f8f6", font=font(64, True))
+    if address:
+        # The full address under the short one: it is the coin's identity.
+        draw.text((95, CARD_COMPANY_Y), address, "#7e8b86", font=font(20))
+    price = _card_price(coin.get("price")) or "No price"
+    draw.text((1105, CARD_PRICE_Y), price, "#f4f8f6", font=font(60, True), anchor="ra")
+    move = f"{change:+.1f}% 24h" if change is not None else "—"
+    tone = "#87e8a9" if (change or 0) > 0 else "#f2a3ac" if (change or 0) < 0 else "#9fb2a8"
+    draw.text((1105, CARD_CHANGE_Y), move, tone, font=font(32, True), anchor="ra")
+    draw.line((95, 292, 1105, 292), fill="#26302c", width=2)
+    points = [
+        {"time": row.get("observed_at"), "close": row.get("price")}
+        for row in detail.get("history") or []
+    ]
+    _draw_card_chart(draw, {"points": points}, (95, 312, 690, 500))
+    facts = [
+        ("VOLUME 24H", coin.get("volume_label")),
+        ("MARKET CAP", coin.get("market_cap_label")),
+        ("NETWORK", str(coin.get("network") or "").upper() or None),
+    ]
+    top = 312
+    for caption, value in facts:
+        if not value:
+            continue
+        draw.text((740, top), caption, "#65716b", font=font(18, True))
+        draw.text((740, top + 24), _card_text(value), "#f4f8f6", font=font(30, True))
+        top += 64
+    findings = [str(item.get("title")) for item in coin.get("findings") or [] if item.get("title")]
+    if findings:
+        draw.text(
+            (740, top), _card_text(f"Flag: {findings[0]}")[:36], "#f2a3ac", font=font(20, True)
+        )
+    draw.text(
+        (95, CARD_FOOTER_Y),
+        _card_text("runners.rati.chat · Research only"),
+        "#65716b",
+        font=font(20),
+    )
+    stamp = _card_time(coin.get("observed_at"))
+    if stamp:
+        draw.text((1105, CARD_FOOTER_Y), stamp, "#65716b", font=font(20), anchor="ra")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+@app.get("/memecoins/coin/{coin_id}/card.png")
+def memecoin_card(coin_id: str, request: Request) -> Response:
+    enforce_rate(request, "ticker-card", limit=60, seconds=60)
+    detail = _cached_memecoin_detail(coin_id)
+    if detail is None:
+        raise HTTPException(404, "Coin not found")
+    return Response(
+        _memecoin_card_png(detail),
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=300"},
     )
@@ -8195,6 +8347,7 @@ def memecoin_detail_page(
         nav_product="memecoins",
         active_tab=view,
         detail=detail,
+        share=memecoin_share(detail, coin_id),
         calls=detail["calls"],
         back_url=back_url,
         list_path=list_path,
