@@ -11,6 +11,19 @@
 .golf-team-points span { flex: 1; font-size: 16px; font-weight: 700; }
 .golf-team-points strong { font-size: 34px; font-variant-numeric: tabular-nums; }
 .golf-team-points small { color: var(--muted); }
+.golf-match-sessions { padding: 26px 0; }
+.golf-match-sessions > h2 { margin: 0 0 18px; font-size: 23px; }
+.golf-match-session { margin: 0 0 24px; }
+.golf-match-session h3 { display: flex; align-items: baseline; gap: 12px; margin: 0 0 9px; font-size: 16px; }
+.golf-match-session h3 small, .golf-match-session li small { color: var(--muted); font-size: 11px; font-weight: 500; }
+.golf-match-session ol { margin: 0; padding: 0; list-style: none; }
+.golf-match-session li { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 13px 4px; border-top: 1px solid var(--line); }
+.golf-match-number { color: var(--muted); font-size: 11px; }
+.golf-match-teams { display: grid; gap: 4px; font-size: 13px; }
+.golf-match-teams > span { display: flex; flex-wrap: wrap; gap: 4px 9px; }
+.golf-match-teams b { min-width: 82px; }
+.golf-match-session li strong { font-size: 13px; white-space: nowrap; }
+.golf-match-session li small { grid-column: 2 / -1; }
 .golf-market-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 24px 0; }
 .golf-market-guide > div { padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .golf-market-guide small { display: block; margin-bottom: 12px; color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: .06em; }
@@ -44,4 +57,7 @@
   .golf-market-guide { grid-template-columns: 1fr; gap: 8px; }
   .golf-round-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .golf-team-points { grid-template-columns: 1fr; }
+  .golf-match-session li { grid-template-columns: 1fr; }
+  .golf-match-number, .golf-match-teams, .golf-match-session li strong,
+  .golf-match-session li small { grid-column: 1; }
 }

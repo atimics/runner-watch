@@ -404,7 +404,36 @@ def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> N
                         "team": {"displayName": "International", "abbreviation": "INTL"},
                     },
                 ],
-            }
+            },
+            {
+                "id": "match-1",
+                "type": {"id": "4"},
+                "startDate": (current - timedelta(hours=2)).isoformat(),
+                "status": {"type": {"state": "post", "completed": True}},
+                "competitors": [
+                    {
+                        "type": "pair",
+                        "team": {"shortDisplayName": "USA"},
+                        "score": "1 Up",
+                        "winner": True,
+                    },
+                    {
+                        "type": "pair",
+                        "team": {"shortDisplayName": "International"},
+                        "winner": False,
+                    },
+                ],
+            },
+            {
+                "id": "match-2",
+                "type": {"id": "5"},
+                "startDate": (current + timedelta(days=1)).isoformat(),
+                "status": {"type": {"state": "pre", "completed": False}},
+                "competitors": [
+                    {"type": "pair", "team": {"shortDisplayName": "USA"}},
+                    {"type": "pair", "team": {"shortDisplayName": "International"}},
+                ],
+            },
         ],
     }
     event = normalize_golf_event(raw)
@@ -417,13 +446,68 @@ def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> N
     saved = golf_event(event["id"])
     assert saved is not None
     assert [team["name"] for team in saved["teams"]] == ["USA", "International"]
-    assert golf_market_context(saved)["format"] == "match_play"
+    context = golf_market_context(saved)
+    assert context["format"] == "match_play"
+    assert [match["result"] for match in saved["matches"]] == ["USA · 1 Up", "Scheduled"]
+    assert len(context["sessions"]) == 2
     response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
     assert response.status_code == 200
     assert b"USA vs International" in response.body
-    assert b"TEAM WINNER" in response.body
-    assert b"END OF SESSION" in response.body
+    assert b"Match results and schedule" in response.body
+    assert b"USA \xc2\xb7 1 Up" in response.body
+    assert b"Scheduled" in response.body
     assert b"Official matches and scoring" in response.body
+
+
+def test_golf_pairings_use_named_players_from_matching_leaderboard() -> None:
+    leaderboard = {
+        "page": {
+            "content": {
+                "leaderboard": {
+                    "id": "401824815",
+                    "mtch": {
+                        "grps": [
+                            {
+                                "competitions": [
+                                    {
+                                        "id": "match-1",
+                                        "competitors": [
+                                            {"teamId": "1", "displayName": "Scottie Scheffler"},
+                                            {"teamId": "1", "displayName": "Sam Burns"},
+                                            {"teamId": "3", "displayName": "Sungjae Im"},
+                                            {"teamId": "3", "displayName": "Min Woo Lee"},
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+    }
+    html = f"<script>window['__espnfitt__']={json.dumps(leaderboard)};</script>".encode()
+    pairings = sports_module._golf_pairings_from_html(html, "401824815")
+    assert pairings["match-1"]["1"] == ["Scottie Scheffler", "Sam Burns"]
+    assert pairings["match-1"]["3"] == ["Sungjae Im", "Min Woo Lee"]
+    assert sports_module._golf_pairings_from_html(html, "another-event") == {}
+
+
+def test_golf_tied_match_does_not_name_a_winner() -> None:
+    matches = sports_module._golf_matches(
+        [
+            {
+                "id": "tie",
+                "startDate": datetime.now(UTC).isoformat(),
+                "status": {"type": {"state": "post", "completed": True}},
+                "competitors": [
+                    {"type": "pair", "team": {"shortDisplayName": "USA"}, "score": "AS"},
+                    {"type": "pair", "team": {"shortDisplayName": "International"}, "score": "AS"},
+                ],
+            }
+        ]
+    )
+    assert matches[0]["result"] == "Halved"
 
 
 def test_finished_golf_keeps_round_leaders_and_shipley_score(sports_db) -> None:

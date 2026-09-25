@@ -2404,6 +2404,10 @@ def _migration_083_golf_market_context(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_088_golf_match_results(db: DatabaseConnection) -> None:
+    db.execute("ALTER TABLE sports_golf_events ADD COLUMN matches_json TEXT NOT NULL DEFAULT '[]'")
+
+
 def _migration_045_sports_comments(db: DatabaseConnection) -> None:
 
     db.executescript(
@@ -3827,6 +3831,7 @@ MIGRATIONS = (
     Migration(
         87, "sports_prediction_market_snapshots", _migration_087_sports_prediction_market_snapshots
     ),
+    Migration(88, "golf_match_results", _migration_088_golf_match_results),
 )
 
 

@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 from statistics import median
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from runner_node.runtime import NODE_SERVICE
 from runner_watch.ingestion import SourceFetch
@@ -298,12 +299,111 @@ def _golf_round_cards(competitor: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(cards, key=lambda card: card["number"])
 
 
+def _golf_matches(competitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    matches = []
+    for competition in competitions:
+        competitors = competition.get("competitors") or []
+        if len(competitors) != 2 or any(item.get("type") == "team" for item in competitors):
+            continue
+        sides = []
+        for item in competitors:
+            team = item.get("team") or {}
+            athlete = item.get("athlete") or {}
+            sides.append(
+                {
+                    "team_id": str(team.get("id") or ""),
+                    "team": str(
+                        team.get("shortDisplayName")
+                        or team.get("displayName")
+                        or team.get("name")
+                        or ""
+                    ),
+                    "player": str(athlete.get("displayName") or item.get("name") or ""),
+                    "players": [],
+                    "score": str(item.get("score") or ""),
+                    "winner": bool(item.get("winner")),
+                }
+            )
+        if not any(side["team"] for side in sides):
+            continue
+        status = (competition.get("status") or {}).get("type") or {}
+        state = str(status.get("state") or "pre")
+        if state not in {"pre", "in", "post"}:
+            state = "post" if status.get("completed") else "pre"
+        start = _parse_time(competition.get("startDate") or competition.get("date"))
+        holes = max(
+            (
+                len(round_score.get("linescores") or [])
+                for item in competitors
+                for round_score in item.get("linescores") or []
+            ),
+            default=0,
+        )
+        winner = next((side for side in sides if side["winner"]), None)
+        leader = winner or next((side for side in sides if side["score"]), None)
+        if status.get("completed"):
+            result = f"{winner['team']} · {winner['score'] or 'Won'}" if winner else "Halved"
+        elif leader and leader["score"]:
+            result = f"{leader['team']} · {leader['score']}"
+        else:
+            result = "In progress" if state == "in" else "Scheduled"
+        matches.append(
+            {
+                "id": str(competition.get("id") or ""),
+                "start_time": _iso(start),
+                "format_id": str((competition.get("type") or {}).get("id") or ""),
+                "state": state,
+                "completed": bool(status.get("completed")),
+                "sides": sides,
+                "result": result,
+                "holes": holes,
+            }
+        )
+    return sorted(matches, key=lambda match: (match["start_time"], match["id"]))
+
+
+def _golf_pairings_from_html(body: bytes, event_id: str) -> dict[str, dict[str, list[str]]]:
+    page = body.decode("utf-8")
+    marker = "window['__espnfitt__']="
+    start = page.find(marker)
+    if start < 0:
+        return {}
+    start += len(marker)
+    end = page.find(";</script>", start)
+    if end < 0:
+        return {}
+    leaderboard = json.loads(page[start:end])["page"]["content"]["leaderboard"]
+    if str(leaderboard.get("id")) != event_id:
+        return {}
+    pairings: dict[str, dict[str, list[str]]] = {}
+    for group in (leaderboard.get("mtch") or {}).get("grps") or []:
+        for match in group.get("competitions") or []:
+            match_id = str(match.get("id") or "")
+            if not match_id:
+                continue
+            sides: dict[str, list[str]] = defaultdict(list)
+            for player in match.get("competitors") or []:
+                team_id = str(player.get("teamId") or "")
+                name = str(player.get("displayName") or "").strip()
+                if team_id and name and name not in sides[team_id]:
+                    sides[team_id].append(name)
+            pairings[match_id] = dict(sides)
+    return pairings
+
+
 def normalize_golf_event(event: dict[str, Any]) -> dict[str, Any] | None:
 
     competitions = event.get("competitions") or []
     if not competitions:
         return None
-    competition = competitions[0]
+    competition = next(
+        (
+            item
+            for item in competitions
+            if any(side.get("type") == "team" for side in item.get("competitors") or [])
+        ),
+        competitions[0],
+    )
     external_id = str(event.get("id") or "").strip()
     if not external_id:
         return None
@@ -313,7 +413,11 @@ def normalize_golf_event(event: dict[str, Any]) -> dict[str, Any] | None:
         for competitor in raw_competitors
         if competitor.get("type") == "team" or competitor.get("team")
     ]
-    scoring_format = "match_play" if team_competitors else "stroke_play"
+    scoring_format = (
+        "match_play"
+        if any(side.get("type") == "team" for side in team_competitors)
+        else "stroke_play"
+    )
     teams = []
     for competitor in team_competitors:
         team = competitor.get("team") or {}
@@ -413,6 +517,7 @@ def normalize_golf_event(event: dict[str, Any]) -> dict[str, Any] | None:
         ),
         "source_url": (f"https://www.espn.com/golf/leaderboard/_/tournamentId/{external_id}"),
         "leaderboard": leaderboard,
+        "matches": _golf_matches(competitions) if scoring_format == "match_play" else [],
     }
 
 
@@ -731,6 +836,20 @@ def fetch_golf(at: datetime | None = None) -> list[dict[str, Any]]:
             for raw in payload.get("events", [])
             if (normalized := normalize_golf_event(raw)) is not None
         ]
+        for event in events:
+            if event["scoring_format"] != "match_play" or not event["matches"]:
+                continue
+            try:
+                page_request = urllib.request.Request(
+                    event["source_url"], headers={"Accept": "text/html"}
+                )
+                with urllib.request.urlopen(page_request, timeout=10) as response:
+                    pairings = _golf_pairings_from_html(response.read(), event["external_id"])
+            except (OSError, ValueError, KeyError, TypeError):
+                pairings = {}
+            for match in event["matches"]:
+                for side in match["sides"]:
+                    side["players"] = pairings.get(match["id"], {}).get(side["team_id"], [])
         record_source_fetch(
             SourceFetch.success(
                 source=SOURCE,
@@ -1384,14 +1503,15 @@ def store_golf_events(
                 INSERT INTO sports_golf_events(
                     id,provider,external_id,tour,name,start_time,end_time,status,status_detail,
                     completed,venue,location,source_url,first_collected_at,last_collected_at,
-                    scoring_format,teams_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    scoring_format,teams_json,matches_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,start_time=excluded.start_time,end_time=excluded.end_time,
                     status=excluded.status,status_detail=excluded.status_detail,
                     completed=excluded.completed,venue=excluded.venue,location=excluded.location,
                     source_url=excluded.source_url,last_collected_at=excluded.last_collected_at,
-                    scoring_format=excluded.scoring_format,teams_json=excluded.teams_json
+                    scoring_format=excluded.scoring_format,teams_json=excluded.teams_json,
+                    matches_json=excluded.matches_json
                 """,
                 (
                     event["id"],
@@ -1411,6 +1531,7 @@ def store_golf_events(
                     timestamp,
                     event.get("scoring_format") or "stroke_play",
                     _json(event.get("teams") or []),
+                    _json(event.get("matches") or []),
                 ),
             )
             leaderboard = event.get("leaderboard") or []
@@ -2700,6 +2821,7 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
         for row in rows:
             event = dict(row)
             event["teams"] = json.loads(event.pop("teams_json") or "[]")
+            event["matches"] = json.loads(event.pop("matches_json") or "[]")
             count_row = database.execute(
                 "SELECT COUNT(*) AS count FROM sports_golf_leaderboard WHERE event_id=?",
                 (event["id"],),
@@ -2750,6 +2872,7 @@ def golf_event(event_id: str) -> dict[str, Any] | None:
             return None
         event = dict(row)
         event["teams"] = json.loads(event.pop("teams_json") or "[]")
+        event["matches"] = json.loads(event.pop("matches_json") or "[]")
         event["leaderboard"] = []
         for player in database.execute(
             "SELECT * FROM sports_golf_leaderboard WHERE event_id=? "
@@ -2766,7 +2889,32 @@ def golf_event(event_id: str) -> dict[str, Any] | None:
 
 def golf_market_context(event: dict[str, Any]) -> dict[str, Any]:
     if event.get("scoring_format") == "match_play":
-        return {"format": "match_play", "teams": event.get("teams") or []}
+        sessions: dict[tuple[str, str], dict[str, Any]] = {}
+        for match in event.get("matches") or []:
+            start = datetime.fromisoformat(match["start_time"]).astimezone(
+                ZoneInfo("America/New_York")
+            )
+            session_key = (start.date().isoformat(), match["format_id"])
+            session = sessions.setdefault(
+                session_key,
+                {
+                    "label": (
+                        f"{start.strftime('%A')} · "
+                        + {"4": "Four-balls", "5": "Foursomes"}.get(match["format_id"], "Matches")
+                    ),
+                    "matches": [],
+                },
+            )
+            item = dict(match)
+            item["time_label"] = (
+                f"{start.strftime('%b')} {start.day}, {start.hour:02d}:{start.minute:02d} ET"
+            )
+            session["matches"].append(item)
+        return {
+            "format": "match_play",
+            "teams": event.get("teams") or [],
+            "sessions": list(sessions.values()),
+        }
 
     players = event.get("leaderboard") or []
     round_numbers = sorted(
