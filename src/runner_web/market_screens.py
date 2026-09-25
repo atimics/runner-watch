@@ -12,7 +12,7 @@ from runner_web.market_assessments import assessment
 from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
-SPORTS_PICK_MAX_AGE = timedelta(hours=6)
+SPORTS_RANK_MAX_AGE = timedelta(hours=6)
 
 
 def number(value: Any) -> float | None:
@@ -523,111 +523,6 @@ def _search_text(market: str, source: dict[str, Any], display: dict[str, Any]) -
     return text
 
 
-def _board_pick(
-    market: str,
-    pairs: list[tuple[dict[str, Any], dict[str, Any]]],
-    stock_calls: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Lead with a saved directional call only while its market checks qualify it."""
-
-    empty = {
-        "market": market,
-        "name": "No current pick",
-        "href": None,
-        "reason": "",
-        "detail": {
-            "stocks": "Waiting for a current eligible stock call.",
-            "memecoins": "No saved directional token call.",
-            "sports": "Waiting for a current model edge against market odds.",
-        }[market],
-    }
-    if market == "stocks":
-        if not stock_calls:
-            return empty
-        from runner_web.data_health import EASTERN, stock_settlement_close
-
-        target_day = (
-            stock_settlement_close(datetime.now(UTC)).astimezone(EASTERN).date().isoformat()
-        )
-        eligible = {
-            row["name"]: row
-            for source, row in pairs
-            if (source.get("eligibility") or {}).get("state") == "eligible"
-            and row["tag_tone"] not in {"avoid", "paused", "extended"}
-        }
-        calls = sorted(
-            stock_calls,
-            key=lambda call: -(number(call.get("confidence")) or 0),
-        )
-        for call in calls:
-            row = eligible.get(str(call.get("ticker") or "").upper())
-            if (
-                row
-                and call.get("direction") in {"up", "down"}
-                and call.get("target_session_date") == target_day
-            ):
-                confidence = number(call.get("confidence"))
-                if confidence is None or not 0.5 <= confidence <= 1:
-                    continue
-                direction = str(call["direction"])
-                move = "rise" if direction == "up" else "fall"
-                return {
-                    "market": market,
-                    "name": f"${row['name']} · {direction.upper()}",
-                    "detail": f"Flash gives {confidence:.0%} chance of a {move} by the next close.",
-                    "reason": str(call.get("reason") or ""),
-                    "href": row["href"],
-                    "link_label": "Review stock Call",
-                }
-        return empty
-    if market == "memecoins":
-        return empty
-
-    now = datetime.now(UTC)
-    candidates = []
-    for source, row in pairs:
-        prediction = source.get("prediction") or {}
-        side = prediction.get("selection")
-        signal = prediction.get("signal")
-        chance = number(prediction.get(f"{side}_probability")) if side in {"home", "away"} else None
-        edge = number(prediction.get("edge"))
-        try:
-            start = datetime.fromisoformat(str(source.get("start_time")).replace("Z", "+00:00"))
-            saved = datetime.fromisoformat(
-                str(prediction.get("observed_at")).replace("Z", "+00:00")
-            )
-        except (TypeError, ValueError):
-            continue
-        if start.tzinfo is None or saved.tzinfo is None:
-            continue
-        if (
-            source.get("status") != "pre"
-            or signal not in {"watch", "lean"}
-            or chance is None
-            or not 0 <= chance <= 1
-            or edge is None
-            or edge < 0.02
-            or not timedelta(0) <= now - saved <= SPORTS_PICK_MAX_AGE
-            or start <= now
-        ):
-            continue
-        candidates.append((signal == "watch", edge, chance, source, row))
-    if not candidates:
-        return empty
-    _, edge, chance, source, row = max(candidates, key=lambda value: value[:3])
-    side = source["prediction"]["selection"]
-    team = str(source.get(f"{side}_team_name") or source.get(f"{side}_abbreviation") or "Team")
-    signal = str(source["prediction"]["signal"]).upper()
-    return {
-        "market": market,
-        "name": f"{team} to win",
-        "detail": f"{chance:.1%} model win chance · {edge * 100:.1f} point edge over market.",
-        "reason": f"{row['name']} · {stamp(source.get('start_time'))} · {signal}",
-        "href": row["href"],
-        "link_label": "Review game and odds",
-    }
-
-
 def listing(
     market: str,
     items: list[dict[str, Any]],
@@ -643,10 +538,9 @@ def listing(
 
     _ = view, graph  # Kept so saved links keep working; the map lives on the ticker page now.
     pairs = [(item, row(market, item)) for item in items]
-    rows = [display for _, display in pairs]
     if market == "stocks":
-        for index, entry in enumerate(rows):
-            entry["chart_offset"] = (index // 50) * 50
+        for index, (_, display) in enumerate(pairs):
+            display["chart_offset"] = (index // 50) * 50
     query = query.strip()[:80]
     if query:
         pairs = [
@@ -654,15 +548,81 @@ def listing(
             for source, display in pairs
             if query.casefold() in _search_text(market, source, display).casefold()
         ]
-        rows = [display for _, display in pairs]
-    top_pick = _board_pick(market, pairs, stock_calls or [])
-    if top_pick.get("href"):
-        picked_index = next(
-            (index for index, entry in enumerate(rows) if entry["href"] == top_pick["href"]),
-            None,
-        )
-        if picked_index is not None:
-            rows.insert(0, rows.pop(picked_index))
+    now = datetime.now(UTC)
+    target_day = ""
+    calls_by_ticker: dict[str, dict[str, Any]] = {}
+    if market == "stocks":
+        from runner_web.data_health import EASTERN, stock_settlement_close
+
+        target_day = stock_settlement_close(now).astimezone(EASTERN).date().isoformat()
+        calls_by_ticker = {
+            str(call.get("ticker") or "").upper(): call for call in stock_calls or []
+        }
+    ranked = []
+    ranked_count = 0
+    for source, display in pairs:
+        rank = (0, 0.0, 0.0)
+        if market == "stocks":
+            call = calls_by_ticker.get(display["name"])
+            confidence = number(call.get("confidence")) if call else None
+            if (
+                call
+                and (source.get("eligibility") or {}).get("state") == "eligible"
+                and display["tag_tone"] not in {"avoid", "paused", "extended"}
+                and call.get("direction") in {"up", "down"}
+                and call.get("target_session_date") == target_day
+                and confidence is not None
+                and 0.5 <= confidence <= 1
+            ):
+                rank = (1, confidence, 0.0)
+                display["rank_detail"] = (
+                    f"{str(call['direction']).upper()} · {confidence:.0%} confidence · next close"
+                )
+        elif market == "sports":
+            prediction = source.get("prediction") or {}
+            side = prediction.get("selection")
+            chance = (
+                number(prediction.get(f"{side}_probability")) if side in {"home", "away"} else None
+            )
+            edge = number(prediction.get("edge"))
+            try:
+                start = datetime.fromisoformat(str(source.get("start_time")).replace("Z", "+00:00"))
+                saved = datetime.fromisoformat(
+                    str(prediction.get("observed_at")).replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError):
+                start = saved = now
+            signal = prediction.get("signal")
+            if (
+                start.tzinfo is not None
+                and saved.tzinfo is not None
+                and source.get("status") == "pre"
+                and signal in {"watch", "lean"}
+                and chance is not None
+                and 0 <= chance <= 1
+                and edge is not None
+                and edge >= 0.02
+                and timedelta(0) <= now - saved <= SPORTS_RANK_MAX_AGE
+                and start > now
+            ):
+                rank = (2 if signal == "watch" else 1, edge, chance)
+                display["rank_detail"] = (
+                    f"{display['selected_team_label']} {chance:.0%} win · "
+                    f"+{edge * 100:.1f} pp vs odds"
+                )
+        else:
+            score = number(display.get("score"))
+            if (
+                score is not None
+                and display["tag_tone"] in {"running", "setup"}
+                and not source.get("stale")
+            ):
+                rank = (1, score, 0.0)
+                display["rank_detail"] = f"Runner score {score:.0f}"
+        ranked_count += rank[0] > 0
+        ranked.append((rank, source, display))
+    ranked.sort(key=lambda entry: entry[0], reverse=True)
+    rows = [display for _, _, display in ranked]
     counts: dict[str, int] = {}
     for item in rows:
         tone = str(item.get("tag_tone") or "")
@@ -678,7 +638,15 @@ def listing(
         "market": market,
         "label": LABELS[market],
         "rows": rows,
-        "top_pick": top_pick,
+        "ranking_status": (
+            {
+                "stocks": "Stock ranking pending · current eligible call needed.",
+                "memecoins": "Token ranking pending · directional assessment needed.",
+                "sports": "Sports ranking pending · current model edge needed.",
+            }[market]
+            if not ranked_count and not query
+            else ""
+        ),
         "query": query,
         "total": len(rows),
         "counts": counts,
@@ -776,7 +744,6 @@ def detail(
     *,
     active_call: dict[str, Any] | None = None,
     my_pick: dict[str, Any] | None = None,
-    stock_calls: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     source = (
         data.get("coin", {})
@@ -802,7 +769,6 @@ def detail(
         "market": market,
         "label": LABELS[market],
         "item": item,
-        "top_pick": _board_pick(market, [(source, item)], stock_calls or []),
         "actions": [],
         "facts": [],
         "series": [],

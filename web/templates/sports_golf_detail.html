@@ -8,10 +8,7 @@
     <h1>{{ golf.name }}</h1>
     <p>{{ golf.display_status }}{% if golf.venue %} · {{ golf.venue }}{% endif %}{% if golf.location %} · {{ golf.location }}{% endif %}</p>
   </header>
-  <section class="golf-pick-answer" aria-label="Golf pick">
-    <h2>No current golf pick</h2>
-    <p>Waiting for a saved win forecast and market price.</p>
-  </section>
+  <p class="golf-ranking-status">Win ranking pending · saved forecast and market price needed.</p>
 
   {% if golf_context.format == 'match_play' %}
   <section class="golf-context" aria-labelledby="golfWinnerTitle">

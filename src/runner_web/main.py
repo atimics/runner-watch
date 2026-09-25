@@ -3784,14 +3784,13 @@ def _flash_sports_picks(*, limit: int = 4) -> list[dict[str, Any]]:
     from runner_web.market_screens import listing
 
     events = list(sports_pulse("all", limit=100).get("events") or [])
+    board = listing("sports", events)
+    events_by_id = {event["id"]: event for event in events}
     picks: list[dict[str, Any]] = []
-    for _ in range(limit):
-        board = listing("sports", events)
-        top = board["top_pick"]
-        if not top.get("href"):
+    for row in board["rows"]:
+        if not row.get("rank_detail") or len(picks) >= limit:
             break
-        event_id = board["rows"][0]["id"]
-        event = next(event for event in events if event["id"] == event_id)
+        event = events_by_id[row["id"]]
         prediction = event["prediction"]
         side = prediction["selection"]
         picks.append(
@@ -3805,7 +3804,6 @@ def _flash_sports_picks(*, limit: int = 4) -> list[dict[str, Any]]:
                 "href": f"{SPORTS_ORIGIN}/game/{event.get('id')}",
             }
         )
-        events = [candidate for candidate in events if candidate["id"] != event_id]
     return picks
 
 
@@ -10214,7 +10212,6 @@ def ticker_page(
             comments=comments,
             comment_count=comment_count,
             active_call=active_call,
-            stock_calls=flash_open_calls(limit=500)["calls"],
             calls=calls,
             latest_commission=latest_report,
             flash_report=_flash_report_action(
@@ -10284,12 +10281,7 @@ def screen_detail_state(
     else:
         raise HTTPException(404, "Market not found")
     if market != "sports":
-        screen = simple_market_detail(
-            market,
-            data,
-            active_call=active,
-            stock_calls=flash_open_calls(limit=500)["calls"] if market == "stocks" else None,
-        )
+        screen = simple_market_detail(market, data, active_call=active)
     from runner_web.stories import public_story
 
     try:

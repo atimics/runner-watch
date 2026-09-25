@@ -1,6 +1,6 @@
 {% extends "market_screen.html" %}
 {% from "_flash_report_action.html" import flash_report_action %}
-{% set screen = simple_market_detail('stocks', detail, active_call=active_call, stock_calls=stock_calls|default([])) %}
+{% set screen = simple_market_detail('stocks', detail, active_call=active_call) %}
 {% block detail_head %}<link rel="stylesheet" href="/static/ticker-map.css?v={{ static_version }}">{% endblock %}
 {% block detail_map %}{% include "_stock_map.html" %}{% endblock %}
 {% block detail_comments %}

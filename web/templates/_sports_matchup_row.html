@@ -14,6 +14,7 @@
     {% endfor %}
   </span>
   <small class="sports-league">{{ item.subtitle }}</small>
+  {% if item.rank_detail %}<small class="rank-detail">{{ item.rank_detail }}</small>{% endif %}
 </span>
 <span class="ticker-value sports-score">
   <strong aria-label="{{ item.matchup.teams[0].name }} then {{ item.matchup.teams[1].name }}: {{ item.value }}">{{ item.value }}</strong>

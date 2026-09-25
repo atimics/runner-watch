@@ -259,15 +259,6 @@
     put('[data-value]', next.item.value);
     put('[data-change]', next.item.change);
     put('[data-time]', next.item.time);
-    const pick = document.querySelector('[data-market-pick]');
-    if (pick && next.top_pick) {
-      pick.classList.toggle('is-waiting', !next.top_pick.href);
-      put('[data-pick-name]', next.top_pick.name);
-      put('[data-pick-detail]', next.top_pick.detail);
-      put('[data-pick-reason]', next.top_pick.reason);
-      const reason = pick.querySelector('[data-pick-reason]');
-      if (reason) reason.hidden = !next.top_pick.reason;
-    }
     const assessment = document.querySelector('[data-assessment-state]');
     if (assessment) {
       put('[data-assessment-tag]', next.item.tag);
