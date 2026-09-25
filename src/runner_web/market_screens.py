@@ -618,7 +618,6 @@ def listing(
                 and not source.get("stale")
             ):
                 rank = (1, score, 0.0)
-                display["rank_detail"] = f"Runner score {score:.0f}"
         ranked_count += rank[0] > 0
         ranked.append((rank, source, display))
     ranked.sort(key=lambda entry: entry[0], reverse=True)

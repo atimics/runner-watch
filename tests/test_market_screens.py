@@ -205,7 +205,7 @@ def test_memecoin_board_ranks_saved_active_scores():
     board = listing("memecoins", [lower, higher])
 
     assert [row["name"] for row in board["rows"]] == ["HIGH", "LOW"]
-    assert board["rows"][0]["rank_detail"] == "Runner score 81"
+    assert board["rows"][0]["score"] == 81
     assert not board["ranking_status"]
 
 
