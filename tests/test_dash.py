@@ -868,3 +868,291 @@ def test_the_desk_note_speaks_only_when_something_changed(monkeypatch):
     monkeypatch.setattr(web_main, "dash_world", lambda *a, **k: {"changes": {"any": False}})
     assert web_main.post_dash_desk_note(at=NOW + timedelta(hours=2))["status"] == "quiet"
     assert sent == []
+
+
+def _halt_item(ticker: str, halt: str, reason: str, resume: str = "") -> str:
+    resume_tags = (
+        f"<ndaq:ResumptionDate>09/11/2026</ndaq:ResumptionDate>"
+        f"<ndaq:ResumptionQuoteTime>{resume}</ndaq:ResumptionQuoteTime>"
+        f"<ndaq:ResumptionTradeTime>{resume}</ndaq:ResumptionTradeTime>"
+        if resume
+        else ""
+    )
+    return (
+        f"<item><title>{ticker} Corp</title>"
+        f"<ndaq:HaltDate>09/11/2026</ndaq:HaltDate><ndaq:HaltTime>{halt}</ndaq:HaltTime>"
+        f"<ndaq:IssueSymbol>{ticker}</ndaq:IssueSymbol>"
+        f"<ndaq:IssueName>{ticker} Corp Common Stock</ndaq:IssueName>"
+        f"<ndaq:Market>NASDAQ</ndaq:Market><ndaq:ReasonCode>{reason}</ndaq:ReasonCode>"
+        f"{resume_tags}</item>"
+    )
+
+
+def _seed_halts(*items: str) -> None:
+    from runner_web.nasdaq_halts import refresh_trade_halts
+
+    body = (
+        '<?xml version="1.0"?><rss version="2.0" xmlns:ndaq="http://www.nasdaqtrader.com/">'
+        f"<channel>{''.join(items)}</channel></rss>"
+    ).encode()
+    with connection() as database:
+        database.execute(
+            "UPDATE source_registry SET enabled=1 "
+            "WHERE source='nasdaq_trader' AND feed='trade_halts'"
+        )
+    refresh_trade_halts(download=lambda _url, _timeout: (body, "application/rss+xml"))
+
+
+def _seed_bar(ticker: str, minute: str, open_: float, high: float, low: float, close: float):
+    with connection() as database:
+        database.execute(
+            "INSERT INTO market_bars(source,ticker,interval,bar_time,open,high,low,close,"
+            "volume,first_collected_at,last_collected_at) "
+            "VALUES('yahoo',?,'5m',?,?,?,?,?,1000,?,?)",
+            (
+                ticker,
+                f"2026-09-11T{minute}:00+00:00",
+                open_,
+                high,
+                low,
+                close,
+                NOW.isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+
+
+def test_dash_sees_why_a_halt_happened_when_it_reopens_and_what_followed():
+    # NOW is 11:00 ET. WZRD paused twice on volatility; TDIC is waiting on news.
+    _seed_halts(
+        _halt_item("WZRD", "10:00:00", "LUDP", "10:05:00"),
+        _halt_item("WZRD", "10:20:00", "LUDP", "10:25:00"),
+        _halt_item("TDIC", "10:50:00", "T1"),
+    )
+    _seed_bar("WZRD", "13:55", 1.9, 2.0, 1.9, 2.0)
+    _seed_bar("WZRD", "14:05", 2.4, 2.6, 2.3, 2.5)
+    _seed_bar("WZRD", "14:10", 2.5, 2.5, 2.1, 2.2)
+    _seed_bar("WZRD", "14:25", 2.0, 2.1, 1.8, 1.9)
+
+    halts = {entry["ticker"]: entry for entry in dash.recent_halts(at=NOW)}
+
+    wzrd = halts["WZRD"]
+    assert wzrd["halts_today"] == 2
+    assert wzrd["span_minutes"] == 20
+    second, first = wzrd["halts"]
+    assert first["reason"] == "volatility pause (limit up / limit down)"
+    assert first["state"] == "reopened"
+    assert (first["halted_at"], first["resumes_at"]) == ("10:00 ET", "10:05 ET")
+    assert first["minutes_halted"] == 5
+    assert first["after_reopen"]["before_halt"] == 2.0
+    assert first["after_reopen"]["reopen"] == 2.4
+    assert first["after_reopen"]["reopen_vs_before_pct"] == 20.0
+    assert first["after_reopen"]["high"] == 2.6
+    assert first["after_reopen"]["last"] == 1.9
+    assert second["after_reopen"]["before_halt"] == 2.2
+    assert second["after_reopen"]["reopen"] == 2.0
+
+    tdic = halts["TDIC"]["halts"][0]
+    assert tdic["reason"] == "news pending"
+    assert tdic["state"] == "halted, no resume time yet"
+    assert tdic["resumes_at"] is None
+    assert tdic["minutes_halted"] == 10
+    assert tdic["after_reopen"] is None
+
+
+def test_a_scheduled_resume_is_not_read_as_a_reopen():
+    _seed_halts(_halt_item("FGL", "10:55:00", "T12", "11:10:00"))
+
+    (entry,) = dash.recent_halts(at=NOW)
+
+    halt = entry["halts"][0]
+    assert halt["reason"] == "Nasdaq asked the company for more information"
+    assert halt["state"] == "resume scheduled"
+    assert halt["resumes_at"] == "11:10 ET"
+    assert halt["after_reopen"] is None
+
+
+def test_an_unknown_halt_code_is_passed_through_rather_than_guessed():
+    assert dash.halt_reason("ZZ9") == "ZZ9"
+    assert dash.halt_reason("") is None
+
+
+def test_recent_events_read_the_stored_payload():
+    _seed_halts(_halt_item("TDIC", "10:50:00", "T1"))
+
+    (event,) = dash.recent_events(at=NOW)
+
+    assert event["headline"] == "TDIC Corp Common Stock"
+    assert event["kind"] == "Trading halt · halted · news pending"
+
+
+def test_the_world_and_expand_include_halts():
+    _seed_halts(_halt_item("TDIC", "10:50:00", "T1"))
+
+    assert dash.dash_world(at=NOW)["halts"][0]["ticker"] == "TDIC"
+    assert isinstance(dash.dash_expand("halts"), list)
+
+
+def _seed_game(event_id, status, start, away_score=None, home_score=None, detail="Scheduled"):
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sports_events(id,provider,external_id,league,name,start_time,status,"
+            "status_detail,home_team_id,home_team_name,home_abbreviation,home_record,home_score,"
+            "away_team_id,away_team_name,away_abbreviation,away_record,away_score,source_url,"
+            "first_collected_at,last_collected_at) "
+            "VALUES(?,'espn',?,'mlb','Cubs at Mets',?,?,?,'nym','New York Mets','NYM','80-70',?,"
+            "'chc','Chicago Cubs','CHC','75-75',?,'https://espn.com',?,?)",
+            (
+                event_id,
+                event_id,
+                start.isoformat(),
+                status,
+                detail,
+                home_score,
+                away_score,
+                NOW.isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+
+
+def _seed_prediction(event_id, observed, home_probability, selection="home", edge=0.04):
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sports_predictions(id,event_id,model_version,input_hash,selection,"
+            "home_probability,away_probability,home_market_probability,"
+            "away_market_probability,edge,signal,quality,observed_at) "
+            "VALUES(?,?,'m1',?,?,?,?,0.55,0.45,?,'lean','ok',?)",
+            (
+                f"{event_id}:{observed.isoformat()}",
+                event_id,
+                observed.isoformat(),
+                selection,
+                home_probability,
+                1 - home_probability,
+                edge,
+                observed.isoformat(),
+            ),
+        )
+
+
+def test_dash_sees_live_games_whats_next_with_the_pregame_lean_and_finals():
+    _seed_game("mlb:live", "in", NOW - timedelta(hours=1), 2, 3, "Top 6th")
+    _seed_game("mlb:next", "pre", NOW + timedelta(hours=3))
+    _seed_game("mlb:done", "post", NOW - timedelta(hours=8), 7, 1, "Final")
+    _seed_prediction("mlb:next", NOW - timedelta(hours=2), 0.52)
+    _seed_prediction("mlb:next", NOW - timedelta(minutes=5), 0.59)
+    # A read taken after the start must never replace the pregame lean.
+    _seed_prediction("mlb:live", NOW - timedelta(hours=2), 0.6)
+    _seed_prediction("mlb:live", NOW, 0.2, selection="away")
+
+    sports = dash.sports_now(at=NOW)
+
+    (live,) = sports["live"]
+    assert live["score"] == "CHC 2, NYM 3"
+    assert live["status"] == "Top 6th"
+    assert live["model"]["lean"] == "New York Mets"
+    (upcoming,) = sports["up_next"]
+    assert upcoming["matchup"] == "CHC at NYM"
+    assert "score" not in upcoming
+    assert upcoming["model"] == {
+        "home_win_pct": 59.0,
+        "signal": "lean",
+        "lean": "New York Mets",
+        "market_home_win_pct": 55.0,
+        "edge_pct": 4.0,
+    }
+    assert sports["finals"][0]["score"] == "CHC 7, NYM 1"
+    assert sports["model_record"]["settled"] == 0
+
+
+def test_an_unknown_league_is_named_rather_than_empty():
+    assert "error" in dash.sports_now(league="cricket", at=NOW)
+
+
+def _seed_coins(*coins):
+    import json
+
+    from runner_web.memecoins import normalize_memecoins
+
+    rows = normalize_memecoins(
+        [
+            {
+                "id": coin_id,
+                "symbol": coin_id[:4],
+                "name": coin_id.title(),
+                "current_price": 0.01,
+                "price_change_percentage_24h": change,
+                "total_volume": volume,
+                "market_cap": volume * 10,
+                "last_updated": NOW.isoformat(),
+            }
+            for coin_id, change, volume in coins
+        ]
+    )
+    rows[0]["token_address"] = "So1anaMint"
+    snapshot = {"rows": rows, "collected_at": NOW.isoformat(), "run_id": "run-1"}
+    forensics = {
+        "analyzed_events": 1,
+        "findings": [{"kind": "bundle", "title": "Bundled launch", "token_address": "So1anaMint"}],
+    }
+    with connection() as database:
+        for key, value in (("memecoins_snapshot", snapshot), ("memecoin_forensics", forensics)):
+            database.execute(
+                "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+                (key, json.dumps(value), NOW.isoformat()),
+            )
+
+
+def test_dash_sees_the_memecoin_board_movers_and_flags(monkeypatch):
+    monkeypatch.setenv("MEMECOINS_ENABLED", "true")
+    _seed_coins(("dogecoin", -4.0, 900.0), ("pepe", 31.5, 500.0), ("bonk", 2.0, 100.0))
+
+    coins = dash.memecoins_now(at=NOW)
+
+    assert coins["status"] == "ok"
+    assert [coin["id"] for coin in coins["most_traded"]] == ["dogecoin", "pepe", "bonk"]
+    assert [coin["id"] for coin in coins["top_gainers"]] == ["pepe", "bonk"]
+    assert [coin["id"] for coin in coins["top_losers"]] == ["dogecoin"]
+    assert coins["flagged"][0]["flags"] == ["Bundled launch"]
+    assert coins["calls"] == []
+
+
+def test_a_disabled_memecoin_feed_says_so(monkeypatch):
+    monkeypatch.setenv("MEMECOINS_ENABLED", "false")
+
+    coins = dash.memecoins_now(at=NOW)
+
+    assert coins["status"] == "disabled"
+    assert coins["most_traded"] == []
+
+
+def test_expand_finds_a_coin_by_symbol_and_admits_an_unknown_one(monkeypatch):
+    monkeypatch.setenv("MEMECOINS_ENABLED", "true")
+    _seed_coins(("pepe", 31.5, 500.0))
+
+    assert dash.dash_expand("coin:$PEPE")["id"] == "pepe"
+    assert dash.dash_expand("coin:nope")["known"] is False
+    assert set(dash.dash_expand("sports")) >= {"live", "up_next", "finals"}
+    assert "sports" in dash.dash_world(at=NOW) and "memecoins" in dash.dash_world(at=NOW)
+
+
+def test_a_reopen_wakes_dash_even_when_the_halt_itself_is_old_news():
+    # Halted at 09:00 ET, reopened at 10:30 ET. NOW is 11:00 ET, so only the
+    # reopen falls in the last hour.
+    _seed_halts(_halt_item("WZRD", "09:00:00", "T1", "10:30:00"))
+
+    changes = dash.recent_changes(at=NOW)
+
+    assert changes["events"] == 0
+    assert changes["reopened_halts"] == 1
+    assert changes["any"] is True
+
+
+def test_a_scheduled_reopen_does_not_wake_dash_early():
+    _seed_halts(_halt_item("WZRD", "09:00:00", "T1", "11:30:00"))
+
+    changes = dash.recent_changes(at=NOW)
+
+    assert changes["reopened_halts"] == 0
+    assert changes["any"] is False

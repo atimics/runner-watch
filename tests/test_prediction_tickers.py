@@ -56,18 +56,80 @@ def quote(
     }
 
 
-def test_one_selected_outcome_keeps_favorite_and_value_comparisons_clear():
+def test_default_selects_value_side_and_explicit_favorite_remains_available():
     event = team_event()
-    result = ticker(event, now=AT)
+    result = ticker(event, outcome="home", now=AT)
     assert result["symbol"] == "NFL:123"
     assert result["selected"]["label"] == "GB"
     assert result["selected"]["percent"] == 59.1
     assert result["selected"]["benchmark"]["percent"] == 68.5
     assert result["selected"]["gap"] == -9.3
-    other = ticker(event, outcome="away", now=AT)["selected"]
+    other = ticker(event, now=AT)["selected"]
     assert other["label"] == "ATL"
     assert other["percent"] == 40.9
     assert other["gap"] == 9.3
+
+
+@pytest.mark.parametrize("state", ["level", "missing", "stale", "wide"])
+def test_default_uses_model_favorite_when_a_positive_gap_is_unavailable(state):
+    event = team_event()
+    event["prediction"].pop("home_market_probability")
+    event["prediction"].pop("away_market_probability")
+    event["prediction_markets"] = [
+        {
+            "source": "kalshi",
+            "home_probability": 0.5914 if state == "level" else 0.7,
+            "away_probability": 0.4086 if state == "level" else 0.3,
+            "observed_at": (AT - timedelta(hours=1) if state == "stale" else AT).isoformat(),
+            "quality": "wide spread" if state == "wide" else "quoted",
+        }
+    ]
+    if state == "missing":
+        event["prediction_markets"] = []
+    result = ticker(event, now=AT)
+    assert result["selected"]["key"] == "home"
+    assert result["selected"]["gap"] == (0 if state == "level" else None)
+
+
+def test_cup_value_side_compares_each_outcome_under_its_own_settlement():
+    event = cup_event()
+    event["analysis"]["prediction"].update(usa=0.6, international=0.3, tie=0.1)
+    event["contract_quotes"] = [
+        quote(probability=0.7),
+        quote(outcome="international", probability=0.25),
+        quote(outcome="tie", probability=0.01),
+        quote(contract="winner-half-tie", probability=0.55),
+        quote(contract="winner-half-tie", outcome="international", probability=0.45),
+    ]
+    outright = ticker(event, now=AT)
+    assert outright["selected"]["key"] == "tie"
+    assert outright["selected"]["gap"] == 9
+    half = ticker(event, contract="winner-half-tie", now=AT)
+    assert half["selected"]["key"] == "usa"
+    assert half["selected"]["gap"] == 10
+    explicit = ticker(event, contract="winner-half-tie", outcome="international", now=AT)
+    assert explicit["selected"]["key"] == "international"
+    assert explicit["selected"]["gap"] == -10
+    # A below-market favorite still names its own comparison when it is the only quoted side.
+    event["contract_quotes"] = [quote(probability=0.7)]
+    assert ticker(event, now=AT)["selected"]["key"] == "usa"
+
+
+def test_value_selection_keeps_the_existing_venue_priority():
+    event = team_event()
+    event["prediction_markets"] = [
+        {
+            "source": source,
+            "home_probability": probability,
+            "away_probability": 1 - probability,
+            "observed_at": AT.isoformat(),
+        }
+        for source, probability in [("kalshi", 0.6), ("polymarket", 0.2)]
+    ]
+    result = ticker(event, now=AT)["selected"]
+    assert result["key"] == "away"
+    assert result["benchmark"]["label"] == "Kalshi"
+    assert result["gap"] == 0.9
 
 
 def test_venue_lines_keep_independent_timestamps_and_model_version():
@@ -288,7 +350,7 @@ def test_scorecard_compares_model_and_market_on_same_saved_games(tmp_path, monke
 
 def test_sentiment_is_selected_outcome_gap_even_when_favorite():
     event = team_event()
-    favorite = ticker(event, now=AT)["indicator"]
+    favorite = ticker(event, outcome="home", now=AT)["indicator"]
     underdog = ticker(event, outcome="away", now=AT)["indicator"]
     assert favorite["sentiment"] == "negative"
     assert favorite["sentiment_mix"]["description"] == "GB: RATi 9.3 pp below Sportsbook"
@@ -298,7 +360,7 @@ def test_sentiment_is_selected_outcome_gap_even_when_favorite():
     assert favorite["risk"] == "detected"
     assert "bullish" not in favorite["description"]
     event["prediction"]["home_market_probability"] = 0.5914
-    level = ticker(event, now=AT)["indicator"]
+    level = ticker(event, outcome="home", now=AT)["indicator"]
     assert level["sentiment"] == "neutral"
     assert level["sentiment_mix"]["state"] == "available"
     assert "in line with" in level["description"]
@@ -387,7 +449,7 @@ def test_pregame_reading_freezes_at_kickoff_and_news_respects_collection_time():
         "collected_at": (AT + timedelta(hours=1)).isoformat(),
     }
     event["news"] = [article]
-    glyph = ticker(event, now=AT + timedelta(hours=2))["indicator"]
+    glyph = ticker(event, outcome="home", now=AT + timedelta(hours=2))["indicator"]
     assert glyph["scope"] == "Saved pregame reading"
     assert glyph["score"] is None
     assert glyph["sentiment"] == "negative"
@@ -458,3 +520,26 @@ def test_cup_refresh_route_keeps_selected_outcome_and_updates_glyph(monkeypatch)
     refreshed = client.get(url).json()
     assert refreshed["ticker"]["selected"]["key"] == "international"
     assert refreshed["ticker"]["indicator"]["sentiment"] == "positive"
+
+
+def test_direct_cup_page_pins_its_default_outcome_for_full_page_refresh():
+    from urllib.parse import parse_qsl, urlsplit
+
+    from runner_web.market_screens import detail
+
+    now = datetime.now(UTC)
+    event = cup_event()
+    event["analysis"]["captured_at"] = now.isoformat()
+    event["contract_quotes"] = [
+        quote(at=now, contract="winner-half-tie", outcome="international", probability=0.01)
+    ]
+    screen = detail("sports", event, contract="winner-half-tie")
+    assert screen["ticker"]["selected"]["key"] == "international"
+    assert screen["surface_url"] == (
+        "/game/golf:401824815?contract=winner-half-tie&outcome=international"
+    )
+    selection = dict(parse_qsl(urlsplit(screen["surface_url"]).query))
+    event["contract_quotes"][0]["probability"] = 0.9
+    refreshed = detail("sports", event, **selection)
+    assert refreshed["ticker"]["selected"]["key"] == "international"
+    assert refreshed["ticker"]["indicator"]["sentiment"] == "negative"

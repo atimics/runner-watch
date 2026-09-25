@@ -8,6 +8,7 @@
     <h1>{{ golf.name }}</h1><p>{{ golf.display_status }}{% if golf.venue %} · {{ golf.venue }}{% endif %}</p></div>
     {% if golf_context.format == 'match_play' and golf_context.teams %}<div class="golf-current-score"><small>{{ golf_context.teams|map(attribute='name')|join(' · ') }}</small><strong>{{ golf_context.teams|map(attribute='points_display')|join(' – ') }}</strong><small>{{ 'Final points' if golf.completed else 'Current points' }}</small></div>{% elif golf_context.leaders %}<div class="golf-current-score"><small>{{ golf_context.leaders[0].player_name }}</small><strong>{{ golf_context.leaders[0].score_display }}</strong><small>{{ 'Final score' if golf.completed else 'Leader to par' }}</small></div>{% endif %}
   </header>
+  <p class="golf-ranking-status">Win ranking pending · saved forecast and market price needed.</p>
 
   {% include '_sports_opinion.html' %}
 

@@ -18,7 +18,7 @@
   <div class="prediction-quote">
     <div><span>{{ selected.label }} · {{ contract.unit|lower }}</span><strong>{{ selected.percent ~ '%' if selected.percent is not none else 'Pending' }}</strong><small>RATi · {{ contract.model_label|lower }}</small></div>
     {% if selected.benchmark %}<div><span>{{ selected.benchmark.label }}</span><strong>{{ selected.benchmark.percent }}%</strong><small>{{ selected.benchmark.status }}</small></div>{% endif %}
-    <div class="prediction-gap{% if selected.gap is not none %} {{ 'is-above' if selected.gap > 0 else 'is-below' if selected.gap < 0 else '' }}{% endif %}"><span>RATi − market</span><strong>{{ '%+.1f'|format(selected.gap) ~ ' pp' if selected.gap is not none else '—' }}</strong><small>{% if selected.gap is not none %}{{ 'Above' if selected.gap > 0 else 'Below' if selected.gap < 0 else 'In line with' }} {{ selected.benchmark.label }}{% else %}Comparable fresh prices pending{% endif %}</small></div>
+    <div class="prediction-gap{% if selected.gap is not none %} {{ 'is-above' if selected.gap > 0 else 'is-below' if selected.gap < 0 else '' }}{% endif %}"><span>{{ selected.label }} · RATi − market</span><strong>{{ '%+.1f'|format(selected.gap) ~ ' pp' if selected.gap is not none else '—' }}</strong><small>{% if selected.gap is not none %}{{ 'Above' if selected.gap > 0 else 'Below' if selected.gap < 0 else 'In line with' }} {{ selected.benchmark.label }}{% else %}Comparable fresh prices pending{% endif %}</small></div>
   </div>
   <p class="prediction-scope">{{ contract.model_note }} · Saved {{ selected.model_label }}</p>
   {% if ticker.score_call %}<p class="prediction-score-call"><span>{{ ticker.score_call.label }}</span><strong>{{ ticker.score_call.value }}</strong></p>{% endif %}

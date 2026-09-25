@@ -1,0 +1,4 @@
+{% macro sports_row_opinion(ticker) -%}
+{% set selected = ticker.selected %}
+{% if selected and selected.percent is not none %}<small class="sports-row-opinion" title="{{ ticker.description }}">{{ selected.label }} · {% if selected.gap is not none %}{{ '%+.1f'|format(selected.gap) }} points vs market{% else %}RATi {{ selected.percent }}% · Price pending{% endif %}</small>{% endif %}
+{%- endmacro %}

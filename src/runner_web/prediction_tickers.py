@@ -365,7 +365,12 @@ def ticker(
             o["gap"] = o["benchmark"]["gap"] if o["benchmark"] else None
     outcomes = selected_contract["outcomes"]
     favorite = max(outcomes, key=lambda o: o["model"] if o["model"] is not None else -1)
-    result["selected"] = next((o for o in outcomes if o["key"] == outcome), favorite)
+    value_side = max(
+        (o for o in outcomes if o["gap"] is not None and o["gap"] > 0),
+        key=lambda o: o["gap"],
+        default=None,
+    )
+    result["selected"] = next((o for o in outcomes if o["key"] == outcome), value_side or favorite)
     selected = result["selected"]
     benchmark = selected["benchmark"]
     result["description"] = (

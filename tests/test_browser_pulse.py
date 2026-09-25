@@ -14,6 +14,7 @@ def test_stock_home_renders_the_shared_screen(page: Page, monkeypatch):
     from starlette.requests import Request
 
     monkeypatch.setattr(web, "current_user", lambda *_: None)
+    monkeypatch.setattr(web, "flash_open_calls", lambda **_: {"calls": []})
     monkeypatch.setattr(
         web,
         "page_context",
