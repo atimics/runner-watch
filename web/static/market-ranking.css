@@ -1,0 +1,22 @@
+.ranking-status {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.rank-detail {
+  color: var(--green);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.market-stocks .ticker-name .rank-detail,
+.market-memecoins .ticker-name .rank-detail {
+  white-space: normal;
+}
+@media (max-width: 760px) {
+  .market-stocks .ticker-name .rank-detail,
+  .market-memecoins .ticker-name .rank-detail,
+  .anchor-sports .sports-identity .rank-detail {
+    grid-column: 1 / -1;
+    flex-basis: 100%;
+  }
+}

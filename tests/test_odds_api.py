@@ -495,7 +495,7 @@ def test_multi_book_consensus_drives_model_and_bovada_drives_paper_pick(
     assert b"BEST DISPLAYED PRICE" not in response.body
     assert b"Pricing differences are not picks" not in response.body
     assert b"CAPTURED LINE" not in response.body
-    assert b"No-vig consensus via The Odds API" not in response.body
+    assert b"Source: No-vig consensus via The Odds API" in response.body
 
     pick = sports.create_sports_pick("multi-user", str(event["id"]), "home")
     assert pick["sportsbook"] == "Bovada"

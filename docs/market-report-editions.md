@@ -1,9 +1,39 @@
 # Daily market editions
 
-Pre-market is **The opening watch**: scan breadth, the lead stock, Flash's
-opening read, the watch board, and saved targets. Post-market is **The closing
-story**: one company in focus, a session scorecard, Flash's review, and the
-same watch board with its results.
+Pre-market is **The opening watch**: a session headline, company stories,
+Flash's opening column, the watch board, and saved targets. Post-market is
+**The closing story**: the day's big moves, company stories, Flash's review,
+and the same watch board with its results.
+
+## Narrative editions
+
+Each new edition saves up to five companies from its full source scan. The lead
+uses the research-interest score below. The next slots bring in the largest
+move in the opposite direction and the busiest remaining name by relative
+volume. Remaining slots use research interest. Ticker order resolves ties.
+Every selected company needs a positive price and a same-session quote within
+20 minutes of the scan. A smaller eligible set produces a shorter edition.
+
+Stories give each company a headline and a short paragraph about its price,
+volume, signals and risks. Evening stories connect these observations to watch
+returns and settled target results when available. New arrivals can feature
+alongside opening watch names. The lead earns **Blockbuster move** when its
+absolute change reaches 15% and relative volume reaches 3×. The section title
+describes observed activity; the saved trade state appears with the story.
+
+The page opens with the headline, scan context and an **In this edition** list.
+Company stories and Flash's paragraph-based column come before the detailed
+scorecard and watch board. A closing paragraph names the next test. The full
+company profile and source links follow the board. Archive previews, share
+metadata and Telegram summaries use the same story headline. Telegram includes
+up to three company paragraphs and the report link.
+
+The story board and known company names live in the existing saved metrics.
+Page reads build prose from this frozen evidence. Older editions use their saved
+quotes; evening editions use evening fields. Flash's existing request fields
+stay the same, while its writing instructions ask for a connected column across
+three to five available names. Blank lines survive storage and render as separate
+paragraphs.
 
 Both editions use the stock board's dark palette, type, risk markers and shared
 ring component. Blue marks the morning edition and amber marks the evening.

@@ -1,0 +1,15 @@
+.sports-entity { display: grid; gap: 20px; }
+.sports-entity > header { border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+.sports-entity h1 { margin: 0 0 4px; font-size: clamp(27px, 5vw, 38px); }
+.sports-entity header p:last-child,.sports-entity-note { margin: 0; color: var(--muted); font-size: 12px; }
+.sports-entity h2 { margin: 0 0 9px; font-size: 17px; }
+.sports-entity section { min-width: 0; }
+.sports-entity-events { border-top: 1px solid var(--line); margin-top: 10px; }
+.sports-entity-events a { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 64px; border-bottom: 1px solid var(--line); padding: 10px 0; }
+.sports-entity-events a > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sports-entity-events a > span:last-child { align-items: flex-end; text-align: right; flex: none; }
+.sports-entity-events a strong { font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.sports-entity-events a small,.sports-entity-links small { color: var(--muted); font-size: 11px; }
+.sports-entity-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.sports-entity-links a { display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); font-size: 13px; }
+.sports-entity-events a:hover,.sports-entity-links a:hover,.anchor-sports .teams h2 a:hover,.golf-player-scores a:hover { color: var(--green); }

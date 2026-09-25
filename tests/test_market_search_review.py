@@ -105,30 +105,27 @@ def test_sports_route_searches_full_names(board_context, monkeypatch, query):
     response = main.sports_board_response(request(query), None, "list")
     html = BeautifulSoup(response.body, "html.parser")
     assert len(html.select("a.ticker")) == 1
-    assert html.select_one(".ticker-name strong").get_text() == "LAL · BOS"
+    assert [team.get_text() for team in html.select(".sports-team")] == ["LAL", "BOS"]
 
 
-@pytest.mark.parametrize(
-    "side, abbreviation, full_name, probability",
-    [
-        ("home", "BOS", "Boston Celtics", 63),
-        ("away", "LAL", "Los Angeles Lakers", 37),
-    ],
-)
-def test_sports_probability_names_its_selected_team(
-    board_context, side, abbreviation, full_name, probability
-):
+@pytest.mark.parametrize("side", ["home", "away"])
+def test_sports_forecast_and_tag_name_the_same_outcome(board_context, side):
     response = main._simple_board(request(""), None, "sports", [game(side)], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    value = html.select_one(".row-assessment strong")
-    assert value.get_text() == f"{abbreviation} {probability}%"
-    assert value["aria-label"] == f"{full_name} · {probability}% win chance"
+    assert html.select_one(".prediction-glyph [role=img]")["aria-label"].startswith(
+        "BOS: sentiment pending a fresh model and comparable market price."
+    )
+    assert html.select_one(".tag").get_text() == "MODEL"
+    assert html.select_one(".tag")["title"] == ("BOS: saved model; comparable fresh prices pending")
 
 
 def test_selected_team_falls_back_to_full_name(board_context):
     response = main._simple_board(request(""), None, "sports", [game(home_abbreviation="")], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    assert html.select_one(".row-assessment strong").get_text() == "Boston Celtics 63%"
+    assert html.select_one(".prediction-glyph [role=img]")["aria-label"].startswith(
+        "Boston Celtics: sentiment pending a fresh model and comparable market price."
+    )
+    assert [team.get_text() for team in html.select(".sports-team")] == ["LAL", "Boston Celtics"]
 
 
 def test_stock_search_keeps_its_existing_fields():

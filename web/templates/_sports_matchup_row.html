@@ -1,0 +1,11 @@
+{% from '_prediction_glyph.html' import prediction_glyph %}
+{% from '_sports_row_opinion.html' import sports_row_opinion %}
+{% if item.tag %}<span class="tag tag-{{ item.tag_tone }}" title="{{ item.tag_title }}">{{ item.tag }}</span>{% else %}<span class="sports-signal-space" aria-hidden="true"></span>{% endif %}
+<span class="ticker-name sports-identity">
+  <span class="sports-team-pair">{% for team in item.matchup.teams %}{% if not loop.first %}<span class="sports-versus" aria-hidden="true">·</span>{% endif %}<strong class="sports-team{% if team.emphasized %} is-highlighted{% endif %}" data-side="{{ team.side }}" title="{{ team.name }}" aria-label="{{ team.name }}{% if team.emphasis_label %} · {{ team.emphasis_label|lower }}{% endif %}">{{ team.label }}</strong>{% endfor %}</span>
+  <small class="sports-league">{{ item.subtitle }} <span class="sports-ticker-id">· {{ item.id.split(':')[-1] }}</span></small>
+  {% if item.rank_detail %}<small class="rank-detail">{{ item.rank_detail }}</small>{% endif %}
+  {{ sports_row_opinion(item.ticker) }}
+</span>
+<span class="ticker-value sports-score"><strong aria-label="{{ item.matchup.teams[0].name }} then {{ item.matchup.teams[1].name }}: {{ item.value }}">{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span>
+<span class="ticker-score sports-forecast">{{ prediction_glyph(item.ticker) }}</span>

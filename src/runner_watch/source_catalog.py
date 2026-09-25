@@ -467,6 +467,40 @@ DEFAULT_SOURCE_POLICIES = (
         product="sports",
     ),
     SourcePolicy(
+        source="kalshi",
+        feed="sports_game_winner_prices",
+        title="Kalshi full-game winner prices",
+        owner="Kalshi",
+        terms_url="https://kalshi.com/terms",
+        credential_env=None,
+        expected_cadence_seconds=600,
+        stale_after_seconds=1_800,
+        schedule="pregame",
+        storage_policy="normalized_only",
+        display_policy="source_link_with_attribution",
+        attribution="Kalshi",
+        review_status="poc_only",
+        enabled=_enabled("SPORTS_PREDICTION_MARKETS_ENABLED"),
+        product="sports",
+    ),
+    SourcePolicy(
+        source="polymarket",
+        feed="sports_game_winner_prices",
+        title="Polymarket full-game moneyline prices",
+        owner="Polymarket",
+        terms_url="https://polymarket.com/tos",
+        credential_env=None,
+        expected_cadence_seconds=600,
+        stale_after_seconds=1_800,
+        schedule="pregame",
+        storage_policy="normalized_only",
+        display_policy="source_link_with_attribution",
+        attribution="Polymarket",
+        review_status="poc_only",
+        enabled=_enabled("SPORTS_PREDICTION_MARKETS_ENABLED"),
+        product="sports",
+    ),
+    SourcePolicy(
         source="espn",
         feed="sports_boxscore_preview",
         title="ESPN sports box score preview",
@@ -728,3 +762,70 @@ FREE_RISK_SOURCE_POLICIES = (
 )
 
 DEFAULT_SOURCE_POLICIES = (*DEFAULT_SOURCE_POLICIES, *FREE_RISK_SOURCE_POLICIES)
+
+GOLF_MODEL_SOURCE_POLICIES = tuple(
+    SourcePolicy(
+        source=source,
+        feed=feed,
+        title=title,
+        owner=owner,
+        terms_url=terms,
+        credential_env=None,
+        expected_cadence_seconds=cadence,
+        stale_after_seconds=cadence * 3,
+        schedule="always",
+        storage_policy="normalized_only",
+        display_policy="source_link_with_attribution",
+        attribution=owner,
+        review_status="poc_only",
+        enabled=(
+            _enabled("SPORTS_PREDICTION_MARKETS_ENABLED")
+            if source in {"kalshi", "polymarket"}
+            else _enabled_by_default("SPORTS_INGESTION_ENABLED")
+        ),
+        product="sports",
+    )
+    for source, feed, title, owner, terms, cadence in (
+        (
+            "espn",
+            "sports_golf_cup_matches",
+            "Cup match scores and pairings",
+            "ESPN",
+            "https://disneytermsofuse.com/",
+            600,
+        ),
+        (
+            "espn",
+            "sports_golf_cup_rankings",
+            "Cup player world rankings",
+            "ESPN",
+            "https://disneytermsofuse.com/",
+            21600,
+        ),
+        (
+            "presidentscup",
+            "sports_golf_cup_rosters",
+            "Official Cup team rosters",
+            "Presidents Cup",
+            None,
+            21600,
+        ),
+        (
+            "kalshi",
+            "golf_outcome_prices",
+            "Kalshi golf outcome prices",
+            "Kalshi",
+            "https://kalshi.com/terms",
+            600,
+        ),
+        (
+            "polymarket",
+            "golf_outcome_prices",
+            "Polymarket golf outcome prices",
+            "Polymarket",
+            "https://polymarket.com/tos",
+            600,
+        ),
+    )
+)
+DEFAULT_SOURCE_POLICIES = (*DEFAULT_SOURCE_POLICIES, *GOLF_MODEL_SOURCE_POLICIES)

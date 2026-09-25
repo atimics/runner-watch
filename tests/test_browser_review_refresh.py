@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -33,14 +34,17 @@ def assets(page, held=None, script="market-anchor.js"):
 
 def sport(signal):
     event = screens.sample("sports")
+    now = datetime.now(UTC)
+    event.update(status="pre", start_time=(now + timedelta(days=1)).isoformat())
     if signal:
         event["prediction"] = {
             "selection": "home",
-            "signal": signal,
+            "signal": "watch",
             "home_probability": 0.6,
-            "home_market_probability": 0.57,
-            "edge": 0.03,
-            "observed_at": "2026-09-19T12:00:00Z",
+            "away_probability": 0.4,
+            "home_market_probability": 0.57 if signal == "above" else 0.63,
+            "model_version": "team-form-v1",
+            "observed_at": now.isoformat(),
         }
     return listing("sports", [event])
 
@@ -64,7 +68,7 @@ def refresh(page, state, screen):
 
 
 def test_late_assessment_script_consumes_completed_detail_refresh(page):
-    screen = detail("sports", screens.sample("sports"))
+    screen = detail("memecoins", {"coin": screens.sample("memecoins")})
     fresh = copy.deepcopy(screen)
     fresh["item"]["value"] = "$123.00"
     fresh["item"]["assessment"].update(label="Runner score", value=72, unit="pts")
@@ -92,31 +96,31 @@ def test_late_assessment_script_consumes_completed_detail_refresh(page):
 
 
 def test_state_change_refreshes_counts_and_all_recovers_the_list(page):
-    state = start_list(page, sport("lean"))
-    page.locator('.chip[data-tag="lean"]').click()
-    refresh(page, state, sport("pass"))
-    expect(page.locator('.chip[data-tag="lean"]')).to_have_text("0 lean")
-    expect(page.locator('.chip[data-tag="lean"]')).to_have_attribute("aria-pressed", "true")
-    expect(page.locator('.chip[data-tag="pass"]')).to_have_text("1 pass")
+    state = start_list(page, sport("above"))
+    page.locator('.chip[data-tag="above"]').click()
+    refresh(page, state, sport("below"))
+    expect(page.locator('.chip[data-tag="above"]')).to_have_text("0 above")
+    expect(page.locator('.chip[data-tag="above"]')).to_have_attribute("aria-pressed", "true")
+    expect(page.locator('.chip[data-tag="below"]')).to_have_text("1 below")
     expect(page.locator(".ticker:visible")).to_have_count(0)
     expect(page.locator("[data-filter-empty]")).to_contain_text("No results in this state.")
     page.locator(".chip-all").click()
     expect(page.locator(".ticker:visible")).to_have_count(1)
-    expect(page.locator('[data-tag-filters] [data-tag="lean"]')).to_have_count(0)
+    expect(page.locator('[data-tag-filters] [data-tag="above"]')).to_have_count(0)
     expect(page.locator("[data-filter-empty]")).to_be_hidden()
-    page.locator('.chip[data-tag="pass"]').click()
+    page.locator('.chip[data-tag="below"]').click()
     expect(page.locator(".ticker:visible")).to_have_count(1)
 
 
 def test_disappeared_filters_preserve_selection_then_recover(page):
-    state = start_list(page, sport("lean"))
-    page.locator('.chip[data-tag="lean"]').click()
+    state = start_list(page, sport("above"))
+    page.locator('.chip[data-tag="above"]').click()
     refresh(page, state, sport(None))
-    expect(page.locator('.chip[data-tag="lean"]')).to_have_text("0 lean")
+    expect(page.locator('.chip[data-tag="above"]')).to_have_text("0 above")
     expect(page.get_by_role("button", name="Show all", exact=True)).to_be_visible()
-    refresh(page, state, sport("lean"))
-    expect(page.locator('.chip[data-tag="lean"]')).to_have_text("1 lean")
-    expect(page.locator('.chip[data-tag="lean"]')).to_have_attribute("aria-pressed", "true")
+    refresh(page, state, sport("above"))
+    expect(page.locator('.chip[data-tag="above"]')).to_have_text("1 above")
+    expect(page.locator('.chip[data-tag="above"]')).to_have_attribute("aria-pressed", "true")
     expect(page.locator(".ticker:visible")).to_have_count(1)
     expect(page.locator("[data-filter-empty]")).to_have_count(0)
     refresh(page, state, listing("sports", []))
@@ -124,9 +128,9 @@ def test_disappeared_filters_preserve_selection_then_recover(page):
     page.get_by_role("button", name="Show all", exact=True).click()
     expect(page.locator("[data-tag-filters]")).to_have_count(0)
     expect(page.get_by_role("heading", name="A quiet moment")).to_be_visible()
-    refresh(page, state, sport("pass"))
-    expect(page.locator('.chip[data-tag="pass"]')).to_have_text("1 pass")
-    page.locator('.chip[data-tag="pass"]').click()
+    refresh(page, state, sport("below"))
+    expect(page.locator('.chip[data-tag="below"]')).to_have_text("1 below")
+    page.locator('.chip[data-tag="below"]').click()
     expect(page.locator(".ticker:visible")).to_have_count(1)
 
 
@@ -145,16 +149,16 @@ def test_older_list_response_keeps_latest_rows_and_filters(page):
         page.clock.fast_forward(60_000)
     page.wait_for_function("window.heldRefreshCount === 2")
     assert len(held) == 2
-    held[1].fulfill(content_type="text/html", body=screens.render(sport("pass")))
-    expect(page.locator('.chip[data-tag="pass"]')).to_have_text("1 pass")
+    held[1].fulfill(content_type="text/html", body=screens.render(sport("below")))
+    expect(page.locator('.chip[data-tag="below"]')).to_have_text("1 below")
     with page.expect_response("https://app.test/"):
-        held[0].fulfill(content_type="text/html", body=screens.render(sport("lean")))
+        held[0].fulfill(content_type="text/html", body=screens.render(sport("above")))
     # A later round trip ensures the fetch continuation has handled the old response.
     page.evaluate("() => new Promise(resolve => setTimeout(resolve, 0))")
-    expect(page.locator('.chip[data-tag="pass"]')).to_have_text("1 pass")
-    expect(page.locator('.chip[data-tag="lean"]')).to_have_count(0)
-    expect(page.locator(".ticker")).to_have_attribute("data-tag", "pass")
-    page.locator('.chip[data-tag="pass"]').click()
+    expect(page.locator('.chip[data-tag="below"]')).to_have_text("1 below")
+    expect(page.locator('.chip[data-tag="above"]')).to_have_count(0)
+    expect(page.locator(".ticker")).to_have_attribute("data-tag", "below")
+    page.locator('.chip[data-tag="below"]').click()
     expect(page.locator(".ticker:visible")).to_have_count(1)
 
 

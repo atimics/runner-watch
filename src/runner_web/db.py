@@ -2404,6 +2404,10 @@ def _migration_083_golf_market_context(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_088_golf_match_results(db: DatabaseConnection) -> None:
+    db.execute("ALTER TABLE sports_golf_events ADD COLUMN matches_json TEXT NOT NULL DEFAULT '[]'")
+
+
 def _migration_045_sports_comments(db: DatabaseConnection) -> None:
 
     db.executescript(
@@ -3698,6 +3702,77 @@ def _migration_085_attention_shadow(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_086_sports_opinion_factors(db: DatabaseConnection) -> None:
+    _ensure_column(db, "sports_predictions", "factors_json TEXT NOT NULL DEFAULT '{}'")
+
+
+def _migration_087_sports_prediction_market_snapshots(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_prediction_market_snapshots (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            source TEXT NOT NULL CHECK(source IN ('kalshi','polymarket')),
+            source_event_id TEXT NOT NULL,
+            source_market_id TEXT NOT NULL,
+            away_probability REAL NOT NULL CHECK(away_probability BETWEEN 0 AND 1),
+            home_probability REAL NOT NULL CHECK(home_probability BETWEEN 0 AND 1),
+            source_updated_at TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            price_basis TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            quote_hash TEXT NOT NULL,
+            UNIQUE(event_id,source,quote_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_prediction_market_event_time
+            ON sports_prediction_market_snapshots(event_id,source,observed_at DESC);
+        CREATE TABLE IF NOT EXISTS sports_team_game_stats (
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            side TEXT NOT NULL CHECK(side IN ('away','home')),
+            stats_json TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            PRIMARY KEY(event_id,side)
+        );
+        """
+    )
+
+
+def _migration_089_prediction_tickers(db: DatabaseConnection) -> None:
+    _ensure_column(
+        db, "sports_prediction_market_snapshots", "quality TEXT NOT NULL DEFAULT 'legacy'"
+    )
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_golf_analysis (
+            event_id TEXT NOT NULL REFERENCES sports_golf_events(id) ON DELETE CASCADE,
+            input_hash TEXT NOT NULL,
+            captured_at TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            PRIMARY KEY(event_id,input_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_golf_analysis_time
+            ON sports_golf_analysis(event_id,captured_at DESC);
+        CREATE TABLE IF NOT EXISTS prediction_contract_quotes (
+            event_id TEXT NOT NULL,
+            contract_key TEXT NOT NULL,
+            outcome_key TEXT NOT NULL,
+            source TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY(event_id,contract_key,outcome_key,source,observed_at)
+        );
+        CREATE INDEX IF NOT EXISTS prediction_contract_event_time
+            ON prediction_contract_quotes(event_id,observed_at DESC);
+        """
+    )
+
+
+def _migration_090_sports_market_activity(db: DatabaseConnection) -> None:
+    _ensure_column(
+        db, "sports_prediction_market_snapshots", "metadata_json TEXT NOT NULL DEFAULT '{}'"
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3788,6 +3863,13 @@ MIGRATIONS = (
     Migration(83, "golf_market_context", _migration_083_golf_market_context),
     Migration(84, "report_spotlight", _migration_084_report_spotlight),
     Migration(85, "attention_shadow", _migration_085_attention_shadow),
+    Migration(86, "sports_opinion_factors", _migration_086_sports_opinion_factors),
+    Migration(
+        87, "sports_prediction_market_snapshots", _migration_087_sports_prediction_market_snapshots
+    ),
+    Migration(88, "golf_match_results", _migration_088_golf_match_results),
+    Migration(89, "prediction_tickers", _migration_089_prediction_tickers),
+    Migration(90, "sports_market_activity", _migration_090_sports_market_activity),
 )
 
 

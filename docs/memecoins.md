@@ -67,6 +67,10 @@ See [Forensic methods and evidence rules](memecoin-forensics.md) for the detecto
 and their interpretation. The public page links findings to their supporting
 transactions and labels observations, relationships and patterns separately.
 
+The collector also saves a versioned sentiment, attention and risk assessment
+with each quoted token. See [Model policy and research basis](research/memecoin-sentiment-attention-risk.md)
+for its sampled wallet reading, activity weights, source windows and open checks.
+
 ## References
 
 - [Helius transaction history and metering](https://www.helius.dev/docs/rpc/gettransactionsforaddress)

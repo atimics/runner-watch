@@ -127,18 +127,25 @@ def test_sports_probability_is_separate_from_score_and_event_status():
     assert listed == opened
     assert listed["score"] is None
     assert listed["score_detail"] is None
-    assert listed["tag"] == "LEAN"
+    assert listed["tag"] == "MODEL"
+    assert listed["ticker"]["selected"]["label"] == "Home"
+    assert listed["ticker"]["selected"]["gap"] is None
     assert listed["assessment"]["value"] == 60
     assert listed["assessment"]["unit"] == "%"
+    assert listed["assessment"]["selected_team_label"] == "Home"
+    assert listed["assessment"]["selected_model_percent"] == 60
+    assert listed["assessment"]["selected_market_percent"] == 57
+    assert listed["assessment"]["edge_pp"] == 3
     assert listed["assessment"]["contributions"] == []
     assert listed["assessment"]["drivers"][2]["value"] == 3
     assert listed["assessment"]["drivers"][2]["unit"] == "pp"
     assert listed["event_status"] != "LEAN"
 
 
-def test_sports_pass_keeps_selection_and_missing_probability_honest():
+def test_sports_saved_pass_keeps_the_model_outcome_available():
     result = row("sports", game(prediction=prediction(selection="pass", signal="pass")))
-    assert result["tag"] == "PASS"
+    assert result["tag"] == "MODEL"
+    assert result["ticker"]["selected"]["percent"] == 60
     assert result["assessment"]["value"] is None
     assert result["score"] is None
 
@@ -196,9 +203,10 @@ def test_coin_assessment_limits_findings_to_latest_three():
     assert result["assessment"]["drivers"][0]["observed_at"].endswith("05Z")
 
 
-def test_saved_sports_risk_state_overrides_model_signal():
+def test_sports_outcome_label_uses_probability_inputs_with_saved_risk_metadata():
     result = row("sports", game(rug_level="high", prediction=prediction()))
-    assert result["tag"] == "AVOID"
+    assert result["tag"] == "MODEL"
+    assert result["tag_title"].startswith("Home: saved model")
     assert result["risk"] is True
     assert result["assessment"]["tag"] == "AVOID"
 
