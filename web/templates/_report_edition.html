@@ -4,9 +4,9 @@
 <section class="edition-cover" aria-label="{{ edition.title }}">
   <div class="edition-cover-copy">
     <p class="edition-kicker">STOCKS / {{ 'EVENING EDITION' if post else 'MORNING EDITION' }}</p>
-    {% if page_title %}<h1>{{ edition.title }}</h1>{% else %}<h2>{{ edition.title }}</h2>{% endif %}
+    {% if page_title %}<h1>{{ report.narrative.headline }}</h1>{% else %}<h2>{{ report.narrative.headline }}</h2>{% endif %}
     <p class="edition-date">{{ edition.date_label }} <span>· Scan {{ report.as_of_label }}</span></p>
-    <p class="edition-deck">{{ 'The company that made this session worth studying.' if post else 'Three names to inspect. The signals and targets ahead.' }}</p>
+    <p class="edition-deck">{{ report.narrative.intro }}</p>
     {% if hero %}
     <div class="edition-lead">
       <span>{{ edition.scope }}</span>
@@ -17,15 +17,15 @@
     </div>
     {% endif %}
   </div>
-  {% if hero %}
-  <figure class="edition-orbit">
-    <div class="edition-orbit-face">{{ indicator_glyph(hero) }}</div>
-    <figcaption><b>Attention and risk</b><small>{{ 'Dashed ring: mix awaiting data.' if hero.indicator.mix_state == 'unknown' else 'Slices: share of saved attention.' }} {{ {'detected':'Diamond: risk flags.', 'significant':'Circle: significant risk.', 'none':'Center: zero detected risks.', 'unknown':'Center: checks awaiting data.'}.get(hero.indicator.risk, '') }}</small><span>Saved scanner score <strong>{{ '%.0f'|format(hero.score) }}</strong></span></figcaption>
-  </figure>
+  {% if report.narrative.stories %}
+  <aside class="edition-contents" aria-label="In this edition">
+    <p class="edition-kicker">IN THIS EDITION</p>
+    <ol>{% for story in report.narrative.stories %}<li><a href="#story-{{ story.ticker }}"><small>{{ story.label }}</small><span>{{ story.headline }}</span></a></li>{% endfor %}</ol>
+  </aside>
   {% endif %}
 </section>
 <nav class="edition-jumps" aria-label="Edition sections">
-  <a href="#watch-board">Watch board & targets ↓</a>{% if report.spotlight %}<a href="#company-profile">Company profile ↓</a>{% endif %}<a href="#indicator-key">Ring key ↓</a>
+  <a href="#session-stories">The stories ↓</a><a href="#watch-board">Watch board & targets ↓</a>{% if report.spotlight %}<a href="#company-profile">Company profile ↓</a>{% endif %}<a href="#indicator-key">Ring key ↓</a>
 </nav>
 <section class="edition-quick-watch" aria-label="{{ 'Watch returns at the saved checkpoint' if post else 'Opening watch summary' }}">
   {% for row in report.leaders[:3] %}{% set forecast = row.eod_forecast %}
@@ -97,9 +97,23 @@
 {% set hero = report.edition.hero %}
 <a class="edition-preview report-{{ report.report_type }}" href="{{ report.permalink }}">
   <div><span class="edition-kicker">{{ report.edition.title }}</span><time>{{ report.report_day }} · {{ report.as_of_label }}</time></div>
-  <div class="edition-preview-story">{% if hero %}{{ indicator_glyph(hero) }}{% endif %}<h3>{{ report.spotlight.company.name if report.spotlight else report.headline }}</h3><span aria-hidden="true">↗</span></div>
-  <p>{{ report.spotlight.reason if report.spotlight else report.summary }}</p>
+  <div class="edition-preview-story">{% if hero %}{{ indicator_glyph(hero) }}{% endif %}<h3>{{ report.narrative.headline }}</h3><span aria-hidden="true">↗</span></div>
+  <p>{{ report.narrative.intro }}</p>
   <p class="edition-preview-snapshot">{{ report.edition.metric_label }} · {{ report.edition.metric_time }}</p>
   <div class="edition-preview-facts">{% for metric in report.metric_cards[:2] %}<span><b>{{ metric.value }}</b> {{ metric.label }}</span>{% endfor %}{% if report.spotlight %}<span><b>{{ report.spotlight.snapshot.risks|length }}</b> risk flags</span>{% endif %}</div>
 </a>
+{% endmacro %}
+
+{% macro session_stories(report) %}
+<section class="edition-stories" id="session-stories" aria-label="The session stories">
+  {% for story in report.narrative.stories %}
+  <article class="edition-story" id="story-{{ story.ticker }}">
+    <p class="edition-kicker">{{ story.label }}</p>
+    <h2>{{ story.headline }}</h2>
+    <p>{{ story.body }}</p>
+    <a href="/stock/{{ story.ticker }}">Explore {{ story.ticker }} ↗</a>
+  </article>
+  {% endfor %}
+  <aside class="edition-next"><h2>{{ report.narrative.next_heading }}</h2><p>{{ report.narrative.next_read }}</p></aside>
+</section>
 {% endmacro %}

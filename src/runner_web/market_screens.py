@@ -9,9 +9,11 @@ from typing import Any
 from urllib.parse import quote
 
 from runner_web.market_assessments import assessment
+from runner_web.prediction_tickers import ticker as prediction_ticker
 from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
+SPORTS_RANK_MAX_AGE = timedelta(hours=6)
 
 
 def number(value: Any) -> float | None:
@@ -71,7 +73,244 @@ def sports_state(item: dict[str, Any]) -> dict[str, Any]:
     return item.get("view_state") or _game_view_state(item)
 
 
-def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
+def sports_market_chart(history: dict[str, Any]) -> dict[str, Any] | None:
+    """Plot one team's saved pregame model and market chances on the same clock."""
+    points = []
+    for raw in history.get("points") or []:
+        model = number(raw.get("model_pct"))
+        market = number(raw.get("market_pct"))
+        edge = number(raw.get("edge_pct"))
+        try:
+            observed = datetime.fromisoformat(str(raw.get("observed_at")).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if model is None or market is None or not (0 <= model <= 100 and 0 <= market <= 100):
+            continue
+        points.append(
+            (
+                observed if observed.tzinfo else observed.replace(tzinfo=UTC),
+                model,
+                market,
+                edge if edge is not None else round(model - market, 1),
+            )
+        )
+    if not points:
+        return None
+    points.sort(key=lambda point: point[0])
+    values = [value for _, model, market, _ in points for value in (model, market)]
+    low = max(0, math.floor((min(values) - 5) / 5) * 5)
+    high = min(100, math.ceil((max(values) + 5) / 5) * 5)
+    if high - low < 10:
+        low = max(0, low - 5)
+        high = min(100, high + 5)
+    span = max(1, high - low)
+    start = points[0][0].timestamp()
+    duration = points[-1][0].timestamp() - start
+
+    def xy(index: int, observed: datetime, value: float) -> str:
+        x = (
+            50
+            if len(points) == 1
+            else 8 + 84 * (observed.timestamp() - start) / duration
+            if duration > 0
+            else 8 + 84 * index / (len(points) - 1)
+        )
+        y = 58 - 48 * (value - low) / span
+        return f"{x:.1f},{y:.1f}"
+
+    model_line = " ".join(
+        xy(index, observed, model) for index, (observed, model, _, _) in enumerate(points)
+    )
+    market_line = " ".join(
+        xy(index, observed, market) for index, (observed, _, market, _) in enumerate(points)
+    )
+    last_model, last_market = points[-1][1:3]
+    return {
+        "team": history.get("team"),
+        "count": len(points),
+        "model_line": model_line,
+        "market_line": market_line,
+        "model_dot": model_line.split()[-1].split(","),
+        "market_dot": market_line.split()[-1].split(","),
+        "model_last": last_model,
+        "market_last": last_market,
+        "gap_first": round(points[0][3], 1),
+        "gap_last": round(points[-1][3], 1),
+        "first_label": stamp(points[0][0]),
+        "last_label": stamp(points[-1][0]),
+        "high": high,
+        "low": low,
+    }
+
+
+def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Keep the scoreboard leader separate from the saved model and value side."""
+    sides = ("away", "home")
+    prediction = item.get("prediction") or {}
+    probabilities = [number(prediction.get(f"{side}_probability")) for side in sides]
+    if all(p is None or 0 <= p <= 1 for p in probabilities):
+        if prediction.get("away_probability") is None and probabilities[1] is not None:
+            probabilities[0] = 1 - probabilities[1]
+        elif prediction.get("home_probability") is None and probabilities[0] is not None:
+            probabilities[1] = 1 - probabilities[0]
+    valid_model = all(p is not None and 0 <= p <= 1 for p in probabilities)
+    valid_model = valid_model and math.isclose(sum(probabilities), 1, abs_tol=0.001)
+    favorite = (
+        sides[probabilities.index(max(probabilities))]
+        if valid_model and probabilities[0] != probabilities[1]
+        else None
+    )
+    scores = [number(item.get(f"{side}_score")) for side in sides]
+    completed = bool(item.get("completed")) or item.get("status") == "post"
+    started = bool(state.get("started")) or completed or item.get("status") == "in"
+    confirmed = (
+        started
+        and state.get("score_available")
+        and all(score is not None and score >= 0 for score in scores)
+    )
+    leader = sides[scores.index(max(scores))] if confirmed and scores[0] != scores[1] else None
+    emphasis = leader
+    emphasis_label = "Winner" if completed else "Leading"
+    teams = [
+        {
+            "side": side,
+            "label": str(
+                item.get(f"{side}_abbreviation") or item.get(f"{side}_team_name") or side.title()
+            ),
+            "name": str(
+                item.get(f"{side}_team_name") or item.get(f"{side}_abbreviation") or side.title()
+            ),
+            "emphasized": side == emphasis,
+            "emphasis_label": emphasis_label if side == emphasis else "",
+        }
+        for side in sides
+    ]
+    if valid_model:
+        for index, team in enumerate(teams):
+            team["model_percent"] = round(probabilities[index] * 100, 1)
+            team["model_favorite"] = team["side"] == favorite
+            market_probability = number(prediction.get(f"{team['side']}_market_probability"))
+            if market_probability is not None and 0 <= market_probability <= 1:
+                team["market_percent"] = round(market_probability * 100, 1)
+                team["market_gap_pp"] = round((probabilities[index] - market_probability) * 100, 1)
+            team["value_side"] = team["side"] == prediction.get("selection")
+    value_team = next((team for team in teams if team.get("value_side")), None)
+    forecast = None
+    if valid_model:
+        index = sides.index(favorite) if favorite else 0
+        team = teams[index]
+        percent = round(probabilities[index] * 100, 1)
+        forecast = {
+            "team": team["label"] if favorite else "Even",
+            "percent": percent,
+            "label": f"{team['label']} {percent:g}%" if favorite else "Even 50–50",
+            "description": (
+                f"Pregame model: {team['name']} {percent:g}% win chance."
+                if favorite
+                else "Pregame model: both teams have a 50% win chance."
+            )
+            + (
+                f" Saved {stamp(prediction.get('observed_at'))}."
+                if stamp(prediction.get("observed_at"))
+                else ""
+            ),
+            "observed_at": prediction.get("observed_at"),
+            "saved_label": stamp(prediction.get("observed_at")),
+            "model_version": prediction.get("model_version"),
+        }
+        trace = prediction.get("factors") or {}
+        traced_home = number(trace.get("home_probability_pct")) if isinstance(trace, dict) else None
+        if (
+            favorite
+            and traced_home is not None
+            and abs(traced_home - probabilities[1] * 100) < 0.001
+        ):
+            orientation = 1 if favorite == "home" else -1
+            parts = [
+                ("Season record", "record", "home_record_delta_pp"),
+                ("Venue", "venue", "home_venue_delta_pp"),
+                ("Clamp", "clamp", "home_clamp_delta_pp"),
+            ]
+            factors = [
+                {
+                    "label": label,
+                    "key": key,
+                    "value": round(orientation * (number(trace.get(field)) or 0), 6),
+                }
+                for label, key, field in parts
+            ]
+            adjustment = sum(part["value"] for part in factors)
+            if abs(50 + adjustment - probabilities[index] * 100) < 0.001:
+                total = sum(abs(part["value"]) for part in factors)
+                offset = 0.0
+                running = 50.0
+                for part in factors:
+                    part["share"] = abs(part["value"]) / total * 100 if total else 0.0
+                    part["offset"] = offset
+                    part["negative"] = part["value"] < 0
+                    part["bar_start"] = max(0.0, min(100.0, min(running, running + part["value"])))
+                    part["bar_width"] = max(
+                        0.0,
+                        min(100.0, max(running, running + part["value"])) - part["bar_start"],
+                    )
+                    running += part["value"]
+                    offset += part["share"]
+                forecast["factors"] = factors
+                forecast["records"] = {side: trace.get(f"{side}_record") for side in sides}
+                forecast["source_url"] = trace.get("source_url")
+                forecast["description"] += (
+                    " "
+                    + "; ".join(
+                        f"{part['label']} {part['value']:+.1f} points"
+                        for part in factors
+                        if abs(part["value"]) >= 0.05
+                    )
+                    + "."
+                )
+        market_chance = (
+            number(prediction.get(f"{favorite}_market_probability")) if favorite else None
+        )
+        if market_chance is not None:
+            forecast["market_percent"] = round(market_chance * 100, 1)
+            forecast["market_gap_pp"] = round(percent - market_chance * 100, 1)
+        selection = prediction.get("selection")
+        if selection in sides:
+            forecast["value_side"] = teams[sides.index(selection)]["label"]
+    return {
+        "teams": teams,
+        "forecast": forecast,
+        "value_team": value_team,
+        "emphasis": emphasis,
+        "emphasis_label": emphasis_label if emphasis else "",
+        "tied": bool(confirmed and scores[0] == scores[1]),
+    }
+
+
+def _outcome_tag(ticker: dict[str, Any]) -> dict[str, str]:
+    selected = ticker.get("selected") or {}
+    gap = selected.get("gap")
+    label = selected.get("label", "Outcome")
+    if gap is not None:
+        direction = "above" if gap > 0 else "below" if gap < 0 else "level"
+        venue = selected["benchmark"]["label"]
+        return {
+            "tag": direction.upper(),
+            "tag_tone": direction,
+            "tag_title": f"{label}: RATi {direction} {venue} · {gap:+.1f} percentage points",
+        }
+    available = selected.get("percent") is not None
+    return {
+        "tag": "MODEL" if available else "PENDING",
+        "tag_tone": "model" if available else "pending",
+        "tag_title": f"{label}: saved model; comparable fresh prices pending"
+        if available
+        else ticker["pending"],
+    }
+
+
+def row(
+    market: str, item: dict[str, Any], *, outcome: str = "", contract: str = ""
+) -> dict[str, Any]:
     if market == "sports" and str(item.get("id", "")).startswith("golf:"):
         from runner_web.sports import _golf_display_status
 
@@ -83,12 +322,40 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
+        ticker = prediction_ticker(item, outcome=outcome, contract=contract, history=False)
+        golf_matchup = None
+        if match_play and len(teams) == 2:
+            scores = [number(team.get("points")) for team in teams]
+            leader_index = (
+                scores.index(max(scores))
+                if all(score is not None for score in scores) and scores[0] != scores[1]
+                else None
+            )
+            golf_matchup = {
+                "teams": [
+                    {
+                        "side": str(index),
+                        "label": team["name"],
+                        "name": team["name"],
+                        "emphasized": index == leader_index,
+                        "emphasis_label": (
+                            ("Winner" if item.get("completed") else "Leading")
+                            if index == leader_index
+                            else ""
+                        ),
+                    }
+                    for index, team in enumerate(teams)
+                ],
+                "forecast": None,
+            }
         return {
             "id": str(item["id"]),
+            "ticker": ticker,
+            **({"matchup": golf_matchup} if golf_matchup else {}),
             "name": str(item.get("name") or "Tournament"),
             "subtitle": (
-                " vs ".join(str(team.get("name") or "Team") for team in teams)
-                if match_play and teams
+                str(item.get("name") or "Match play") + " · GOLF"
+                if golf_matchup
                 else str(leader.get("player_name") or "PGA Tour")
             ),
             "value": (
@@ -102,10 +369,11 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             "research_label": "Team points" if match_play else "Round scores",
             "tone": "neutral",
             "time": stamp(item.get("start_time")),
-            "href": "/game/" + quote(str(item["id"]), safe=":"),
+            "href": "/game/"
+            + quote(str(item["id"]), safe=":")
+            + (ticker.get("selected") or {}).get("href", ""),
             "mark": "PG",
-            "tag": rating["tag"],
-            "tag_tone": rating["tag_tone"],
+            **_outcome_tag(ticker),
             "risk": saved_risk,
             "score": rating["score"],
             "score_detail": rating["score_detail"],
@@ -119,6 +387,7 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         saved_tag, saved_tone, saved_risk = state_tag(item)
         if saved_tag:
             rating.update(tag=saved_tag, tag_tone=saved_tone)
+        ticker = prediction_ticker(item, outcome=outcome, contract=contract, history=False)
         started = state.get("started") or item.get("status") in {"in", "post"}
         scores = [item.get(f"{side}_score") for side in ("away", "home")]
         value = (
@@ -130,7 +399,9 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "id": str(item["id"]),
+            "ticker": ticker,
             "name": f"{away} · {home}",
+            "matchup": sports_matchup(item, state),
             "subtitle": str(item.get("league") or "Sports").upper(),
             "selected_team_label": str(
                 item.get(f"{rating.get('selection')}_abbreviation")
@@ -148,12 +419,13 @@ def row(market: str, item: dict[str, Any]) -> dict[str, Any]:
             ),
             "tone": "neutral",
             "time": stamp(item.get("start_time")),
-            "href": "/game/" + quote(str(item["id"]), safe=":"),
+            "href": "/game/"
+            + quote(str(item["id"]), safe=":")
+            + (ticker.get("selected") or {}).get("href", ""),
             "mark": away[:2],
             "event_status": state.get("label") or item.get("status_detail") or "Upcoming",
             "assessment": rating,
-            "tag": rating["tag"],
-            "tag_tone": rating["tag_tone"],
+            **_outcome_tag(ticker),
             "risk": saved_risk,
             "score": rating["score"],
             "score_detail": rating["score_detail"],
@@ -317,21 +589,96 @@ def listing(
     graph: dict[str, Any] | None = None,
     updated_at: str = "",
     stories: dict[str, dict[str, Any]] | None = None,
+    stock_calls: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the tight list screen. The market-wide map view is retired."""
 
     _ = view, graph  # Kept so saved links keep working; the map lives on the ticker page now.
-    rows = [row(market, item) for item in items]
+    pairs = [(item, row(market, item)) for item in items]
     if market == "stocks":
-        for index, entry in enumerate(rows):
-            entry["chart_offset"] = (index // 50) * 50
+        for index, (_, display) in enumerate(pairs):
+            display["chart_offset"] = (index // 50) * 50
     query = query.strip()[:80]
     if query:
-        rows = [
-            r
-            for source, r in zip(items, rows, strict=True)
-            if query.casefold() in _search_text(market, source, r).casefold()
+        pairs = [
+            (source, display)
+            for source, display in pairs
+            if query.casefold() in _search_text(market, source, display).casefold()
         ]
+    now = datetime.now(UTC)
+    target_day = ""
+    calls_by_ticker: dict[str, dict[str, Any]] = {}
+    if market == "stocks":
+        from runner_web.data_health import EASTERN, stock_settlement_close
+
+        target_day = stock_settlement_close(now).astimezone(EASTERN).date().isoformat()
+        calls_by_ticker = {
+            str(call.get("ticker") or "").upper(): call for call in stock_calls or []
+        }
+    ranked = []
+    ranked_count = 0
+    for source, display in pairs:
+        rank = (0, 0.0, 0.0)
+        if market == "stocks":
+            call = calls_by_ticker.get(display["name"])
+            confidence = number(call.get("confidence")) if call else None
+            if (
+                call
+                and (source.get("eligibility") or {}).get("state") == "eligible"
+                and display["tag_tone"] not in {"avoid", "paused", "extended"}
+                and call.get("direction") in {"up", "down"}
+                and call.get("target_session_date") == target_day
+                and confidence is not None
+                and 0.5 <= confidence <= 1
+            ):
+                rank = (1, confidence, 0.0)
+                display["rank_detail"] = (
+                    f"{str(call['direction']).upper()} · {confidence:.0%} confidence · next close"
+                )
+        elif market == "sports":
+            prediction = source.get("prediction") or {}
+            side = prediction.get("selection")
+            chance = (
+                number(prediction.get(f"{side}_probability")) if side in {"home", "away"} else None
+            )
+            edge = number(prediction.get("edge"))
+            try:
+                start = datetime.fromisoformat(str(source.get("start_time")).replace("Z", "+00:00"))
+                saved = datetime.fromisoformat(
+                    str(prediction.get("observed_at")).replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError):
+                start = saved = now
+            signal = prediction.get("signal")
+            if (
+                start.tzinfo is not None
+                and saved.tzinfo is not None
+                and source.get("status") == "pre"
+                and signal in {"watch", "lean"}
+                and chance is not None
+                and 0 <= chance <= 1
+                and edge is not None
+                and edge >= 0.02
+                and timedelta(0) <= now - saved <= SPORTS_RANK_MAX_AGE
+                and start > now
+            ):
+                rank = (2 if signal == "watch" else 1, edge, chance)
+                display["rank_detail"] = (
+                    f"{display['selected_team_label']} {chance:.0%} win · "
+                    f"+{edge * 100:.1f} pp vs odds"
+                )
+        else:
+            score = number(display.get("score"))
+            if (
+                score is not None
+                and display["tag_tone"] in {"running", "setup"}
+                and not source.get("stale")
+            ):
+                rank = (1, score, 0.0)
+        ranked_count += rank[0] > 0
+        ranked.append((rank, source, display))
+    ranked.sort(key=lambda entry: entry[0], reverse=True)
+    rows = [display for _, _, display in ranked]
     counts: dict[str, int] = {}
     for item in rows:
         tone = str(item.get("tag_tone") or "")
@@ -347,6 +694,15 @@ def listing(
         "market": market,
         "label": LABELS[market],
         "rows": rows,
+        "ranking_status": (
+            {
+                "stocks": "Stock ranking pending · current eligible call needed.",
+                "memecoins": "Token ranking pending · directional assessment needed.",
+                "sports": "Sports ranking pending · current model edge needed.",
+            }[market]
+            if not ranked_count and not query
+            else ""
+        ),
         "query": query,
         "total": len(rows),
         "counts": counts,
@@ -444,6 +800,8 @@ def detail(
     *,
     active_call: dict[str, Any] | None = None,
     my_pick: dict[str, Any] | None = None,
+    outcome: str = "",
+    contract: str = "",
 ) -> dict[str, Any]:
     source = (
         data.get("coin", {})
@@ -461,7 +819,7 @@ def detail(
         }
     if market == "memecoins":
         source = {**source, "findings": data.get("findings") or source.get("findings") or []}
-    item = row(market, source)
+    item = row(market, source, outcome=outcome, contract=contract)
     if market == "stocks":
         item["score_trace"] = source.get("score_trace") or {}
     result = {
@@ -477,6 +835,13 @@ def detail(
         "refresh_url": f"/api/screens/{market}/{quote(item['id'], safe='')}/detail",
     }
     identifier = quote(item["id"], safe="")
+    if market == "sports":
+        ticker = prediction_ticker(data, outcome=outcome, contract=contract)
+        result["ticker"] = ticker
+        item.update(_outcome_tag(ticker))
+        selection = (ticker.get("selected") or {}).get("href", "")
+        item["href"] = "/game/" + quote(item["id"], safe=":") + selection
+        result["refresh_url"] += selection
     if market == "sports" and item["id"].startswith("golf:"):
         result["teams"] = [
             {
@@ -492,10 +857,54 @@ def detail(
         if data.get("venue"):
             result["facts"].append({"label": "Venue", "value": str(data["venue"])})
         result.pop("refresh_url")
+        result["surface_url"] = item["href"]
         return result
     if market == "sports":
         state = sports_state(data)
         result["call"] = call_record(market, data, my_pick)
+        result["market_source"] = (data.get("odds") or {}).get("source_label")
+        matchup = item.get("matchup") or {}
+        selected = item["assessment"].get("selection")
+        if selected not in {"away", "home"}:
+            selected = next(
+                (team["side"] for team in matchup.get("teams") or [] if team.get("model_favorite")),
+                "away",
+            )
+        model = number((data.get("prediction") or {}).get(f"{selected}_probability"))
+        result["prediction_markets"] = []
+        for source_row in data.get("prediction_markets") or []:
+            source = str(source_row.get("source") or "")
+            if source not in {"kalshi", "polymarket"}:
+                continue
+            chance = number(source_row.get(f"{selected}_probability"))
+            away = number(source_row.get("away_probability"))
+            home = number(source_row.get("home_probability"))
+            if chance is None or away is None or home is None:
+                continue
+            history = (data.get("prediction_market_history") or {}).get(source) or []
+            first = number(history[0].get(f"{selected}_probability")) if history else None
+            selected_team = next(
+                (team["label"] for team in matchup.get("teams") or [] if team["side"] == selected),
+                selected.title(),
+            )
+            result["prediction_markets"].append(
+                {
+                    "source": "Kalshi" if source == "kalshi" else "Polymarket",
+                    "team": selected_team,
+                    "chance": round(chance * 100, 1),
+                    "away": round(away * 100, 1),
+                    "home": round(home * 100, 1),
+                    "gap_pp": round((model - chance) * 100, 1) if model is not None else None,
+                    "change_pp": round((chance - first) * 100, 1) if first is not None else None,
+                    "count": len(history),
+                    "saved_label": stamp(source_row.get("source_updated_at")),
+                    "basis": source_row.get("price_basis"),
+                    "url": source_row.get("source_url"),
+                }
+            )
+        edge_history = data.get("edge_history") or {}
+        if edge_history.get("side") == item["assessment"].get("selection"):
+            result["market_chart"] = sports_market_chart(edge_history)
         result["teams"] = [
             {
                 "name": str(
@@ -505,9 +914,39 @@ def detail(
                 "score": str(int(number(data.get(f"{s}_score")) or 0))
                 if state.get("score_available")
                 else "—",
+                "href": (
+                    "/team/"
+                    + "/".join(
+                        quote(str(value), safe="")
+                        for value in (
+                            data["provider"],
+                            data["league"],
+                            data[f"{s}_team_id"],
+                        )
+                    )
+                    if data.get("provider") and data.get("league") and data.get(f"{s}_team_id")
+                    else None
+                ),
             }
             for s in ("away", "home")
         ]
+        stat_choices = {
+            "mlb": (("hits", "Hits"), ("errors", "Errors")),
+            "nfl": (("totalYards", "Total yards"), ("turnovers", "Turnovers")),
+            "nba": (("rebounds", "Rebounds"), ("assists", "Assists")),
+            "nhl": (("saves", "Saves"),),
+        }
+        team_stats = data.get("team_stats") or {}
+        result["game_stats"] = [
+            {
+                "label": label,
+                "away": str((team_stats.get("away") or {})[key]),
+                "home": str((team_stats.get("home") or {})[key]),
+            }
+            for key, label in stat_choices.get(data.get("league"), ())
+            if key in (team_stats.get("away") or {}) and key in (team_stats.get("home") or {})
+        ]
+        result["game_stats_source"] = str(data.get("source_url") or "")
         result["note"] = str(item["change"])
         if data.get("venue"):
             result["facts"].append({"label": "Venue", "value": str(data["venue"])})

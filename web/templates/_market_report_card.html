@@ -1,5 +1,5 @@
 {% from "_comment_avatar.html" import comment_avatar as render_comment_avatar %}
-{% from "_report_edition.html" import edition_cover, company_profile %}
+{% from "_report_edition.html" import edition_cover, company_profile, session_stories %}
 {% from "_stock_indicator.html" import indicator_glyph, indicator_legend %}
 {% macro market_report_card(report, featured_id=none, linked=true) %}
     {% set is_post = report.report_type == 'post_market' %}
@@ -11,8 +11,28 @@
       {% if linked %}<a class="market-report-permalink" href="{{ report.permalink }}">Open this turn <span aria-hidden="true">›</span></a>{% endif %}
       {{ edition_cover(report, page_title=not linked) }}
       <div class="edition-report-body">
+      {{ session_stories(report) }}
+      <section class="market-report-analysis">
+        <h2>{{ 'Flash reviews the session' if is_post else 'Flash reads the session ahead' }}</h2>
+        {% if report.analysis %}
+        <strong>{{ report.analysis.headline }}</strong>
+        {% for paragraph in report.analysis.narrative.split('\n\n') %}<p>{{ paragraph }}</p>{% endfor %}
+        {% if report.analysis.points %}
+        <ul>
+          {% for point in report.analysis.points %}<li>{{ point }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+        {% else %}
+        <p class="market-report-pending">
+          {% if report.commentary_state in ['queued', 'running'] %}Flash is writing this {{ 'review' if is_post else 'preview' }}.
+          {% elif report.commentary_state == 'legacy' %}This report was frozen before the desk wrote commentary.
+          {% else %}Flash could not write this {{ 'review' if is_post else 'preview' }}.{% endif %}
+        </p>
+        {% endif %}
+      </section>
+
       <div class="report-section-heading"><span>{{ report.edition.metric_label }} · {{ report.edition.metric_time }}</span></div>
-      <h2 class="edition-session-headline">{{ report.headline }}</h2>
+      <h2 class="edition-session-headline">The session in numbers</h2>
       <p class="edition-session-summary">{{ report.summary }}</p>
 
       <div class="market-report-metrics">
@@ -30,7 +50,6 @@
       <p class="report-data-note">Watch returns compare the opening watch price with each saved evening quote, or a settled close where labeled. Up targets hit at or above the target close; down targets hit at or below it. <a href="/calls">See Flash’s record ↗</a></p>
       {% endif %}
 
-      {% if is_post and report.spotlight %}{{ company_profile(report) }}{% endif %}
 
       <section class="market-report-leaders" id="watch-board">
         <h2>{{ 'Opening watch → evening checkpoint' if is_post else 'Watch board' }}</h2>
@@ -75,24 +94,6 @@
         </ol>
       </section>
 
-      <section class="market-report-analysis">
-        <h2>{{ 'Flash reviews the session' if is_post else 'Flash reads the session ahead' }}</h2>
-        {% if report.analysis %}
-        <strong>{{ report.analysis.headline }}</strong>
-        <p>{{ report.analysis.narrative }}</p>
-        {% if report.analysis.points %}
-        <ul>
-          {% for point in report.analysis.points %}<li>{{ point }}</li>{% endfor %}
-        </ul>
-        {% endif %}
-        {% else %}
-        <p class="market-report-pending">
-          {% if report.commentary_state in ['queued', 'running'] %}Flash is writing this {{ 'review' if is_post else 'preview' }}.
-          {% elif report.commentary_state == 'legacy' %}This report was frozen before the desk wrote commentary.
-          {% else %}Flash could not write this {{ 'review' if is_post else 'preview' }}.{% endif %}
-        </p>
-        {% endif %}
-      </section>
 
       {% if report.forecast_model %}
       <p class="market-eod-rule">Flash · {{ report.forecast_model.model_label }}. Targets are saved before the open. Up targets hit at or above the target close. Down targets hit at or below it. Results settle after 4:15 p.m. ET.{% if is_post %} Today's record: {{ report.forecast_record.label }}{% if report.forecast_record.pending %} with {{ report.forecast_record.pending }} still settling{% endif %}.{% endif %}</p>
@@ -126,6 +127,8 @@
         </ol>
       </section>
       {% endif %}
+
+      {% if is_post and report.spotlight %}<details class="edition-deep-dive" open><summary>Inside {{ report.spotlight.company.name }} · Company profile and sources</summary>{{ company_profile(report) }}</details>{% endif %}
 
       <section id="indicator-key" aria-label="Ring key">{{ indicator_legend() }}</section>
       <footer>

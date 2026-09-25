@@ -1,0 +1,44 @@
+{
+  "factors": {
+    "input_kind": "illustrative",
+    "target": "ARI to win",
+    "away_record": "90-60",
+    "home_record": "64-86",
+    "baseline_pct": 50,
+    "record_delta_pp": 10.180722892,
+    "venue_delta_pp": -3.5,
+    "clamp_delta_pp": 0.0,
+    "reconstructed_probability_pct": 56.680722892,
+    "prediction": {
+      "model_version": "team-form-v1",
+      "home_probability": 0.433193,
+      "away_probability": 0.566807,
+      "home_market_probability": 0.489166,
+      "away_market_probability": 0.510834,
+      "selection": "away",
+      "selected_team": "Arizona",
+      "selected_probability": 0.566807,
+      "edge": 0.055973,
+      "edge_pct": 5.6,
+      "signal": "watch",
+      "quality": "baseline",
+      "evidence": [
+        "Overall season records: Arizona 90-60, Colorado 64-86.",
+        "No-vig market: COL 48.9%, ARI 51.1%."
+      ],
+      "risks": [
+        "Baseline model does not include lineups, injuries, or starting players."
+      ]
+    }
+  },
+  "snapshot_selection": {
+    "input_kind": "synthetic local database",
+    "game_start": "2026-09-23T20:00:00+00:00",
+    "list_observed_at": "2026-09-23T23:00:00+00:00",
+    "detail_observed_at": "2026-09-23T19:00:00+00:00",
+    "list_away_probability": 0.568402,
+    "detail_away_probability": 0.566807,
+    "snapshots_match": false,
+    "detail_is_sealed": true
+  }
+}

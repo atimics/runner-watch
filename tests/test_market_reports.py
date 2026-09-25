@@ -152,7 +152,7 @@ def test_pre_market_report_freezes_the_latest_pre_open_scan(
     report = overview["featured"]
     assert report["source_scan_run_id"] == "latest-pre"
     assert report["headline"] == "ONE leads the pre-market board"
-    assert report["metrics"] == {
+    assert {key: value for key, value in report["metrics"].items() if key != "story_board"} == {
         "candidates": 2,
         "green": 1,
         "red": 1,
@@ -508,6 +508,8 @@ def test_company_spotlight_is_frozen_and_renders_in_the_evening_edition(
             database.execute("UPDATE scan_snapshots SET price=99,change_pct=999")
         after = market_report("2026-08-24", "post_market")
         assert before["spotlight"] == after["spotlight"]
+        assert before["metrics"]["story_board"] == after["metrics"]["story_board"]
+        assert before["narrative"] == after["narrative"]
         page = client.get("/reports/2026-08-24/post")
         pre = client.get("/reports/2026-08-24/pre")
         assert page.status_code == pre.status_code == 200
@@ -521,7 +523,7 @@ def test_company_spotlight_is_frozen_and_renders_in_the_evening_edition(
         client.close()
 
 
-def test_share_metadata_names_the_top_pick_and_the_record(
+def test_share_metadata_uses_the_session_story(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -555,13 +557,11 @@ def test_share_metadata_names_the_top_pick_and_the_record(
     post_share = overview["latest"]["post_market"]["share"]
 
     assert pre_share["path"] == "/reports/2026-08-24/pre"
-    assert pre_share["title"] == "$ONE · Flash targets $1.2 by the close"
+    assert pre_share["title"] == "Pre-market briefing · ONE rises 10.0%"
     assert pre_share["top_pick"]["ticker"] == "ONE"
     assert post_share["path"] == "/reports/2026-08-24/post"
-    assert post_share["title"] == "$ONE · Company in focus · The closing story"
-    assert post_share["summary"].startswith(
-        "2026-08-24 · ONE in focus · Flash 1–0 on targets, watch 1–0"
-    )
+    assert post_share["title"] == "Post-market recap · ONE surges 25.0%"
+    assert post_share["summary"].startswith("2026-08-24 · The evening scan found 1 name:")
     assert post_share["top_pick"]["status"] == "focus"
     assert post_share["card_path"] != pre_share["card_path"]
     assert len(post_share["summary"]) <= 200
@@ -793,10 +793,10 @@ def test_evening_lead_matches_page_share_card_and_message(tmp_path, monkeypatch)
         post = next(row for row in pending if row["report_type"] == "post_market")
         activity = _activity_payload([], [post], [])
         dispatched = _render_segment("market_report", activity["reports"][0])
-        assert "*TWO* company in focus" in dispatched
-        assert "TWO is the company in focus" in dispatched
+        assert "TWO surges 25\\.0%" in dispatched
+        assert "evening quote stood" in dispatched
         message = format_market_report_post_md(report, origin="https://app.test")
-        assert "*TWO* company in focus" in message
+        assert "TWO surges 25\\.0%" in message
         assert "*ONE* leads the pack" not in message
         page = BeautifulSoup(client.get("/reports/2026-08-24/post").text, "html.parser")
         assert len(page.select("h1")) == 1
