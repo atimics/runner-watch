@@ -59,6 +59,7 @@ NEWS_FEED = "sports_news_preview"
 GOLF_FEED = "sports_golf_scoreboard_preview"
 SOURCE_URL = "https://site.api.espn.com/apis/site/v2/sports"
 GOLF_SOURCE_URL = f"{SOURCE_URL}/golf/pga/scoreboard"
+GOLF_LEADERBOARD_URL = "https://site.web.api.espn.com/apis/site/v2/sports/golf/leaderboard"
 PROMOTED_SIGNALS = {"lean", "watch"}
 NEWS_MAX_AGE = timedelta(days=7)
 NEWS_PER_EVENT = 6
@@ -362,32 +363,29 @@ def _golf_matches(competitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(matches, key=lambda match: (match["start_time"], match["id"]))
 
 
-def _golf_pairings_from_html(body: bytes, event_id: str) -> dict[str, dict[str, list[str]]]:
-    page = body.decode("utf-8")
-    marker = "window['__espnfitt__']="
-    start = page.find(marker)
-    if start < 0:
-        return {}
-    start += len(marker)
-    end = page.find(";</script>", start)
-    if end < 0:
-        return {}
-    leaderboard = json.loads(page[start:end])["page"]["content"]["leaderboard"]
-    if str(leaderboard.get("id")) != event_id:
-        return {}
+def _golf_pairings_from_leaderboard(
+    payload: dict[str, Any], event_id: str
+) -> dict[str, dict[str, list[str]]]:
     pairings: dict[str, dict[str, list[str]]] = {}
-    for group in (leaderboard.get("mtch") or {}).get("grps") or []:
-        for match in group.get("competitions") or []:
-            match_id = str(match.get("id") or "")
-            if not match_id:
-                continue
-            sides: dict[str, list[str]] = defaultdict(list)
-            for player in match.get("competitors") or []:
-                team_id = str(player.get("teamId") or "")
-                name = str(player.get("displayName") or "").strip()
-                if team_id and name and name not in sides[team_id]:
-                    sides[team_id].append(name)
-            pairings[match_id] = dict(sides)
+    for event in payload.get("events") or []:
+        if str(event.get("id")) != event_id:
+            continue
+        for group in event.get("competitions") or []:
+            for match in group:
+                match_id = str(match.get("id") or "")
+                if not match_id:
+                    continue
+                sides: dict[str, list[str]] = defaultdict(list)
+                for competitor in match.get("competitors") or []:
+                    team_id = str((competitor.get("team") or {}).get("id") or "")
+                    for roster_entry in competitor.get("roster") or []:
+                        name = str(
+                            (roster_entry.get("athlete") or {}).get("displayName") or ""
+                        ).strip()
+                        if team_id and name and name not in sides[team_id]:
+                            sides[team_id].append(name)
+                pairings[match_id] = dict(sides)
+        break
     return pairings
 
 
@@ -840,11 +838,14 @@ def fetch_golf(at: datetime | None = None) -> list[dict[str, Any]]:
             if event["scoring_format"] != "match_play" or not event["matches"]:
                 continue
             try:
+                leaderboard_url = f"{GOLF_LEADERBOARD_URL}?league=pga&event={event['external_id']}"
                 page_request = urllib.request.Request(
-                    event["source_url"], headers={"Accept": "text/html"}
+                    leaderboard_url, headers={"Accept": "application/json"}
                 )
                 with urllib.request.urlopen(page_request, timeout=10) as response:
-                    pairings = _golf_pairings_from_html(response.read(), event["external_id"])
+                    pairings = _golf_pairings_from_leaderboard(
+                        json.load(response), event["external_id"]
+                    )
             except (OSError, ValueError, KeyError, TypeError):
                 pairings = {}
             for match in event["matches"]:
