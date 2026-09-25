@@ -1030,29 +1030,36 @@ def flash_open_calls(*, limit: int = 6) -> dict[str, Any]:
     confident one wins, so a re-forecast cannot crowd the list.
     """
 
-    limit = max(1, min(limit, 12))
+    limit = max(1, min(limit, 500))
     with connection() as database:
         rows = database.execute(
             """
-            SELECT f.ticker,f.direction,f.probability_up,f.reason,
-                   f.target_session_date,f.start_price,
-                   v.public_label AS version_label
-            FROM flash_forecasts f
-            JOIN flash_versions v ON v.id=f.version_id
-            JOIN flash_forecast_outcomes o ON o.forecast_id=f.id
-            WHERE o.status='pending' AND f.eligibility='eligible'
-              AND f.direction IN ('up','down')
-            ORDER BY f.probability_up DESC,f.created_at DESC
-            LIMIT 40
-            """
+            WITH ranked AS (
+                SELECT f.ticker,f.direction,f.probability_up,f.reason,
+                       f.target_session_date,f.start_price,f.created_at,
+                       v.public_label AS version_label,
+                       CASE WHEN f.direction='up' THEN f.probability_up
+                            ELSE 1-f.probability_up END AS direction_confidence,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY UPPER(f.ticker)
+                           ORDER BY CASE WHEN f.direction='up' THEN f.probability_up
+                                         ELSE 1-f.probability_up END DESC,
+                                    f.created_at DESC
+                       ) AS ticker_rank
+                FROM flash_forecasts f
+                JOIN flash_versions v ON v.id=f.version_id
+                JOIN flash_forecast_outcomes o ON o.forecast_id=f.id
+                WHERE o.status='pending' AND f.eligibility='eligible'
+                  AND f.direction IN ('up','down')
+            )
+            SELECT * FROM ranked WHERE ticker_rank=1
+            ORDER BY direction_confidence DESC,created_at DESC LIMIT ?
+            """,
+            (limit,),
         ).fetchall()
     calls: list[dict[str, Any]] = []
-    seen: set[str] = set()
     for row in rows:
         ticker = str(row["ticker"]).upper()
-        if ticker in seen:
-            continue
-        seen.add(ticker)
         probability_up = _number(row["probability_up"]) or 0.0
         direction = str(row["direction"])
         confidence = probability_up if direction == "up" else 1.0 - probability_up

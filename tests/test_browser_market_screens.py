@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,37 @@ def test_list_layout_and_navigation_are_shared(page: Page, market, width):
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert page.locator(".ticker").bounding_box()["y"] < 450
     expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_top_sports_pick_leads_and_fits_the_board(page: Page, width: int):
+    now = datetime.now(UTC)
+    event = {
+        **fixtures.sample("sports"),
+        "id": "nba:pick",
+        "status": "pre",
+        "start_time": (now + timedelta(hours=2)).isoformat(),
+        "view_state": {"started": False, "score_available": False, "label": "Upcoming"},
+        "prediction": {
+            "signal": "watch",
+            "selection": "away",
+            "away_probability": 0.61,
+            "home_probability": 0.39,
+            "away_market_probability": 0.53,
+            "home_market_probability": 0.47,
+            "edge": 0.08,
+            "observed_at": now.isoformat(),
+        },
+    }
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("sports", [event]))
+
+    expect(page.get_by_role("region", name="Current sports pick")).to_contain_text(
+        "Boston Celtics to win"
+    )
+    expect(page.get_by_role("link", name="Review game and odds")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert page.locator(".ticker").bounding_box()["y"] < 470
 
 
 def test_tag_filter_chips_hide_and_show_rows(page: Page):

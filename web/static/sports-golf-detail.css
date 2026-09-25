@@ -3,6 +3,10 @@
 .golf-detail-head .eyebrow, .golf-context .eyebrow { color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .1em; }
 .golf-detail-head h1 { margin: 7px 0; font-size: clamp(30px, 5vw, 48px); line-height: 1.08; }
 .golf-detail-head > p:last-child { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.golf-pick-answer { margin-top: 20px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.golf-pick-answer .eyebrow { color: var(--muted); font-size: 11px; font-weight: 800; }
+.golf-pick-answer h2 { margin: 5px 0; font-size: 21px; }
+.golf-pick-answer > p:last-child { margin: 0; color: var(--muted); font-size: 12px; }
 .golf-context { padding: 28px 0; border-bottom: 1px solid var(--line); }
 .golf-context h2 { margin: 7px 0; font-size: clamp(24px, 4vw, 34px); }
 .golf-context > p:last-of-type { max-width: 640px; color: var(--muted); line-height: 1.6; }

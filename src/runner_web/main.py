@@ -3781,32 +3781,31 @@ def _flash_stock_picks(*, limit: int = 6) -> list[dict[str, Any]]:
 
 
 def _flash_sports_picks(*, limit: int = 4) -> list[dict[str, Any]]:
-    slate = sports_slate("all", 24)
-    events = [
-        _compact_sports_event(event, radar=False)
-        for event in slate.get("events") or []
-        if isinstance(event, dict) and event.get("model_winner_abbreviation")
-    ]
-    events.sort(
-        key=lambda event: (
-            -float(event.get("model_probability_pct") or 0),
-            str(event.get("start_time") or ""),
-        )
-    )
+    from runner_web.market_screens import listing
+
+    events = list(sports_pulse("all", limit=100).get("events") or [])
     picks: list[dict[str, Any]] = []
-    for event in events[:limit]:
-        prediction = event.get("prediction") if isinstance(event.get("prediction"), dict) else {}
+    for _ in range(limit):
+        board = listing("sports", events)
+        top = board["top_pick"]
+        if not top.get("href"):
+            break
+        event_id = board["rows"][0]["id"]
+        event = next(event for event in events if event["id"] == event_id)
+        prediction = event["prediction"]
+        side = prediction["selection"]
         picks.append(
             {
                 "label": (f"{event.get('away_abbreviation')} @ {event.get('home_abbreviation')}"),
                 "league": str(event.get("league") or "").upper(),
                 "kickoff": screen_stamp(event.get("start_time")) or "",
-                "pick": str(event.get("model_winner_abbreviation")),
-                "confidence_pct": int(round(float(event.get("model_probability_pct") or 0))),
+                "pick": str(event.get(f"{side}_abbreviation") or ""),
+                "confidence_pct": int(round(float(prediction[f"{side}_probability"]) * 100)),
                 "edge_pct": prediction.get("edge_pct"),
                 "href": f"{SPORTS_ORIGIN}/game/{event.get('id')}",
             }
         )
+        events = [candidate for candidate in events if candidate["id"] != event_id]
     return picks
 
 
@@ -8622,6 +8621,7 @@ def _stock_list_data_uncached() -> dict[str, Any]:
         rows,
         updated_at=updated_at,
         stories=stories_by_subject("stocks", tickers),
+        stock_calls=flash_open_calls(limit=500)["calls"],
     )
 
 
@@ -8673,7 +8673,15 @@ def _simple_board(
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
-    screen = listing(market, items, view=view, query=query, updated_at=updated_at, stories=stories)
+    screen = listing(
+        market,
+        items,
+        view=view,
+        query=query,
+        updated_at=updated_at,
+        stories=stories,
+        stock_calls=flash_open_calls(limit=500)["calls"] if market == "stocks" else None,
+    )
     return _simple_board_response(request, session, market, screen)
 
 
@@ -10206,6 +10214,7 @@ def ticker_page(
             comments=comments,
             comment_count=comment_count,
             active_call=active_call,
+            stock_calls=flash_open_calls(limit=500)["calls"],
             calls=calls,
             latest_commission=latest_report,
             flash_report=_flash_report_action(
@@ -10275,7 +10284,12 @@ def screen_detail_state(
     else:
         raise HTTPException(404, "Market not found")
     if market != "sports":
-        screen = simple_market_detail(market, data, active_call=active)
+        screen = simple_market_detail(
+            market,
+            data,
+            active_call=active,
+            stock_calls=flash_open_calls(limit=500)["calls"] if market == "stocks" else None,
+        )
     from runner_web.stories import public_story
 
     try:

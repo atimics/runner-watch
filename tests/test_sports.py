@@ -454,6 +454,7 @@ def test_presidents_cup_shows_team_points_and_match_play_context(sports_db) -> N
     assert response.status_code == 200
     assert b"USA vs International" in response.body
     assert b"Match results and schedule" in response.body
+    assert b"No current golf pick" in response.body
     assert b"USA \xc2\xb7 1 Up" in response.body
     assert b"Scheduled" in response.body
     assert b"Official matches and scoring" in response.body

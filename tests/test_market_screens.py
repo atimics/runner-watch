@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from starlette.requests import Request
@@ -89,7 +89,7 @@ def test_memecoin_screen_shows_quote_and_saved_chain_evidence_without_score():
     board = render(listing("memecoins", [coin]))
     assert ">Market quote</small>" in board
     assert ">Pending</small>" not in board
-    assert "Action tags require a saved Runner assessment." in board
+    assert "RATi has no saved directional token call" in board
 
     finding = {
         "token_address": "token-a",
@@ -105,6 +105,97 @@ def test_memecoin_screen_shows_quote_and_saved_chain_evidence_without_score():
     assert 'aria-label="Token evidence"' in opened
     assert "Pool liquidity withdrawal" in opened
     assert 'href="https://example.test/tx/1"' in opened
+
+
+def test_board_leads_with_a_current_eligible_flash_stock_call():
+    from runner_web.data_health import EASTERN, stock_settlement_close
+
+    target = stock_settlement_close(datetime.now(UTC)).astimezone(EASTERN).date().isoformat()
+    eligible = scored_stock(ticker="READY", eligibility={"state": "eligible"})
+    blocked = scored_stock(ticker="RISK", eligibility={"state": "blocked"})
+    calls = [
+        {"ticker": "RISK", "direction": "up", "confidence": 0.95, "target_session_date": target},
+        {
+            "ticker": "READY",
+            "direction": "down",
+            "confidence": 0.72,
+            "target_session_date": target,
+            "reason": "Saved forecast",
+        },
+    ]
+    board = listing("stocks", [blocked, eligible], stock_calls=calls)
+
+    assert board["top_pick"]["name"] == "$READY · DOWN"
+    assert board["rows"][0]["name"] == "READY"
+    assert "72% chance of a fall" in board["top_pick"]["detail"]
+    assert "Saved forecast" in render(board)
+    assert "WHO SHOULD I BET ON?" in render(board)
+    assert listing("stocks", [blocked], stock_calls=calls)["top_pick"]["name"] == "No current pick"
+    opened = detail(
+        "stocks",
+        {"ticker": "READY", "company": "Ready", "current": eligible},
+        stock_calls=calls,
+    )
+    assert opened["top_pick"]["name"] == "$READY · DOWN"
+    assert "WHO SHOULD I BET ON?" in render(opened)
+    expired = [{**calls[1], "target_session_date": "2020-01-01"}]
+    assert (
+        listing("stocks", [eligible], stock_calls=expired)["top_pick"]["name"]
+        == "No current pick"
+    )
+
+
+def test_board_sports_pick_prioritizes_saved_market_edge():
+    now = datetime.now(UTC)
+
+    def game(identifier: str, team: str, signal: str, chance: float, edge: float):
+        return {
+            **sample("sports"),
+            "id": identifier,
+            "home_team_name": team,
+            "status": "pre",
+            "start_time": (now + timedelta(hours=20)).isoformat(),
+            "view_state": {"started": False, "score_available": False, "label": "Upcoming"},
+            "prediction": {
+                "signal": signal,
+                "selection": "home",
+                "home_probability": chance,
+                "away_probability": 1 - chance,
+                "home_market_probability": chance - edge,
+                "away_market_probability": 1 - chance + edge,
+                "edge": edge,
+                "observed_at": now.isoformat(),
+            },
+        }
+
+    board = listing(
+        "sports",
+        [
+            game("nba:one", "Team One", "lean", 0.70, 0.04),
+            game("nba:two", "Team Two", "watch", 0.58, 0.08),
+            game("nba:three", "Team Three", "pass", 0.80, 0.12),
+        ],
+    )
+
+    assert board["top_pick"]["name"] == "Team Two to win"
+    assert board["rows"][0]["id"] == "nba:two"
+    assert "58.0% model win chance · 8.0 point edge" in board["top_pick"]["detail"]
+    assert "Review game and odds" in render(board)
+    detail_game = game("nba:detail", "Detail Team", "watch", 0.58, 0.08)
+    opened = detail("sports", detail_game)
+    assert opened["top_pick"]["name"] == "Detail Team to win"
+    assert "WHO SHOULD I BET ON?" in render(opened)
+    old = game("nba:old", "Old Game", "watch", 0.62, 0.10)
+    old["prediction"]["observed_at"] = (now - timedelta(hours=7)).isoformat()
+    assert listing("sports", [old])["top_pick"]["name"] == "No current pick"
+
+
+def test_memecoin_board_waits_for_a_directional_call():
+    coin = {**sample("memecoins"), "volume_24h": 1_000_000, "change_24h": 80}
+    board = listing("memecoins", [coin])
+
+    assert board["top_pick"]["name"] == "No current pick"
+    assert "no saved directional token call" in render(board)
 
 
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
