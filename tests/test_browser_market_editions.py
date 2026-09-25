@@ -1,4 +1,4 @@
-"""Daily editions expose the watch, sources, and exact chart readings on phones."""
+"""Daily editions lead with stories and keep watch data and sources within reach."""
 
 import importlib.util
 from pathlib import Path
@@ -51,7 +51,14 @@ def test_daily_editions_keep_the_watch_and_sources_readable(page, width, post):
     open_report(page, post)
     expect(page.get_by_role("heading", level=1)).to_have_count(1)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    assert page.locator(".edition-quick-watch").bounding_box()["y"] < 760
+    assert page.get_by_role("heading", level=1).bounding_box()["y"] < 500
+    expect(page.locator(".edition-story")).to_have_count(3)
+    assert (
+        page.locator("#session-stories").bounding_box()["y"]
+        < page.locator("#watch-board").bounding_box()["y"]
+    )
+    page.locator('.edition-contents a[href="#story-SAMPLE"]').click()
+    expect(page.locator("#story-SAMPLE")).to_be_in_viewport()
     page.get_by_role("link", name="Watch board & targets ↓").click()
     expect(page.locator("#watch-DEMO")).to_be_in_viewport()
     if post:
