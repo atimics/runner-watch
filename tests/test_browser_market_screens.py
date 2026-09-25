@@ -88,7 +88,9 @@ def test_top_sports_rank_leads_and_fits_the_board(page: Page, width: int):
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing("sports", [lower, event]))
 
-    expect(page.locator(".ticker").first).to_have_attribute("href", "/game/nba:pick")
+    expect(page.locator(".ticker").first).to_have_attribute(
+        "href", re.compile(r"^/game/nba:pick(\?|$)")
+    )
     expect(page.locator(".ticker").first.locator(".rank-detail")).to_contain_text(
         "61% win · +8.0 pp vs odds"
     )
