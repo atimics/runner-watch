@@ -1027,6 +1027,16 @@ def recent_changes(hours: int = 1, at: datetime | None = None) -> dict[str, Any]
         reports = database.execute(
             "SELECT COUNT(*) AS n FROM market_session_reports WHERE created_at>?", (cutoff,)
         ).fetchone()["n"]
+        # A reopen is stored on the halt row, dated by the halt, so it is found by
+        # its resume time rather than event_at. Halts can run for days.
+        resumed = database.execute(
+            """
+            SELECT payload_json FROM public_market_events
+            WHERE event_type='trading_halt' AND status='resume_announced' AND event_at>?
+            ORDER BY event_at DESC LIMIT 500
+            """,
+            ((current - timedelta(days=3)).isoformat(),),
+        ).fetchall()
         public_reports = database.execute(
             """
             SELECT COUNT(*) AS n FROM research_commissions
@@ -1036,13 +1046,21 @@ def recent_changes(hours: int = 1, at: datetime | None = None) -> dict[str, Any]
             """,
             (cutoff,),
         ).fetchone()["n"]
+    since = datetime.fromisoformat(cutoff)
+    reopened = sum(
+        1
+        for row in resumed
+        if (moment := _when(_payload(row["payload_json"]).get("trade_resume_at")))
+        and since < moment <= current
+    )
     return {
         "window_hours": max(1, hours),
         "new_runners": int(runners or 0),
         "events": int(events or 0),
+        "reopened_halts": reopened,
         "session_reports": int(reports or 0),
         "public_reports": int(public_reports or 0),
-        "any": bool(runners or events or reports or public_reports),
+        "any": bool(runners or events or reopened or reports or public_reports),
     }
 
 
