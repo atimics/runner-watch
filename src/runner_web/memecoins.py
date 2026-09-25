@@ -18,6 +18,7 @@ from runner_web.ingestion import record_source_fetch
 from runner_web.memecoin_chain_ingestion import collect_chain as discover_pools
 from runner_web.memecoin_forensics import analyze_events
 from runner_web.memecoin_integrity import creator_trades
+from runner_web.memecoin_model import assess_memecoin, display_assessment
 from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
 
 POOL_QUOTES_URL = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/"
@@ -253,23 +254,18 @@ def _collect_helius(
         :1000
     ]
     _save_state("memecoin_integrity_alerts", ledger, at)
-    _save_state(
-        "memecoin_integrity_coverage",
-        {
-            "checked_at": at.isoformat(),
-            "program": "Pump, PumpSwap, Raydium CPMM",
-            "streams": discovery.get("coverage", {}).get("streams", []),
-            "budget": discovery.get("coverage", {}).get("budget", {}),
-            "recorded_coverage_gaps": discovery.get("coverage", {}).get(
-                "recorded_coverage_gaps", 0
-            ),
-            "commitment": "finalized",
-            "received_transactions": discovery.get("received_transactions", 0),
-            "partial": discovery.get("partial", False),
-            "mode": "resumable",
-        },
-        at,
-    )
+    coverage = {
+        "checked_at": at.isoformat(),
+        "program": "Pump, PumpSwap, Raydium CPMM",
+        "streams": discovery.get("coverage", {}).get("streams", []),
+        "budget": discovery.get("coverage", {}).get("budget", {}),
+        "recorded_coverage_gaps": discovery.get("coverage", {}).get("recorded_coverage_gaps", 0),
+        "commitment": "finalized",
+        "received_transactions": discovery.get("received_transactions", 0),
+        "partial": discovery.get("partial", False),
+        "mode": "resumable",
+    }
+    _save_state("memecoin_integrity_coverage", coverage, at)
     allowed = {item["pool_address"]: item for item in selected}
     payload = []
     addresses = list(allowed)
@@ -301,6 +297,15 @@ def _collect_helius(
     for row in rows:
         row["discovery"] = allowed[row["pool_address"]]
         row["discovery_source"] = "Helius"
+        row.update(
+            assess_memecoin(
+                row,
+                events=discovery.get("events", []),
+                findings=analytics["findings"],
+                coverage=coverage,
+                at=at,
+            )
+        )
     metadata = {
         key: value
         for key, value in discovery.items()
@@ -415,7 +420,7 @@ def _quote_display(row: dict[str, Any], collected_at: Any, at: datetime) -> dict
     row["volume_label"] = _amount_label(row["volume_24h"])
     row["market_cap_label"] = _amount_label(row["market_cap"])
     row["detail_url"] = f"/memecoins/coin/{row['id']}"
-    return row
+    return display_assessment(row, at=at)
 
 
 def memecoin_market(
@@ -433,8 +438,7 @@ def memecoin_market(
         row["findings"] = [
             finding
             for finding in findings
-            if row.get("token_address")
-            and finding.get("token_address") == row["token_address"]
+            if row.get("token_address") and finding.get("token_address") == row["token_address"]
         ]
     collected = _time(snapshot.get("collected_at"))
     stale = collected is None or not 0 <= (current - collected).total_seconds() <= STALE_SECONDS
@@ -537,11 +541,11 @@ def memecoin_detail(
     coin["findings"] = [
         finding
         for finding in (states.get("memecoin_forensics") or {}).get("findings") or []
-        if coin.get("token_address")
-        and finding.get("token_address") == coin["token_address"]
+        if coin.get("token_address") and finding.get("token_address") == coin["token_address"]
     ]
     active = snapshot_coin is not None
     coin["stale"] = coin["stale"] or not memecoins_enabled()
+    coin = display_assessment(coin, at=current)
     status = "stale" if coin["stale"] else "ok"
     if not memecoins_enabled():
         status = "disabled"
