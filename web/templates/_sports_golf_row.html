@@ -1,0 +1,10 @@
+{% from '_prediction_glyph.html' import prediction_glyph %}
+{% from '_sports_row_opinion.html' import sports_row_opinion %}
+<span class="ticker-mark tone-0" aria-hidden="true">PG</span>
+<span class="ticker-name sports-identity">
+  <strong>{{ item.name }}</strong>
+  <small>{{ item.subtitle }} · GOLF</small>
+  {{ sports_row_opinion(item.ticker) }}
+</span>
+<span class="ticker-value sports-score"><strong>{{ item.value }}</strong><small>{{ item.change }}</small></span>
+<span class="ticker-score sports-forecast">{{ prediction_glyph(item.ticker) }}</span>

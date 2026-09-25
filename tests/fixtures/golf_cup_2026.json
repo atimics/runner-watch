@@ -1,0 +1,397 @@
+{
+  "matches": {
+    "key": "matches",
+    "url": "https://www.espn.com/golf/leaderboard?tournamentId=401824815",
+    "captured_at": "2026-09-24T03:20:00+00:00",
+    "data": {
+      "points": {
+        "3": 0.0,
+        "1": 0.0
+      },
+      "state": "pre",
+      "completed": false,
+      "matches": [
+        {
+          "id": "12094",
+          "session": "Thursday Four-Balls",
+          "start_time": "2026-09-24T16:35:00.000Z",
+          "state": "pre",
+          "completed": false,
+          "status": "Scheduled",
+          "sides": {
+            "3": {
+              "players": [
+                "Sungjae Im",
+                "Min Woo Lee"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            },
+            "1": {
+              "players": [
+                "Scottie Scheffler",
+                "Sam Burns"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            }
+          }
+        },
+        {
+          "id": "12095",
+          "session": "Thursday Four-Balls",
+          "start_time": "2026-09-24T16:53:00.000Z",
+          "state": "pre",
+          "completed": false,
+          "status": "Scheduled",
+          "sides": {
+            "3": {
+              "players": [
+                "Hideki Matsuyama",
+                "Ryo Hisatsune"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            },
+            "1": {
+              "players": [
+                "Xander Schauffele",
+                "Cameron Young"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            }
+          }
+        },
+        {
+          "id": "12096",
+          "session": "Thursday Four-Balls",
+          "start_time": "2026-09-24T17:11:00.000Z",
+          "state": "pre",
+          "completed": false,
+          "status": "Scheduled",
+          "sides": {
+            "3": {
+              "players": [
+                "Corey Conners",
+                "Nico Echavarria"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            },
+            "1": {
+              "players": [
+                "Justin Thomas",
+                "Jackson Koivun"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            }
+          }
+        },
+        {
+          "id": "12097",
+          "session": "Thursday Four-Balls",
+          "start_time": "2026-09-24T17:29:00.000Z",
+          "state": "pre",
+          "completed": false,
+          "status": "Scheduled",
+          "sides": {
+            "3": {
+              "players": [
+                "Adam Scott",
+                "Ryan Fox"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            },
+            "1": {
+              "players": [
+                "Collin Morikawa",
+                "Wyndham Clark"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            }
+          }
+        },
+        {
+          "id": "12098",
+          "session": "Thursday Four-Balls",
+          "start_time": "2026-09-24T17:47:00.000Z",
+          "state": "pre",
+          "completed": false,
+          "status": "Scheduled",
+          "sides": {
+            "3": {
+              "players": [
+                "Si Woo Kim",
+                "Tom Kim"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            },
+            "1": {
+              "players": [
+                "Patrick Cantlay",
+                "Chris Gotterup"
+              ],
+              "winner": false,
+              "score": "-",
+              "holes_remaining": 18
+            }
+          }
+        }
+      ]
+    },
+    "sha256": "903dc958ca9dd0c95fe9b9dcda06294248f74e39d49845125c788f642a367d11"
+  },
+  "rosters": {
+    "key": "rosters",
+    "url": "https://www.presidentscup.com/teams",
+    "captured_at": "2026-09-24T03:20:00+00:00",
+    "data": {
+      "1": [
+        "Scottie Scheffler",
+        "Cameron Young",
+        "Wyndham Clark",
+        "Sam Burns",
+        "Russell Henley",
+        "Collin Morikawa",
+        "Chris Gotterup",
+        "Justin Thomas",
+        "Xander Schauffele",
+        "Patrick Cantlay",
+        "Jackson Koivun",
+        "Jacob Bridgeman"
+      ],
+      "3": [
+        "Si Woo Kim",
+        "Hideki Matsuyama",
+        "Ryan Fox",
+        "Tom Kim",
+        "Min Woo Lee",
+        "Adam Scott",
+        "Sungjae Im",
+        "Nico Echavarria",
+        "Corey Conners",
+        "Nick Taylor",
+        "Christiaan Bezuidenhout",
+        "Ryo Hisatsune"
+      ]
+    },
+    "sha256": "b9f248cd488ca8aa19d98388a992a6ecb2a8f0a6ab9b6fabe4e03e19d5b6ab79"
+  },
+  "rankings": {
+    "key": "rankings",
+    "url": "https://site.web.api.espn.com/apis/site/v2/sports/golf/all/rankings?region=us&lang=en&polls=1",
+    "captured_at": "2026-09-24T03:20:00+00:00",
+    "data": {
+      "updated_at": "2026-09-20",
+      "players": {
+        "scottiescheffler": {
+          "id": "9478",
+          "name": "Scottie Scheffler",
+          "rank": 1,
+          "average_points": 17.739999771118164,
+          "points_gained": 517.6400146484375,
+          "events": 42.0
+        },
+        "cameronyoung": {
+          "id": "4425906",
+          "name": "Cameron Young",
+          "rank": 3,
+          "average_points": 7.460000038146973,
+          "points_gained": 307.2200012207031,
+          "events": 47.0
+        },
+        "wyndhamclark": {
+          "id": "11119",
+          "name": "Wyndham Clark",
+          "rank": 5,
+          "average_points": 6.650000095367432,
+          "points_gained": 295.4800109863281,
+          "events": 48.0
+        },
+        "russellhenley": {
+          "id": "5409",
+          "name": "Russell Henley",
+          "rank": 6,
+          "average_points": 5.440000057220459,
+          "points_gained": 153.61000061035156,
+          "events": 40.0
+        },
+        "chrisgotterup": {
+          "id": "4690755",
+          "name": "Chris Gotterup",
+          "rank": 7,
+          "average_points": 5.380000114440918,
+          "points_gained": 244.27000427246094,
+          "events": 54.0
+        },
+        "samburns": {
+          "id": "9938",
+          "name": "Sam Burns",
+          "rank": 8,
+          "average_points": 5.289999961853027,
+          "points_gained": 205.27999877929688,
+          "events": 47.0
+        },
+        "xanderschauffele": {
+          "id": "10140",
+          "name": "Xander Schauffele",
+          "rank": 10,
+          "average_points": 5.110000133514404,
+          "points_gained": 163.8000030517578,
+          "events": 37.0
+        },
+        "collinmorikawa": {
+          "id": "10592",
+          "name": "Collin Morikawa",
+          "rank": 11,
+          "average_points": 5.070000171661377,
+          "points_gained": 187.92999267578125,
+          "events": 38.0
+        },
+        "siwookim": {
+          "id": "7081",
+          "name": "Si Woo Kim",
+          "rank": 14,
+          "average_points": 4.699999809265137,
+          "points_gained": 222.8800048828125,
+          "events": 58.0
+        },
+        "jacobbridgeman": {
+          "id": "5054388",
+          "name": "Jacob Bridgeman",
+          "rank": 20,
+          "average_points": 4.039999961853027,
+          "points_gained": 204.10000610351562,
+          "events": 59.0
+        },
+        "ryanfox": {
+          "id": "4251",
+          "name": "Ryan Fox",
+          "rank": 22,
+          "average_points": 3.809999942779541,
+          "points_gained": 155.67999267578125,
+          "events": 52.0
+        },
+        "justinthomas": {
+          "id": "4848",
+          "name": "Justin Thomas",
+          "rank": 25,
+          "average_points": 3.6600000858306885,
+          "points_gained": 81.8499984741211,
+          "events": 40.0
+        },
+        "hidekimatsuyama": {
+          "id": "5860",
+          "name": "Hideki Matsuyama",
+          "rank": 27,
+          "average_points": 3.609999895095825,
+          "points_gained": 141.94000244140625,
+          "events": 52.0
+        },
+        "patrickcantlay": {
+          "id": "6007",
+          "name": "Patrick Cantlay",
+          "rank": 28,
+          "average_points": 3.559999942779541,
+          "points_gained": 112.87999725341797,
+          "events": 41.0
+        },
+        "minwoolee": {
+          "id": "4410932",
+          "name": "Min Woo Lee",
+          "rank": 30,
+          "average_points": 3.3299999237060547,
+          "points_gained": 144.25,
+          "events": 50.0
+        },
+        "tomkim": {
+          "id": "4602673",
+          "name": "Tom Kim",
+          "rank": 31,
+          "average_points": 3.2899999618530273,
+          "points_gained": 157.47999572753906,
+          "events": 52.0
+        },
+        "adamscott": {
+          "id": "388",
+          "name": "Adam Scott",
+          "rank": 45,
+          "average_points": 2.609999895095825,
+          "points_gained": 109.3499984741211,
+          "events": 47.0
+        },
+        "coreyconners": {
+          "id": "9126",
+          "name": "Corey Conners",
+          "rank": 55,
+          "average_points": 2.069999933242798,
+          "points_gained": 56.959999084472656,
+          "events": 47.0
+        },
+        "jacksonkoivun": {
+          "id": "5215013",
+          "name": "Jackson Koivun",
+          "rank": 57,
+          "average_points": 2.0199999809265137,
+          "points_gained": 63.79999923706055,
+          "events": 15.0
+        },
+        "sungjaeim": {
+          "id": "11382",
+          "name": "Sungjae Im",
+          "rank": 60,
+          "average_points": 1.9299999475479126,
+          "points_gained": 78.76000213623047,
+          "events": 56.0
+        },
+        "nicoechavarria": {
+          "id": "4408316",
+          "name": "Nico Echavarria",
+          "rank": 61,
+          "average_points": 1.899999976158142,
+          "points_gained": 76.16000366210938,
+          "events": 58.0
+        },
+        "ryohisatsune": {
+          "id": "4858572",
+          "name": "Ryo Hisatsune",
+          "rank": 67,
+          "average_points": 1.809999942779541,
+          "points_gained": 87.19000244140625,
+          "events": 62.0
+        },
+        "nicktaylor": {
+          "id": "3792",
+          "name": "Nick Taylor",
+          "rank": 85,
+          "average_points": 1.5399999618530273,
+          "points_gained": 52.209999084472656,
+          "events": 52.0
+        },
+        "christiaanbezuidenhout": {
+          "id": "9243",
+          "name": "Christiaan Bezuidenhout",
+          "rank": 104,
+          "average_points": 1.2899999618530273,
+          "points_gained": 36.2599983215332,
+          "events": 51.0
+        }
+      }
+    },
+    "sha256": "8dbf46ee6574ac44df5c599c845a81f87abc9969f0fd91c722f2bc360f5278fe"
+  }
+}

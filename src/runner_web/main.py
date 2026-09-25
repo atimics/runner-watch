@@ -5003,7 +5003,10 @@ def _row_field(row: Any, key: str) -> Any:
 
 
 def _pulse_scoring_inputs(
-    *, ticker: str | None = None, at: datetime, scan_run_id: str | None = None,
+    *,
+    ticker: str | None = None,
+    at: datetime,
+    scan_run_id: str | None = None,
 ) -> dict[str, Any]:
     from runner_web.cluster_worth import cluster_worths
 
@@ -9235,7 +9238,12 @@ def sports_game_page(
                 request,
                 runner_session,
                 nav_product="sports",
-                screen=simple_market_detail("sports", golf),
+                screen=simple_market_detail(
+                    "sports",
+                    golf,
+                    outcome=request.query_params.get("outcome", ""),
+                    contract=request.query_params.get("contract", ""),
+                ),
                 golf=golf,
                 golf_context=golf_market_context(golf),
             ),
@@ -10273,11 +10281,18 @@ def screen_detail_state(
                 iter(memecoin_calls(user_id=user_id, coin_id=subject, limit=1)), None
             )
     elif market == "sports":
-        data = sports_event(subject)
+        golf = subject.startswith("golf:")
+        data = golf_event(subject) if golf else sports_event(subject)
         if data is None:
             raise HTTPException(404, "Game not found")
-        pick = sports_pick_for_user(user_id, subject) if user_id else None
-        screen = simple_market_detail(market, data, my_pick=pick)
+        pick = sports_pick_for_user(user_id, subject) if user_id and not golf else None
+        screen = simple_market_detail(
+            market,
+            data,
+            my_pick=pick,
+            outcome=request.query_params.get("outcome", ""),
+            contract=request.query_params.get("contract", ""),
+        )
     else:
         raise HTTPException(404, "Market not found")
     if market != "sports":

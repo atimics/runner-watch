@@ -1486,7 +1486,7 @@ def test_slate_database_query_count_does_not_grow_per_event(
     monkeypatch.setattr(sports_module, "connection", counted_connection)
 
     assert len(sports_slate("mlb")["events"]) >= len(events)
-    assert len(statements) == 7
+    assert len(statements) == 8  # Includes one batched prediction-market query.
 
 
 def test_sports_pulse_hides_passes_and_radar_keeps_real_moves(sports_db) -> None:

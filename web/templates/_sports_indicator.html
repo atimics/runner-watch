@@ -1,0 +1,39 @@
+{% from '_stock_indicator.html' import key_icon %}
+{% macro sports_indicator_legend() -%}
+<details class="indicator-legend sports-indicator-key"><summary>Indicator key</summary>
+  <div class="indicator-key-grid">
+    <div class="indicator-key-group"><h3>Sentiment · outer ring</h3><ul>
+      <li>{{ key_icon('bullish') }}<span>RATi above market<small>Green · selected outcome</small></span></li>
+      <li>{{ key_icon('bearish') }}<span>RATi below market<small>Red stripes · selected outcome</small></span></li>
+      <li>{{ key_icon('unavailable') }}<span>Reading pending<small>Dashed ring · fresh comparison needed</small></span></li>
+    </ul><p>A gray ring means RATi is in line with the named market. Read the exact gap beside the outcome.</p></div>
+    <div class="indicator-key-group"><h3>Attention · size and fill</h3><ul>
+      <li>{{ key_icon('small') }}<span>Quiet activity<small>Small · under 40 points</small></span></li>
+      <li>{{ key_icon('large') }}<span>More activity<small>Medium 40–69 · large 70–100</small></span></li>
+      <li>{{ key_icon('market') }}<span>Trading and price movement<small>Blue · saved market activity</small></span></li>
+      <li>{{ key_icon('evidence') }}<span>News coverage<small>Purple stripes · linked stories</small></span></li>
+    </ul><p>Activity uses the previous 24 hours of available data. Open an event for the inputs and coverage.</p></div>
+    <div class="indicator-key-group"><h3>Risk · center</h3><ul>
+      <li>{{ key_icon('detected') }}<span>Model or market limits<small>Diamond · read the saved checks</small></span></li>
+      <li>{{ key_icon('significant') }}<span>Closer check needed<small>Circle · stale inputs or wide spreads</small></span></li>
+      <li>{{ key_icon('unknown') }}<span>Coverage pending<small>? · awaiting a forecast</small></span></li>
+    </ul><p>Risk describes the model and market comparison. Each outcome keeps its own chance above the chart.</p></div>
+  </div>
+</details>
+{%- endmacro %}
+
+{% macro sports_indicator_reading(glyph) -%}
+<details class="prediction-method sports-indicator-reading" data-sports-indicator-reading>
+  <summary>Sentiment, attention, and risk</summary>
+  <p>{{ glyph.scope }} · {{ glyph.as_of }}</p>
+  <dl>
+    <div><dt>Sentiment · outer ring</dt><dd>{{ glyph.sentiment_mix.description }}</dd></div>
+    <div><dt>Attention · size and fill</dt><dd>{{ glyph.attention_reading }}</dd></div>
+    <div><dt>Risk · center</dt><dd>{{ glyph.risk_reading }}</dd></div>
+  </dl>
+  {% if glyph.attention_evidence %}<h3>Activity inputs</h3><ul>{% for item in glyph.attention_evidence %}<li>{{ item }}</li>{% endfor %}</ul>{% endif %}
+  {% if glyph.attention_missing %}<p>Coverage pending: {{ glyph.attention_missing|join('; ') }}.</p>{% endif %}
+  <h3>Risk checks</h3><ul>{% for item in glyph.risk_factors %}<li>{{ item }}</li>{% endfor %}</ul>
+  <p>The attention index assigns up to 50 points for trading volume, 30 for price movement, and 20 for news. Each market part uses the strongest venue reading. This display scale is experimental. Policy: {{ glyph.policy }}.</p>
+</details>
+{%- endmacro %}

@@ -1,3 +1,10 @@
+# Current direction: event tickers
+
+The September 25 rebuild uses one event ticker, named outcome contracts, and a
+shared model-versus-market chart. The glyph compares the model with the market.
+See [the model and data audit](research/sports-prediction-tickers.md) for the
+current design, formulas, settlement rules, and evaluation plan.
+
 # Sports rows and lasting profiles
 
 Sports shares the market pages' spacing, type, colors, filters, and right-aligned
