@@ -50,8 +50,52 @@ def test_list_layout_and_navigation_are_shared(page: Page, market, width):
     expect(page.locator(".ticker-list")).to_be_visible()
     expect(page.locator(".ticker")).to_have_count(1)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    assert page.locator(".ticker").bounding_box()["y"] < 450
+    assert page.locator(".ticker").first.bounding_box()["y"] < 450
     expect(page.get_by_text(fixtures.SENTINEL)).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_top_sports_rank_leads_and_fits_the_board(page: Page, width: int):
+    now = datetime.now(UTC)
+    event = {
+        **fixtures.sample("sports"),
+        "id": "nba:pick",
+        "status": "pre",
+        "start_time": (now + timedelta(hours=2)).isoformat(),
+        "view_state": {"started": False, "score_available": False, "label": "Upcoming"},
+        "prediction": {
+            "signal": "watch",
+            "selection": "away",
+            "away_probability": 0.61,
+            "home_probability": 0.39,
+            "away_market_probability": 0.53,
+            "home_market_probability": 0.47,
+            "edge": 0.08,
+            "observed_at": now.isoformat(),
+        },
+    }
+    lower = {
+        **event,
+        "id": "nba:lower",
+        "prediction": {
+            **event["prediction"],
+            "signal": "lean",
+            "away_market_probability": 0.58,
+            "home_market_probability": 0.42,
+            "edge": 0.03,
+        },
+    }
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, listing("sports", [lower, event]))
+
+    expect(page.locator(".ticker").first).to_have_attribute(
+        "href", re.compile(r"^/game/nba:pick(\?|$)")
+    )
+    expect(page.locator(".ticker").first.locator(".rank-detail")).to_contain_text(
+        "61% win · +8.0 pp vs odds"
+    )
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert page.locator(".ticker").first.bounding_box()["y"] < 450
 
 
 def test_tag_filter_chips_hide_and_show_rows(page: Page):

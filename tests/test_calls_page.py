@@ -55,15 +55,60 @@ def test_flash_open_calls_orders_by_confidence_and_dedupes(tmp_path, monkeypatch
     _record("two", "BBB", "up", 0.8, start_at=start)
     _record("three", "AAA", "down", 0.35, start_at=start)
     _record("four", "CCC", "down", 0.45, start_at=start)
+    _record("five", "DDD", "down", 0.02, start_at=start)
 
     calls = flash_open_calls()["calls"]
 
-    assert [call["ticker"] for call in calls] == ["AAA", "BBB", "CCC"]
-    assert calls[0]["direction"] == "up"
-    assert calls[0]["confidence"] == 0.9
-    assert calls[2]["direction"] == "down"
-    assert calls[2]["confidence"] == 0.55
+    assert [call["ticker"] for call in calls] == ["DDD", "AAA", "BBB", "CCC"]
+    assert calls[0]["direction"] == "down"
+    assert calls[0]["confidence"] == 0.98
+    assert calls[1]["confidence"] == 0.9
+    assert calls[3]["confidence"] == 0.55
     assert all(call["version_label"] for call in calls)
+
+
+def test_flash_sports_picks_use_qualified_market_calls(monkeypatch) -> None:
+    now = datetime.now(UTC)
+
+    def event(identifier: str, signal: str, selection: str, chance: float, edge: float):
+        home = chance if selection == "home" else 1 - chance
+        return {
+            "id": identifier,
+            "league": "nba",
+            "away_abbreviation": "BOS",
+            "home_abbreviation": "NYK",
+            "away_team_name": "Boston Celtics",
+            "home_team_name": "New York Knicks",
+            "status": "pre",
+            "start_time": (now + timedelta(hours=2)).isoformat(),
+            "prediction": {
+                "signal": signal,
+                "selection": selection,
+                "home_probability": home,
+                "away_probability": 1 - home,
+                "edge": edge,
+                "edge_pct": edge * 100,
+                "observed_at": now.isoformat(),
+            },
+        }
+
+    monkeypatch.setattr(
+        web_main,
+        "sports_pulse",
+        lambda *_args, **_kwargs: {
+            "events": [
+                event("nba:forecast", "model only", "home", 0.80, 0),
+                event("nba:value", "watch", "away", 0.56, 0.16),
+                event("nba:lean", "lean", "home", 0.75, 0.03),
+            ]
+        },
+    )
+
+    picks = web_main._flash_sports_picks()
+
+    assert [pick["pick"] for pick in picks] == ["BOS", "NYK"]
+    assert [pick["confidence_pct"] for pick in picks] == [56, 75]
+    assert picks[0]["edge_pct"] == 16
 
 
 def test_calls_page_renders_flash_and_signed_out_cta(tmp_path, monkeypatch) -> None:

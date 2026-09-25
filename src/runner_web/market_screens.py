@@ -13,6 +13,7 @@ from runner_web.prediction_tickers import ticker as prediction_ticker
 from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
+SPORTS_RANK_MAX_AGE = timedelta(hours=6)
 
 
 def number(value: Any) -> float | None:
@@ -588,21 +589,96 @@ def listing(
     graph: dict[str, Any] | None = None,
     updated_at: str = "",
     stories: dict[str, dict[str, Any]] | None = None,
+    stock_calls: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the tight list screen. The market-wide map view is retired."""
 
     _ = view, graph  # Kept so saved links keep working; the map lives on the ticker page now.
-    rows = [row(market, item) for item in items]
+    pairs = [(item, row(market, item)) for item in items]
     if market == "stocks":
-        for index, entry in enumerate(rows):
-            entry["chart_offset"] = (index // 50) * 50
+        for index, (_, display) in enumerate(pairs):
+            display["chart_offset"] = (index // 50) * 50
     query = query.strip()[:80]
     if query:
-        rows = [
-            r
-            for source, r in zip(items, rows, strict=True)
-            if query.casefold() in _search_text(market, source, r).casefold()
+        pairs = [
+            (source, display)
+            for source, display in pairs
+            if query.casefold() in _search_text(market, source, display).casefold()
         ]
+    now = datetime.now(UTC)
+    target_day = ""
+    calls_by_ticker: dict[str, dict[str, Any]] = {}
+    if market == "stocks":
+        from runner_web.data_health import EASTERN, stock_settlement_close
+
+        target_day = stock_settlement_close(now).astimezone(EASTERN).date().isoformat()
+        calls_by_ticker = {
+            str(call.get("ticker") or "").upper(): call for call in stock_calls or []
+        }
+    ranked = []
+    ranked_count = 0
+    for source, display in pairs:
+        rank = (0, 0.0, 0.0)
+        if market == "stocks":
+            call = calls_by_ticker.get(display["name"])
+            confidence = number(call.get("confidence")) if call else None
+            if (
+                call
+                and (source.get("eligibility") or {}).get("state") == "eligible"
+                and display["tag_tone"] not in {"avoid", "paused", "extended"}
+                and call.get("direction") in {"up", "down"}
+                and call.get("target_session_date") == target_day
+                and confidence is not None
+                and 0.5 <= confidence <= 1
+            ):
+                rank = (1, confidence, 0.0)
+                display["rank_detail"] = (
+                    f"{str(call['direction']).upper()} · {confidence:.0%} confidence · next close"
+                )
+        elif market == "sports":
+            prediction = source.get("prediction") or {}
+            side = prediction.get("selection")
+            chance = (
+                number(prediction.get(f"{side}_probability")) if side in {"home", "away"} else None
+            )
+            edge = number(prediction.get("edge"))
+            try:
+                start = datetime.fromisoformat(str(source.get("start_time")).replace("Z", "+00:00"))
+                saved = datetime.fromisoformat(
+                    str(prediction.get("observed_at")).replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError):
+                start = saved = now
+            signal = prediction.get("signal")
+            if (
+                start.tzinfo is not None
+                and saved.tzinfo is not None
+                and source.get("status") == "pre"
+                and signal in {"watch", "lean"}
+                and chance is not None
+                and 0 <= chance <= 1
+                and edge is not None
+                and edge >= 0.02
+                and timedelta(0) <= now - saved <= SPORTS_RANK_MAX_AGE
+                and start > now
+            ):
+                rank = (2 if signal == "watch" else 1, edge, chance)
+                display["rank_detail"] = (
+                    f"{display['selected_team_label']} {chance:.0%} win · "
+                    f"+{edge * 100:.1f} pp vs odds"
+                )
+        else:
+            score = number(display.get("score"))
+            if (
+                score is not None
+                and display["tag_tone"] in {"running", "setup"}
+                and not source.get("stale")
+            ):
+                rank = (1, score, 0.0)
+        ranked_count += rank[0] > 0
+        ranked.append((rank, source, display))
+    ranked.sort(key=lambda entry: entry[0], reverse=True)
+    rows = [display for _, _, display in ranked]
     counts: dict[str, int] = {}
     for item in rows:
         tone = str(item.get("tag_tone") or "")
@@ -618,6 +694,15 @@ def listing(
         "market": market,
         "label": LABELS[market],
         "rows": rows,
+        "ranking_status": (
+            {
+                "stocks": "Stock ranking pending · current eligible call needed.",
+                "memecoins": "Token ranking pending · directional assessment needed.",
+                "sports": "Sports ranking pending · current model edge needed.",
+            }[market]
+            if not ranked_count and not query
+            else ""
+        ),
         "query": query,
         "total": len(rows),
         "counts": counts,
