@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import urllib.error
 from typing import Any
 
@@ -493,3 +494,61 @@ def test_market_report_summary_carries_three_escaped_company_stories():
     assert "DDD" not in message
     assert len(message) < 4096
     assert message.endswith("[Open report](https://app.test/reports/2026-09-23/post)")
+
+
+def _reply_opener(statuses):
+    sent = []
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    def opener(request, timeout):
+        sent.append(json.loads(request.data))
+        if statuses.pop(0) == 400:
+            raise urllib.error.HTTPError(
+                request.full_url, 400, "Bad Request", {}, io.BytesIO(b"can't parse entities")
+            )
+        return _Response()
+
+    return opener, sent
+
+
+def test_a_reply_goes_out_formatted_with_a_large_preview():
+    from runner_web.telegram import TelegramConfig, send_reply
+
+    opener, sent = _reply_opener([200])
+    send_reply(
+        TelegramConfig(bot_token="t", chat_id="1"),
+        1,
+        "plain",
+        html="<code>x</code>",
+        preview_url="https://runners.test/stock/MSGM",
+        opener=opener,
+    )
+
+    assert sent[0]["parse_mode"] == "HTML"
+    assert sent[0]["text"] == "<code>x</code>"
+    assert sent[0]["link_preview_options"] == {
+        "url": "https://runners.test/stock/MSGM",
+        "prefer_large_media": True,
+    }
+
+
+def test_a_rejected_formatted_reply_falls_back_to_plain_text():
+    from runner_web.telegram import TelegramConfig, send_reply
+
+    opener, sent = _reply_opener([400, 200])
+    send_reply(TelegramConfig(bot_token="t", chat_id="1"), 1, "plain", html="<b>", opener=opener)
+
+    assert len(sent) == 2
+    assert "parse_mode" not in sent[1]
+    assert sent[1]["text"] == "plain"

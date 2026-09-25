@@ -383,7 +383,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(
         web_main,
         "send_telegram_reply",
-        lambda config, chat_id, text, reply_to_message_id=None: sent.replies.append(
+        lambda config, chat_id, text, reply_to_message_id=None, **_: sent.replies.append(
             (chat_id, text, reply_to_message_id)
         ),
     )
@@ -620,3 +620,79 @@ def test_a_reply_that_names_an_unlooked_ticker_gets_one_chance_to_correct(monkey
 
     assert decision == {"action": "reply", "text": "I have not looked at MSGM."}
     assert len(calls) == 2
+
+
+CA = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr"
+
+
+def test_a_reply_makes_addresses_copyable_and_links_the_coin_page():
+    body, preview = chat.format_reply(
+        f"watch {CA} <here> & $BONK",
+        origin="https://runners.test/",
+        coins={CA: "chain-abc"},
+        tickers=set(),
+    )
+
+    assert f"<code>{CA}</code>" in body
+    # Text around the markup is escaped, and an unknown cashtag stays text.
+    assert "&lt;here&gt; &amp; $BONK" in body
+    assert body.endswith(
+        '<a href="https://runners.test/memecoins/coin/chain-abc">Open the coin page</a>'
+    )
+    assert preview == "https://runners.test/memecoins/coin/chain-abc"
+
+
+def test_a_reply_links_stocks_with_pages_and_unfurls_the_first():
+    body, preview = chat.format_reply(
+        "MSGM and $msgm, not CEO", origin="https://runners.test", coins={}, tickers={"MSGM"}
+    )
+
+    assert body == (
+        '<a href="https://runners.test/stock/MSGM">MSGM</a> and '
+        '<a href="https://runners.test/stock/MSGM">$msgm</a>, not CEO'
+    )
+    assert preview == "https://runners.test/stock/MSGM"
+
+
+def test_an_unknown_address_is_still_copyable_but_not_linked():
+    body, preview = chat.format_reply(CA, origin="https://runners.test", coins={}, tickers=set())
+
+    assert body == f"<code>{CA}</code>"
+    assert preview == ""
+
+
+def test_only_stocks_with_a_page_are_linked():
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) "
+            "VALUES(?,?,?,'NASDAQ',?)",
+            (1, "MSGM", "Motorsport Games", NOW.isoformat()),
+        )
+        assert chat.page_tickers(database, "$MSGM beats $BONK") == {"MSGM"}
+
+
+def test_the_room_gets_a_formatted_reply(wired, monkeypatch):
+    from runner_web import main as web_main
+
+    calls = []
+    monkeypatch.setattr(
+        web_main,
+        "send_telegram_reply",
+        lambda config, chat_id, text, **kwargs: calls.append((text, kwargs)),
+    )
+    monkeypatch.setattr(
+        web_main,
+        "memecoin_market",
+        lambda **_: {"rows": [{"id": "chain-abc", "token_address": CA}]},
+    )
+    with connection() as database:
+        chat.record_update(database, _update("anything new?", mention=True), NOW)
+
+    web_main.run_telegram_chat(
+        lambda message, transcript: {"action": "reply", "text": f"look at {CA}"}, at=NOW
+    )
+
+    text, kwargs = calls[0]
+    assert text == f"look at {CA}"
+    assert f"<code>{CA}</code>" in kwargs["html"]
+    assert kwargs["preview_url"].endswith("/memecoins/coin/chain-abc")

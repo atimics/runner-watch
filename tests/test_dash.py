@@ -854,7 +854,7 @@ def test_the_desk_note_speaks_only_when_something_changed(monkeypatch):
     monkeypatch.setattr(
         web_main,
         "send_telegram_reply",
-        lambda config, chat_id, text: sent.append((chat_id, text)),
+        lambda config, chat_id, text, **_: sent.append((chat_id, text)),
     )
     monkeypatch.setattr(web_main, "dash_world", lambda *a, **k: {"changes": {"any": True}})
     monkeypatch.setattr(web_main, "_generate_desk_note", lambda world: "Something moved.")
