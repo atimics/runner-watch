@@ -105,7 +105,10 @@ def _team_contract(event: dict[str, Any]) -> dict[str, Any]:
         "method": "Season wins and losses, smoothed with an 8–8 prior, plus home advantage. "
         "The record difference is multiplied by 0.65. Chances stay between 18% and 82%.",
         "model_note": "Experimental baseline · calibration under review",
-        "record": event.get("model_record"),
+        "record": {
+            key: (event.get("model_record") or {}).get(key)
+            for key in ("paired_games", "paired_model_brier", "paired_market_brier")
+        },
         "outcomes": [],
     }
     for side in ("away", "home"):
@@ -154,7 +157,11 @@ def _team_contract(event: dict[str, Any]) -> dict[str, Any]:
         contract["outcomes"].append(
             {
                 "key": side,
-                "label": str(event.get(f"{side}_abbreviation") or side.title()),
+                "label": str(
+                    event.get(f"{side}_abbreviation")
+                    or event.get(f"{side}_team_name")
+                    or side.title()
+                ),
                 "name": str(event.get(f"{side}_team_name") or side.title()),
                 "points": points,
                 "model": _number(prediction.get(f"{side}_probability")),
@@ -247,7 +254,11 @@ def ticker(
         "contract": selected_contract,
         "selected": None,
         "score_call": None,
-        "pending": "Forecast needs a full field, player scoring history, and course conditions.",
+        "pending": (
+            "Forecast needs a full field, player scoring history, and course conditions."
+            if golf
+            else "Forecast needs a saved season record and game snapshot."
+        ),
     }
     if cup:
         prediction = (event.get("analysis") or {}).get("prediction") or {}
@@ -313,9 +324,12 @@ def ticker(
                         "stale": stale,
                         "status": "Earlier price"
                         if stale
-                        else "Wide spread"
-                        if quality != "quoted"
-                        else "Quoted",
+                        else {
+                            "quoted": "Quoted",
+                            "wide spread": "Wide spread",
+                            "spread pending": "Spread pending",
+                            "legacy": "Saved price",
+                        }.get(quality, "Price check pending"),
                         "spread_pct": round(quote["spread"] * 100, 1)
                         if quote.get("spread") is not None
                         else None,

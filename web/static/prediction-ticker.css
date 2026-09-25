@@ -95,3 +95,5 @@
 .cup-roster-grid th:first-child { text-align:left; font-weight:500; }
 .cup-roster-grid a { color:var(--soft); }
 @media (max-width:600px) { .cup-roster-grid { grid-template-columns:1fr; gap:12px; } }
+.prediction-outcomes a { min-width:0; max-width:100%; }
+.prediction-outcomes a span { overflow-wrap:anywhere; }

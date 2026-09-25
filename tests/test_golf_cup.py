@@ -285,3 +285,16 @@ def test_cup_route_renders_the_saved_forecast_and_all_players(cup_db, sources, m
     for name in sources["rosters"]["data"]["1"] + sources["rosters"]["data"]["3"]:
         assert name in html
     assert "data-live-surface" in html
+
+
+def test_cup_roster_player_has_a_persistent_profile(cup_db, sources, monkeypatch):
+    from runner_web.sports import sports_player_profile
+
+    monkeypatch.setattr(golf_cup, "_fetch_source", lambda key, *args: copy.deepcopy(sources[key]))
+    monkeypatch.setattr(golf_cup, "record_source_fetch", lambda _: None)
+    golf_cup.refresh_cup_analysis(NOW)
+    player = sources["rankings"]["data"]["players"]["scottiescheffler"]
+    profile = sports_player_profile("espn", "golf", player["id"])
+    assert profile["name"] == "Scottie Scheffler"
+    assert "World rank 1" in profile["position"]
+    assert profile["games"][0]["href"] == "/game/golf:401824815"

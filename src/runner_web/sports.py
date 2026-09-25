@@ -4354,13 +4354,29 @@ def sports_player_profile(provider: str, league: str, player_id: str) -> dict[st
                 """,
                 (provider, player_id),
             ).fetchall()
-        if not rows:
+        from runner_web.golf_cup import EVENT_ID, saved_cup_analysis
+
+        cup = saved_cup_analysis() if provider == "espn" else None
+        roster_player = next(
+            (
+                {**player, "team": team["name"]}
+                for team in (cup or {}).get("teams") or []
+                for player in team["players"]
+                if str(player.get("id")) == player_id
+            ),
+            None,
+        )
+        if not rows and roster_player is None:
             return None
-        return {
+        profile = {
             "kind": "player",
-            "name": rows[0]["player_name"],
+            "name": roster_player["name"] if roster_player else rows[0]["player_name"],
             "league": "Golf",
-            "position": rows[0]["country"],
+            "position": (
+                f"{roster_player['team']} · World rank {roster_player['rank']}"
+                if roster_player
+                else rows[0]["country"]
+            ),
             "games": [
                 {
                     "href": "/game/" + quote(str(row["event_id"]), safe=":"),
@@ -4373,6 +4389,22 @@ def sports_player_profile(provider: str, league: str, player_id: str) -> dict[st
             ],
             "teams": [],
         }
+        if roster_player:
+            points = cup.get("points") or {}
+            profile["games"].insert(
+                0,
+                {
+                    "href": "/game/" + EVENT_ID,
+                    "opponent": "Presidents Cup",
+                    "score": f"USA {points.get('1', '—')} – {points.get('3', '—')} International",
+                    "status": "Official roster · " + roster_player["team"],
+                    "start_time": min(
+                        (m["start_time"] for m in cup.get("matches") or [] if m.get("start_time")),
+                        default="",
+                    ),
+                },
+            )
+        return profile
     if league not in LEAGUES:
         return None
     with connection() as database:

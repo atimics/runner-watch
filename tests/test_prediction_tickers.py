@@ -245,3 +245,42 @@ def test_model_rechecks_save_flat_history_before_start(tmp_path, monkeypatch):
     saved = sports_event(event["id"])
     assert len(saved["prediction_history"]) == 3
     assert len({p["home_probability"] for p in saved["prediction_history"]}) == 1
+
+
+def test_scorecard_compares_model_and_market_on_same_saved_games(tmp_path, monkeypatch):
+    from runner_web.sports import _build_model_alpha
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "record.db")
+    db.init_db()
+    now = datetime.now(UTC)
+    raw = {
+        "id": "paired",
+        "date": (now - timedelta(hours=1)).isoformat(),
+        "season": {"slug": "regular-season"},
+        "status": {"type": {"state": "pre"}},
+        "competitions": [
+            {
+                "competitors": [
+                    {
+                        "homeAway": side,
+                        "team": {"id": side, "displayName": side, "abbreviation": side},
+                    }
+                    for side in ["away", "home"]
+                ]
+            }
+        ],
+    }
+    event = normalize_event("nfl", raw)
+    event.update(home_odds=-200, away_odds=180)
+    store_events([event], observed_at=now - timedelta(hours=2))
+    probability = sports_event(event["id"])["prediction"]
+    event.update(status="post", completed=True, home_score=28, away_score=14)
+    event["home"]["score"] = 28
+    event["away"]["score"] = 14
+    store_events([event], observed_at=now)
+    record = _build_model_alpha("nfl")
+    assert record["paired_games"] == 1
+    assert record["paired_model_brier"] == round((probability["home_probability"] - 1) ** 2, 4)
+    assert record["paired_market_brier"] == round(
+        (probability["home_market_probability"] - 1) ** 2, 4
+    )

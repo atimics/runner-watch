@@ -3738,6 +3738,9 @@ def _migration_087_sports_prediction_market_snapshots(db: DatabaseConnection) ->
 
 
 def _migration_089_prediction_tickers(db: DatabaseConnection) -> None:
+    _ensure_column(
+        db, "sports_prediction_market_snapshots", "quality TEXT NOT NULL DEFAULT 'legacy'"
+    )
     db.executescript(
         """
         CREATE TABLE IF NOT EXISTS sports_golf_analysis (
