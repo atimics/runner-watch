@@ -9,9 +9,8 @@
     <p>{{ golf.display_status }}{% if golf.venue %} · {{ golf.venue }}{% endif %}{% if golf.location %} · {{ golf.location }}{% endif %}</p>
   </header>
   <section class="golf-pick-answer" aria-label="Golf pick">
-    <p class="eyebrow">WHO SHOULD I BET ON? · GOLF</p>
     <h2>No current golf pick</h2>
-    <p>RATi has live scores here. A golf pick needs a saved win forecast and market price.</p>
+    <p>Waiting for a saved win forecast and market price.</p>
   </section>
 
   {% if golf_context.format == 'match_play' %}

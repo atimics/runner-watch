@@ -1,33 +1,28 @@
 .market-pick {
-  margin: 0 0 24px;
-  padding: 22px 24px;
+  margin: 0 0 14px;
+  padding: 14px 16px;
   border: 1px solid #3c6047;
-  border-radius: 18px;
-  background: linear-gradient(130deg, #1b3225, #111c16 72%);
+  border-radius: 12px;
+  background: var(--panel);
 }
 .market-pick.is-waiting {
   border-color: var(--line);
-  background: var(--panel);
 }
-.market-pick .eyebrow { color: var(--green); font-weight: 750; }
-.market-pick.is-waiting .eyebrow { color: var(--muted); }
-.market-pick h1 { font-size: clamp(25px, 4vw, 36px); }
-.market-pick h2 { margin: 0; font-size: clamp(20px, 3vw, 27px); letter-spacing: -.03em; }
-.detail-pick { margin: 20px 0 24px; padding: 18px 20px; }
-.market-pick-detail { margin: 10px 0 0; color: var(--text); font-size: 15px; }
-.market-pick-reason { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+.market-pick h1 { font-size: 23px; letter-spacing: -.02em; }
+.market-pick h2 { margin: 0; font-size: 20px; letter-spacing: -.02em; }
+.detail-pick { margin: 12px 0 18px; }
+.market-pick-detail { margin: 5px 0 0; color: var(--text); font-size: 13px; }
+.market-pick-reason { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 .market-pick a {
-  display: inline-flex;
-  gap: 8px;
-  margin-top: 16px;
-  padding: 9px 14px;
-  border-radius: 10px;
-  background: var(--green);
-  color: #102016;
-  font-size: 13px;
-  font-weight: 750;
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 @media (max-width: 760px) {
-  .market-pick { padding: 18px; }
-  .market-pick-detail { font-size: 14px; }
+  .market-pick { padding: 12px 14px; }
+  .market-pick h1 { font-size: 20px; }
 }

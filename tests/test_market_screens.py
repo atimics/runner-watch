@@ -89,7 +89,7 @@ def test_memecoin_screen_shows_quote_and_saved_chain_evidence_without_score():
     board = render(listing("memecoins", [coin]))
     assert ">Market quote</small>" in board
     assert ">Pending</small>" not in board
-    assert "RATi has no saved directional token call" in board
+    assert "No saved directional token call" in board
 
     finding = {
         "token_address": "token-a",
@@ -129,7 +129,6 @@ def test_board_leads_with_a_current_eligible_flash_stock_call():
     assert board["rows"][0]["name"] == "READY"
     assert "72% chance of a fall" in board["top_pick"]["detail"]
     assert "Saved forecast" in render(board)
-    assert "WHO SHOULD I BET ON?" in render(board)
     assert listing("stocks", [blocked], stock_calls=calls)["top_pick"]["name"] == "No current pick"
     opened = detail(
         "stocks",
@@ -137,7 +136,6 @@ def test_board_leads_with_a_current_eligible_flash_stock_call():
         stock_calls=calls,
     )
     assert opened["top_pick"]["name"] == "$READY · DOWN"
-    assert "WHO SHOULD I BET ON?" in render(opened)
     expired = [{**calls[1], "target_session_date": "2020-01-01"}]
     assert (
         listing("stocks", [eligible], stock_calls=expired)["top_pick"]["name"]
@@ -184,7 +182,6 @@ def test_board_sports_pick_prioritizes_saved_market_edge():
     detail_game = game("nba:detail", "Detail Team", "watch", 0.58, 0.08)
     opened = detail("sports", detail_game)
     assert opened["top_pick"]["name"] == "Detail Team to win"
-    assert "WHO SHOULD I BET ON?" in render(opened)
     old = game("nba:old", "Old Game", "watch", 0.62, 0.10)
     old["prediction"]["observed_at"] = (now - timedelta(hours=7)).isoformat()
     assert listing("sports", [old])["top_pick"]["name"] == "No current pick"
@@ -195,7 +192,7 @@ def test_memecoin_board_waits_for_a_directional_call():
     board = listing("memecoins", [coin])
 
     assert board["top_pick"]["name"] == "No current pick"
-    assert "no saved directional token call" in render(board)
+    assert "No saved directional token call" in render(board)
 
 
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])

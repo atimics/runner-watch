@@ -536,12 +536,9 @@ def _board_pick(
         "href": None,
         "reason": "",
         "detail": {
-            "stocks": "Flash is waiting for a stock with a current eligible assessment.",
-            "memecoins": (
-                "Live prices and chain findings support research. "
-                "RATi has no saved directional token call."
-            ),
-            "sports": "A pick appears with a saved model edge against current market odds.",
+            "stocks": "Waiting for a current eligible stock call.",
+            "memecoins": "No saved directional token call.",
+            "sports": "Waiting for a current model edge against market odds.",
         }[market],
     }
     if market == "stocks":
