@@ -47,6 +47,7 @@ from runner_web.odds_api import (
     refresh_decision,
 )
 from runner_web.odds_api import PROVIDER as ODDS_PROVIDER
+from runner_web.sports_markets import event_readings, refresh_prediction_markets
 
 MODEL_VERSION = "team-form-v1"
 SOURCE = "espn"
@@ -229,6 +230,14 @@ def normalize_event(league: str, event: dict[str, Any]) -> dict[str, Any] | None
         "completed": bool(status.get("completed")),
         "home": home,
         "away": away,
+        "team_stats": {
+            side: {
+                str(stat.get("name") or ""): str(stat.get("displayValue") or "")
+                for stat in raw.get("statistics") or []
+                if stat.get("name") and stat.get("displayValue") is not None
+            }
+            for side, raw in (("home", home_raw), ("away", away_raw))
+        },
         "venue": str(venue.get("fullName") or ""),
         "location": ", ".join(
             part
@@ -458,12 +467,8 @@ def predict_event(event: dict[str, Any]) -> dict[str, Any]:
         "home_venue_delta_pp": round(home_venue_delta * 100, 6),
         "home_clamp_delta_pp": round((home_probability - probability) * 100, 6),
         "home_probability_pct": round(home_probability * 100, 6),
-        "home_record": {"wins": home_record[0], "losses": home_record[1]}
-        if home_record
-        else None,
-        "away_record": {"wins": away_record[0], "losses": away_record[1]}
-        if away_record
-        else None,
+        "home_record": {"wins": home_record[0], "losses": home_record[1]} if home_record else None,
+        "away_record": {"wins": away_record[0], "losses": away_record[1]} if away_record else None,
         "source_url": str(event.get("source_url") or ""),
     }
     home_market, away_market = no_vig_probabilities(event["home_odds"], event["away_odds"])
@@ -617,8 +622,7 @@ def validate_sports_ai_forecast(
 def _scoreboard_url(league: str, day: date) -> str:
     config = LEAGUES[league]
     return (
-        f"{SOURCE_URL}/{config['sport']}/{config['path']}/scoreboard"
-        f"?dates={day:%Y%m%d}&limit=100"
+        f"{SOURCE_URL}/{config['sport']}/{config['path']}/scoreboard?dates={day:%Y%m%d}&limit=100"
     )
 
 
@@ -1493,6 +1497,15 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                     timestamp,
                 ),
             )
+            for side, stats in (event.get("team_stats") or {}).items():
+                if side not in {"home", "away"} or not stats:
+                    continue
+                database.execute(
+                    """INSERT INTO sports_team_game_stats(event_id,side,stats_json,observed_at)
+                    VALUES(?,?,?,?) ON CONFLICT(event_id,side) DO UPDATE SET
+                    stats_json=excluded.stats_json,observed_at=excluded.observed_at""",
+                    (event["id"], side, _json(stats), timestamp),
+                )
             if event.get("home_odds") is not None or event.get("away_odds") is not None:
                 odds_provider = str(event.get("odds_provider") or SOURCE)
                 home_open_odds = event.get("home_open_odds")
@@ -1792,6 +1805,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
     quota: Quota | None = None
     reported_quota: Quota | None = None
     quota_error: str | None = None
+    market_events: list[dict[str, Any]] = []
     golf_counts = {"events": 0, "entrants": 0}
     golf_error: str | None = None
     try:
@@ -1849,6 +1863,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
                         mark_refresh_attempt(decision, successful=False, at=current)
                 cached_odds_counts[league] = _apply_cached_moneylines(events)
             counts[league] = store_events(events, observed_at=current)
+            market_events.extend(events)
             player_counts[league] = collect_player_appearances(events)
         except Exception as exc:
             errors[league] = str(exc)[:240]
@@ -1876,6 +1891,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
                 )
             except Exception as exc:
                 news_errors[league] = str(exc)[:240]
+    prediction_markets = refresh_prediction_markets(market_events, current)
     try:
         golf_counts = store_golf_events(fetch_golf(at), observed_at=current)
     except Exception as exc:
@@ -1891,6 +1907,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
         "news_errors": news_errors,
         "errors": errors,
         "golf": {**golf_counts, "error": golf_error},
+        "prediction_markets": prediction_markets,
         "odds_api": {
             "enabled": odds_config.active,
             "working_limit": odds_config.working_limit,
@@ -4009,6 +4026,16 @@ def sports_event(event_id: str) -> dict[str, Any] | None:
         event["context"] = _series_context(database, event)
         event["matchup_players"] = _matchup_player_context(database, event)
         event["view_state"] = _game_view_state(event)
+        event["team_stats"] = {
+            str(row["side"]): json.loads(row["stats_json"])
+            for row in database.execute(
+                "SELECT side,stats_json FROM sports_team_game_stats WHERE event_id=?",
+                (event_id,),
+            ).fetchall()
+        }
+    event["prediction_markets"], event["prediction_market_history"] = event_readings(
+        event_id, str(event["start_time"])
+    )
     event["model_record"] = _model_alpha(str(event["league"]))
     return event
 
@@ -4047,13 +4074,9 @@ def sports_team_profile(provider: str, league: str, team_id: str) -> dict[str, A
         own_score = _number(event.get(f"{own_side}_score"))
         other_score = _number(event.get(f"{other_side}_score"))
         scored = (
-            event["status"] in {"in", "post"}
-            and own_score is not None
-            and other_score is not None
+            event["status"] in {"in", "post"} and own_score is not None and other_score is not None
         )
-        result = (
-            "Final" if event["status"] == "post" else "Live" if scored else "Upcoming"
-        )
+        result = "Final" if event["status"] == "post" else "Live" if scored else "Upcoming"
         games.append(
             {
                 "id": event["id"],
@@ -4156,16 +4179,12 @@ def sports_player_profile(provider: str, league: str, player_id: str) -> dict[st
                     "name": row["team_name"],
                     "last_seen": row["start_time"],
                     "href": "/team/"
-                    + "/".join(
-                        quote(str(value), safe="") for value in (provider, league, team_id)
-                    ),
+                    + "/".join(quote(str(value), safe="") for value in (provider, league, team_id)),
                 }
             )
         _, stats_label = _player_stats(row["stats_json"])
         opponent = (
-            row["away_team_name"]
-            if team_id == str(row["home_team_id"])
-            else row["home_team_name"]
+            row["away_team_name"] if team_id == str(row["home_team_id"]) else row["home_team_name"]
         )
         games.append(
             {

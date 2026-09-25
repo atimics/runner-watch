@@ -187,14 +187,10 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
         for index, team in enumerate(teams):
             team["model_percent"] = round(probabilities[index] * 100, 1)
             team["model_favorite"] = team["side"] == favorite
-            market_probability = number(
-                prediction.get(f"{team['side']}_market_probability")
-            )
+            market_probability = number(prediction.get(f"{team['side']}_market_probability"))
             if market_probability is not None and 0 <= market_probability <= 1:
                 team["market_percent"] = round(market_probability * 100, 1)
-                team["market_gap_pp"] = round(
-                    (probabilities[index] - market_probability) * 100, 1
-                )
+                team["market_gap_pp"] = round((probabilities[index] - market_probability) * 100, 1)
             team["value_side"] = team["side"] == prediction.get("selection")
     value_team = next((team for team in teams if team.get("value_side")), None)
     forecast = None
@@ -253,21 +249,22 @@ def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
                     part["bar_start"] = max(0.0, min(100.0, min(running, running + part["value"])))
                     part["bar_width"] = max(
                         0.0,
-                        min(100.0, max(running, running + part["value"]))
-                        - part["bar_start"],
+                        min(100.0, max(running, running + part["value"])) - part["bar_start"],
                     )
                     running += part["value"]
                     offset += part["share"]
                 forecast["factors"] = factors
-                forecast["records"] = {
-                    side: trace.get(f"{side}_record") for side in sides
-                }
+                forecast["records"] = {side: trace.get(f"{side}_record") for side in sides}
                 forecast["source_url"] = trace.get("source_url")
-                forecast["description"] += " " + "; ".join(
-                    f"{part['label']} {part['value']:+.1f} points"
-                    for part in factors
-                    if abs(part["value"]) >= 0.05
-                ) + "."
+                forecast["description"] += (
+                    " "
+                    + "; ".join(
+                        f"{part['label']} {part['value']:+.1f} points"
+                        for part in factors
+                        if abs(part["value"]) >= 0.05
+                    )
+                    + "."
+                )
         market_chance = (
             number(prediction.get(f"{favorite}_market_probability")) if favorite else None
         )
@@ -714,6 +711,45 @@ def detail(
         state = sports_state(data)
         result["call"] = call_record(market, data, my_pick)
         result["market_source"] = (data.get("odds") or {}).get("source_label")
+        matchup = item.get("matchup") or {}
+        selected = item["assessment"].get("selection")
+        if selected not in {"away", "home"}:
+            selected = next(
+                (team["side"] for team in matchup.get("teams") or [] if team.get("model_favorite")),
+                "away",
+            )
+        model = number((data.get("prediction") or {}).get(f"{selected}_probability"))
+        result["prediction_markets"] = []
+        for source_row in data.get("prediction_markets") or []:
+            source = str(source_row.get("source") or "")
+            if source not in {"kalshi", "polymarket"}:
+                continue
+            chance = number(source_row.get(f"{selected}_probability"))
+            away = number(source_row.get("away_probability"))
+            home = number(source_row.get("home_probability"))
+            if chance is None or away is None or home is None:
+                continue
+            history = (data.get("prediction_market_history") or {}).get(source) or []
+            first = number(history[0].get(f"{selected}_probability")) if history else None
+            selected_team = next(
+                (team["label"] for team in matchup.get("teams") or [] if team["side"] == selected),
+                selected.title(),
+            )
+            result["prediction_markets"].append(
+                {
+                    "source": "Kalshi" if source == "kalshi" else "Polymarket",
+                    "team": selected_team,
+                    "chance": round(chance * 100, 1),
+                    "away": round(away * 100, 1),
+                    "home": round(home * 100, 1),
+                    "gap_pp": round((model - chance) * 100, 1) if model is not None else None,
+                    "change_pp": round((chance - first) * 100, 1) if first is not None else None,
+                    "count": len(history),
+                    "saved_label": stamp(source_row.get("source_updated_at")),
+                    "basis": source_row.get("price_basis"),
+                    "url": source_row.get("source_url"),
+                }
+            )
         edge_history = data.get("edge_history") or {}
         if edge_history.get("side") == item["assessment"].get("selection"):
             result["market_chart"] = sports_market_chart(edge_history)
@@ -742,6 +778,23 @@ def detail(
             }
             for s in ("away", "home")
         ]
+        stat_choices = {
+            "mlb": (("hits", "Hits"), ("errors", "Errors")),
+            "nfl": (("totalYards", "Total yards"), ("turnovers", "Turnovers")),
+            "nba": (("rebounds", "Rebounds"), ("assists", "Assists")),
+            "nhl": (("saves", "Saves"),),
+        }
+        team_stats = data.get("team_stats") or {}
+        result["game_stats"] = [
+            {
+                "label": label,
+                "away": str((team_stats.get("away") or {})[key]),
+                "home": str((team_stats.get("home") or {})[key]),
+            }
+            for key, label in stat_choices.get(data.get("league"), ())
+            if key in (team_stats.get("away") or {}) and key in (team_stats.get("home") or {})
+        ]
+        result["game_stats_source"] = str(data.get("source_url") or "")
         result["note"] = str(item["change"])
         if data.get("venue"):
             result["facts"].append({"label": "Venue", "value": str(data["venue"])})

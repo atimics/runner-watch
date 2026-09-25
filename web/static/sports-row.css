@@ -53,6 +53,17 @@
 .sports-opinion-gap.is-above { color: var(--green); }
 .sports-opinion-gap.is-below { color: var(--amber); }
 .sports-opinion-explainer { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+.sports-opinion-venues { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.sports-opinion-venues h3 { margin: 0; font-size: 15px; }
+.sports-opinion-venues > p { margin: 7px 0 10px; color: var(--muted); font-size: 11px; }
+.sports-opinion-venue { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 6px 16px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.sports-opinion-venue > div { display: flex; flex-direction: column; gap: 2px; }
+.sports-opinion-venue a { color: var(--blue); font-weight: 700; }
+.sports-opinion-venue strong { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sports-opinion-venue > span { font-weight: 700; white-space: nowrap; }
+.sports-opinion-venue > span.is-above { color: var(--green); }
+.sports-opinion-venue > span.is-below { color: var(--amber); }
+.sports-opinion-venue > small { grid-column: 1 / -1; }
 .sports-opinion-chart { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .sports-opinion-chart-heading,.sports-opinion-chart-legend,.sports-opinion-chart-times { display: flex; justify-content: space-between; gap: 12px; }
 .sports-opinion-chart-heading h3 { margin: 0; font-size: 15px; }
@@ -118,3 +129,16 @@
   .sports-opinion header { flex-wrap: wrap; }
   .sports-opinion-sides { grid-template-columns: 1fr; }
 }
+
+@media (max-width: 480px) {
+  .sports-opinion-venue { grid-template-columns: minmax(0,1fr) auto; }
+  .sports-opinion-venue > span { grid-column: 2; }
+}
+
+.sports-game-stats { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.sports-game-stats h3 { margin: 0 0 8px; font-size: 14px; }
+.sports-game-stats > div { display: grid; grid-template-columns: 1fr minmax(90px, 2fr) 1fr; gap: 12px; align-items: center; padding: 5px 0; text-align: center; font-size: 12px; }
+.sports-game-stats > div strong:first-child, .sports-game-stats > div span:first-child { text-align: left; }
+.sports-game-stats > div strong:last-child, .sports-game-stats > div span:last-child { text-align: right; }
+.sports-game-stats > div span { color: var(--muted); }
+.sports-game-stats-head { font-weight: 700; }

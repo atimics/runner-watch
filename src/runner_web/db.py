@@ -3702,6 +3702,37 @@ def _migration_086_sports_opinion_factors(db: DatabaseConnection) -> None:
     _ensure_column(db, "sports_predictions", "factors_json TEXT NOT NULL DEFAULT '{}'")
 
 
+def _migration_087_sports_prediction_market_snapshots(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS sports_prediction_market_snapshots (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            source TEXT NOT NULL CHECK(source IN ('kalshi','polymarket')),
+            source_event_id TEXT NOT NULL,
+            source_market_id TEXT NOT NULL,
+            away_probability REAL NOT NULL CHECK(away_probability BETWEEN 0 AND 1),
+            home_probability REAL NOT NULL CHECK(home_probability BETWEEN 0 AND 1),
+            source_updated_at TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            price_basis TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            quote_hash TEXT NOT NULL,
+            UNIQUE(event_id,source,quote_hash)
+        );
+        CREATE INDEX IF NOT EXISTS sports_prediction_market_event_time
+            ON sports_prediction_market_snapshots(event_id,source,observed_at DESC);
+        CREATE TABLE IF NOT EXISTS sports_team_game_stats (
+            event_id TEXT NOT NULL REFERENCES sports_events(id) ON DELETE CASCADE,
+            side TEXT NOT NULL CHECK(side IN ('away','home')),
+            stats_json TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            PRIMARY KEY(event_id,side)
+        );
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3793,6 +3824,9 @@ MIGRATIONS = (
     Migration(84, "report_spotlight", _migration_084_report_spotlight),
     Migration(85, "attention_shadow", _migration_085_attention_shadow),
     Migration(86, "sports_opinion_factors", _migration_086_sports_opinion_factors),
+    Migration(
+        87, "sports_prediction_market_snapshots", _migration_087_sports_prediction_market_snapshots
+    ),
 )
 
 
