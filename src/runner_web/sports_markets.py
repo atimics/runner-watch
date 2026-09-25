@@ -102,10 +102,12 @@ def _reading(
     source_url: str,
     at: datetime,
     price_basis: str,
+    quality: str = "quoted",
 ) -> dict[str, Any]:
     digest = hashlib.sha256(
         json.dumps(
-            [source, market_id, round(away, 6), round(home, 6)], separators=(",", ":")
+            [source, market_id, round(away, 6), round(home, 6), at.isoformat()],
+            separators=(",", ":"),
         ).encode()
     ).hexdigest()
     return {
@@ -120,6 +122,7 @@ def _reading(
         "price_basis": price_basis,
         "observed_at": at.isoformat(),
         "quote_hash": digest,
+        "quality": quality,
     }
 
 
@@ -266,6 +269,7 @@ def normalize_polymarket(
         if pair is None or updated is None or updated > at or updated >= _time(event["start_time"]):
             continue
         slug = str(raw["slug"])
+        spread = _number(market.get("spread"))
         readings.append(
             _reading(
                 event=event,
@@ -278,6 +282,13 @@ def normalize_polymarket(
                 source_url=f"https://polymarket.com/event/{slug}",
                 at=at,
                 price_basis="Listed moneyline outcome prices, normalized across both teams",
+                quality=(
+                    "quoted"
+                    if spread is not None and 0 <= spread <= 0.2
+                    else "wide spread"
+                    if spread is not None
+                    else "spread pending"
+                ),
             )
         )
     return readings
@@ -341,8 +352,9 @@ def store_readings(readings: list[dict[str, Any]]) -> int:
             cursor = database.execute(
                 """INSERT INTO sports_prediction_market_snapshots(
                     id,event_id,source,source_event_id,source_market_id,away_probability,
-                    home_probability,source_updated_at,source_url,price_basis,observed_at,quote_hash
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                    home_probability,source_updated_at,source_url,price_basis,observed_at,quote_hash,
+                    quality
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(event_id,source,quote_hash) DO NOTHING""",
                 (
                     str(uuid.uuid4()),
@@ -357,6 +369,7 @@ def store_readings(readings: list[dict[str, Any]]) -> int:
                     row["price_basis"],
                     row["observed_at"],
                     row["quote_hash"],
+                    row.get("quality", "legacy"),
                 ),
             )
             inserted += max(0, cursor.rowcount)

@@ -64,7 +64,7 @@ def refresh(page, state, screen):
 
 
 def test_late_assessment_script_consumes_completed_detail_refresh(page):
-    screen = detail("sports", screens.sample("sports"))
+    screen = detail("memecoins", {"coin": screens.sample("memecoins")})
     fresh = copy.deepcopy(screen)
     fresh["item"]["value"] = "$123.00"
     fresh["item"]["assessment"].update(label="Runner score", value=72, unit="pts")

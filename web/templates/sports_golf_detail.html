@@ -2,12 +2,21 @@
 {% block detail_head %}<link rel="stylesheet" href="/static/sports-golf-detail.css?v={{ static_version }}">{% endblock %}
 {% block screen_main %}
 <a class="back" href="/?league=golf">← Golf</a>
-<article class="golf-detail">
+<article class="golf-detail" data-live-surface>
   <header class="golf-detail-head">
-    <p class="eyebrow">PGA TOUR · {{ 'MATCH PLAY' if golf_context.format == 'match_play' else 'STROKE PLAY' }}</p>
-    <h1>{{ golf.name }}</h1>
-    <p>{{ golf.display_status }}{% if golf.venue %} · {{ golf.venue }}{% endif %}{% if golf.location %} · {{ golf.location }}{% endif %}</p>
+    <div><p class="eyebrow">PGA TOUR · {{ 'MATCH PLAY' if golf_context.format == 'match_play' else 'STROKE PLAY' }}</p>
+    <h1>{{ golf.name }}</h1><p>{{ golf.display_status }}{% if golf.venue %} · {{ golf.venue }}{% endif %}</p></div>
+    {% if golf_context.format == 'match_play' and golf_context.teams %}<div class="golf-current-score"><small>{{ golf_context.teams|map(attribute='name')|join(' · ') }}</small><strong>{{ golf_context.teams|map(attribute='points_display')|join(' – ') }}</strong><small>{{ 'Final points' if golf.completed else 'Current points' }}</small></div>{% elif golf_context.leaders %}<div class="golf-current-score"><small>{{ golf_context.leaders[0].player_name }}</small><strong>{{ golf_context.leaders[0].score_display }}</strong><small>{{ 'Final score' if golf.completed else 'Leader to par' }}</small></div>{% endif %}
   </header>
+
+  {% include '_sports_opinion.html' %}
+
+  {% if golf.analysis and golf.analysis.teams %}
+  <details class="prediction-method cup-rosters"><summary>Player form · {{ golf.analysis.teams|map(attribute='covered')|sum }} ranked players</summary>
+    <p>World ranking points · {{ golf.analysis.ranking_date }}. The model uses the square root of each player’s average points as match strength.</p>
+    <div class="cup-roster-grid">{% for team in golf.analysis.teams %}<div><h3>{{ team.name }}</h3><table><thead><tr><th>Player</th><th>Rank</th><th>Avg points</th></tr></thead><tbody>{% for player in team.players %}<tr><th>{% if player.id %}<a href="/player/espn/golf/{{ player.id }}">{{ player.name }}</a>{% else %}{{ player.name }}{% endif %}</th><td>{{ player.rank or '—' }}</td><td>{{ '%.2f'|format(player.average_points) if player.average_points is not none else '—' }}</td></tr>{% endfor %}</tbody></table></div>{% endfor %}</div>
+  </details>
+  {% endif %}
 
   {% if golf_context.format == 'match_play' %}
   <section class="golf-context" aria-labelledby="golfWinnerTitle">

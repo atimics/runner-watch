@@ -124,9 +124,7 @@ def test_long_market_details_fit(page, width, kind):
     open_html(page, screens.render(screen), screen)
     expect(page.locator(".asset-heading h1")).to_have_text(screen["item"]["name"])
     expect(
-        page.get_by_role(
-            "region", name="Token evidence" if kind == "coin" else "RATi assessment"
-        )
+        page.get_by_role("region", name="Token evidence" if kind == "coin" else "Outcome market")
     ).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     for team in page.locator(".teams > div").all():
@@ -154,8 +152,8 @@ def test_saved_report_expands_full_text_and_sources(page, width, subject_type):
 
 
 def test_detail_api_refresh_updates_assessment_evidence(page):
-    market, raw = long_sample("team")
-    screen = detail(market, raw)
+    market, raw = long_sample("coin")
+    screen = detail(market, {"coin": raw})
     refreshed = copy.deepcopy(screen)
     refreshed["item"]["assessment"].update(
         label="Updated saved assessment",
@@ -215,10 +213,8 @@ def test_selected_team_probability_fits_with_full_team_names(page, width):
     screen = listing(market, [raw])
     page.set_viewport_size({"width": width, "height": 844})
     open_html(page, screens.render(screen))
-    rating = page.locator(".sports-chance-ring")
-    expect(rating).to_have_attribute(
-        "aria-label", f"Pregame model: {raw['home_team_name']} 60% win chance."
-    )
+    rating = page.locator(".prediction-glyph")
+    expect(rating).to_have_attribute("aria-label", f"{raw['home_team_name']}: RATi 60.0%")
     no_overlap(page.locator(".ticker-name"), page.locator(".ticker-value"))
     no_overlap(page.locator(".ticker-value"), rating)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

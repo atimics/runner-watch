@@ -1,91 +1,50 @@
-{% from '_sports_opinion_glyph.html' import sports_opinion_glyph %}
-{% set matchup = screen.item.matchup %}
-{% set forecast = matchup.forecast %}
-{% set value_team = matchup.value_team %}
-{% set assessment = screen.item.assessment %}
-{% if forecast %}
-<section class="sports-opinion" aria-label="Pregame model and market">
-  <header>
-    <div>
-      <p class="eyebrow">PREGAME · MODEL VS MARKET</p>
-      {% if value_team and value_team.market_gap_pp is defined %}
-      <h2>{{ value_team.label }} {{ 'above' if value_team.market_gap_pp > 0 else 'below' if value_team.market_gap_pp < 0 else 'in line with' }} market{% if value_team.market_gap_pp != 0 %} by {{ '%.1f'|format(value_team.market_gap_pp|abs) }} pp{% endif %}</h2>
-      {% else %}<h2>Both teams' win chances</h2>{% endif %}
-      <small>{% if forecast.saved_label %}Saved {{ forecast.saved_label }}{% else %}Saved before the game{% endif %}{% if forecast.model_version %} · {{ forecast.model_version }}{% endif %}{% if assessment.tag %} · {{ assessment.tag }}{% endif %}</small>
-    </div>
+{% from '_prediction_glyph.html' import prediction_glyph %}
+{% set ticker = screen.ticker %}
+{% set contract = ticker.contract %}
+{% set selected = ticker.selected %}
+<section class="sports-opinion prediction-ticker" aria-label="Outcome market" data-prediction-ticker>
+  <header class="prediction-heading">
+    <div><p class="eyebrow">{{ ticker.symbol }}</p><h2>{{ contract.label if contract else 'Tournament winner' }}</h2></div>
+    {% if selected %}{{ prediction_glyph(ticker) }}{% endif %}
   </header>
-  <div class="sports-opinion-sides" aria-label="Both teams' pregame win chances">
-    {% for team in matchup.teams %}
-    <div class="sports-opinion-side{% if team.value_side %} is-value{% elif team.model_favorite %} is-favorite{% endif %}">
-      <div class="sports-opinion-side-head">
-        <div class="sports-opinion-side-name"><strong>{{ team.label }}</strong><small>{{ team.name }}</small></div>
-        {% if team.label == forecast.team %}<span class="sports-opinion-result" title="{{ forecast.team }} model chance and factors">{{ sports_opinion_glyph(forecast, 'detail-opinion') }}</span>{% endif %}
-      </div>
-      <div class="sports-opinion-side-badges">{% if team.model_favorite %}<span>Model favorite</span>{% endif %}{% if team.value_side and assessment.tag != 'PASS' %}<span>Saved call</span>{% endif %}</div>
-      <dl>
-        <div><dt>Model</dt><dd>{{ team.model_percent }}%</dd></div>
-        <div><dt>Market</dt><dd>{{ team.market_percent ~ '%' if team.market_percent is defined else '—' }}</dd></div>
-      </dl>
-      {% if team.market_gap_pp is defined %}<p class="sports-opinion-gap {{ 'is-above' if team.market_gap_pp > 0 else 'is-below' if team.market_gap_pp < 0 else '' }}">{{ '%+.1f'|format(team.market_gap_pp) }} pp {{ 'above' if team.market_gap_pp > 0 else 'below' if team.market_gap_pp < 0 else 'in line with' }} market</p>{% endif %}
-    </div>
-    {% endfor %}
+  {% if ticker.contracts|length > 1 %}
+  <nav class="prediction-contracts" aria-label="Settlement terms">{% for choice in ticker.contracts %}<a href="{{ choice.href }}"{% if choice.key == contract.key %} aria-current="true"{% endif %}>{{ choice.label }}</a>{% endfor %}</nav>
+  {% endif %}
+  {% if selected %}
+  <nav class="prediction-outcomes" aria-label="Choose an outcome">
+    {% for choice in contract.outcomes %}<a href="{{ choice.href }}"{% if choice.key == selected.key %} aria-current="true"{% endif %}><span>{{ choice.label }}</span><strong>{{ choice.percent ~ '%' if choice.percent is not none else '—' }}</strong><small>RATi</small></a>{% endfor %}
+  </nav>
+  <div class="prediction-quote">
+    <div><span>{{ selected.label }} · {{ contract.unit|lower }}</span><strong>{{ selected.percent ~ '%' if selected.percent is not none else 'Pending' }}</strong><small>RATi · {{ contract.model_label|lower }}</small></div>
+    {% if selected.benchmark %}<div><span>{{ selected.benchmark.label }}</span><strong>{{ selected.benchmark.percent }}%</strong><small>{{ selected.benchmark.status }}</small></div>{% endif %}
+    <div class="prediction-gap{% if selected.gap is not none %} {{ 'is-above' if selected.gap > 0 else 'is-below' if selected.gap < 0 else '' }}{% endif %}"><span>RATi − market</span><strong>{{ '%+.1f'|format(selected.gap) ~ ' pp' if selected.gap is not none else '—' }}</strong><small>{% if selected.gap is not none %}{{ 'Above' if selected.gap > 0 else 'Below' if selected.gap < 0 else 'In line with' }} {{ selected.benchmark.label }}{% else %}Comparable fresh prices pending{% endif %}</small></div>
   </div>
-  <p class="sports-opinion-explainer">The two model chances are opposite sides of one game. The gap compares each team with its saved no-vig market chance.{% if screen.market_source %} Source: {{ screen.market_source }}.{% endif %} Gaps use the saved unrounded values.</p>
-  {% if screen.prediction_markets %}
-  <section class="sports-opinion-venues" aria-label="Prediction market comparison">
-    <h3>Prediction markets</h3>
-    <p>Each venue has its own saved pregame price. The gap uses the same saved RATi model chance.</p>
-    {% for venue in screen.prediction_markets %}
-    <div class="sports-opinion-venue">
-      <div><a href="{{ venue.url }}" target="_blank" rel="noopener noreferrer">{{ venue.source }} ↗</a><small>{{ venue.saved_label }}</small></div>
-      <strong>{{ venue.team }} {{ venue.chance }}%</strong>
-      {% if venue.gap_pp is not none %}<span class="{{ 'is-above' if venue.gap_pp > 0 else 'is-below' if venue.gap_pp < 0 else '' }}">RATi {{ '%+.1f'|format(venue.gap_pp) }} pp</span>{% endif %}
-      <small>{{ venue.count }} saved {{ 'reading' if venue.count == 1 else 'readings' }}{% if venue.count > 1 %} · venue {{ '%+.1f'|format(venue.change_pp) }} pp since first saved{% endif %}</small>
-    </div>
-    {% endfor %}
-    <p>Kalshi uses both game-winner bid/ask midpoints. Polymarket uses the listed moneyline outcomes. Each pair is normalized to 100%.</p>
-  </section>
-  {% endif %}
-  {% if screen.market_chart %}
-  {% set chart = screen.market_chart %}
-  <section class="sports-opinion-chart" aria-label="{{ chart.team }} pregame chance history" data-sports-market-chart>
-    <div class="sports-opinion-chart-heading"><h3>{{ chart.team }} chance over time</h3><small>{{ chart.count }} saved pregame {{ 'reading' if chart.count == 1 else 'readings' }}</small></div>
-    <div class="sports-opinion-chart-legend"><span class="is-model">Model {{ chart.model_last }}%</span><span class="is-market">Market {{ chart.market_last }}%</span></div>
-    <div class="sports-opinion-chart-plot"><span>{{ chart.high }}%</span>
-      <svg viewBox="0 0 100 68" preserveAspectRatio="none" role="img" aria-label="{{ chart.team }} model and market win chance from {{ chart.first_label }} to {{ chart.last_label }}. Latest model {{ chart.model_last }}%, market {{ chart.market_last }}%, gap {{ '%+.1f'|format(chart.gap_last) }} percentage points.">
-        <line class="sports-opinion-chart-grid" x1="8" y1="10" x2="92" y2="10"/>
-        <line class="sports-opinion-chart-grid" x1="8" y1="58" x2="92" y2="58"/>
-        {% if chart.count > 1 %}<polyline class="sports-opinion-chart-market" points="{{ chart.market_line }}"/><polyline class="sports-opinion-chart-model" points="{{ chart.model_line }}"/>{% endif %}
-        <circle class="sports-opinion-chart-market-dot" cx="{{ chart.market_dot[0] }}" cy="{{ chart.market_dot[1] }}" r="1.7"/>
-        <circle class="sports-opinion-chart-model-dot" cx="{{ chart.model_dot[0] }}" cy="{{ chart.model_dot[1] }}" r="1.7"/>
+  <p class="prediction-scope">{{ contract.model_note }} · Saved {{ selected.model_label }}</p>
+  {% if ticker.score_call %}<p class="prediction-score-call"><span>{{ ticker.score_call.label }}</span><strong>{{ ticker.score_call.value }}</strong></p>{% endif %}
+  {% if selected.chart %}{% set chart = selected.chart %}
+  <section class="prediction-history" aria-label="{{ selected.label }} probability history" data-sports-market-chart>
+    <div class="prediction-history-heading"><h3>{{ selected.label }} over time</h3><span>{{ chart.count }} saved {{ 'time' if chart.count == 1 else 'times' }}</span></div>
+    <div class="prediction-legend">{% for line in chart.series %}<span class="series-{{ line.key }}"><i></i>{{ line.label }} <b>{{ line.last }}%</b></span>{% endfor %}</div>
+    <div class="prediction-plot"><span class="axis-top">100%</span><span class="axis-middle">50%</span><span class="axis-bottom">0%</span>
+      <svg viewBox="0 0 100 60" preserveAspectRatio="none" role="img" aria-label="{{ selected.label }}: {% for line in chart.series %}{{ line.label }} {{ line.last }} percent{% if not loop.last %}, {% endif %}{% endfor %}. {{ chart.first }} to {{ chart.last }}.">
+        {% for y in [4,30,56] %}<line class="prediction-grid" x1="4" x2="96" y1="{{ y }}" y2="{{ y }}"/>{% endfor %}
+        {% for line in chart.series %}<g class="series-{{ line.key }}"><path d="{{ line.path }}"/>{% for dot in line.dots %}<circle cx="{{ dot[0] }}" cy="{{ dot[1] }}" r="0.5"/>{% endfor %}</g>{% endfor %}
       </svg>
-      <span>{{ chart.low }}%</span>
     </div>
-    <div class="sports-opinion-chart-times"><span>{{ chart.first_label }}</span><span>{{ chart.last_label if chart.count > 1 else 'First saved reading' }}</span></div>
-    <p>{{ chart.team }} model gap: {{ '%+.1f'|format(chart.gap_first) }} pp first saved → {{ '%+.1f'|format(chart.gap_last) }} pp latest pregame</p>
+    <div class="prediction-times"><span>{{ chart.first }}</span><span>{{ chart.last if chart.count > 1 else 'First saved reading' }}</span></div>
+    <p class="prediction-caption">Each line follows {{ selected.label }} under these settlement terms. Gaps mark pauses in saved readings.</p>
   </section>
   {% endif %}
-  {% if forecast.factors %}
-  <details class="sports-opinion-breakdown">
-    <summary>How the model reached {{ forecast.team }} {{ forecast.percent }}%</summary>
-    <div class="sports-opinion-steps">
-      <p>{{ forecast.team }} starting point <strong>50.0%</strong></p>
-      <ol>
-        {% for factor in forecast.factors if factor.value|abs >= 0.000001 %}
-        <li><span>{{ factor.label }}</span><span class="sports-opinion-track" aria-hidden="true"><i class="sports-opinion-bar sports-opinion-bar-{{ factor.key }}{% if factor.negative %} is-negative{% endif %}" style="left:{{ factor.bar_start }}%;width:{{ factor.bar_width }}%"></i></span><strong>{{ '%+.1f'|format(factor.value) }} pp</strong></li>
-        {% endfor %}
-      </ol>
-      <p>{{ forecast.team }} saved forecast <strong>{{ forecast.percent }}%</strong></p>
-    </div>
-    <div class="sports-opinion-context">
-      {% for team in matchup.teams %}
-        {% set record = forecast.records[team.side] %}
-        {% if record %}<span>{{ team.label }} season record {{ record.wins }}–{{ record.losses }}</span>{% endif %}
-      {% endfor %}
-      {% if forecast.source_url %}<a href="{{ forecast.source_url }}" target="_blank" rel="noopener noreferrer">Game source ↗</a>{% endif %}
-    </div>
+  {% if selected.venues %}
+  <div class="prediction-venue-table" role="region" aria-label="Market prices for {{ selected.label }}"><table><thead><tr><th>Source</th><th>{{ selected.label }}</th><th>RATi gap</th><th>Price checked</th></tr></thead><tbody>
+    {% for venue in selected.venues %}<tr><th scope="row">{% if venue.url %}<a href="{{ venue.url }}" target="_blank" rel="noopener noreferrer">{{ venue.label }} ↗</a>{% else %}{{ venue.label }}{% endif %}<small>{{ venue.basis }}{% if venue.spread_pct is not none and venue.spread_pct is defined %} · {{ venue.spread_pct }} pp spread{% endif %}</small></th><td>{{ venue.percent }}%</td><td>{{ '%+.1f'|format(venue.gap) ~ ' pp' if venue.gap is not none else venue.status }}</td><td>{{ venue.saved_label }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% endif %}
+  <details class="prediction-method"><summary>Model, data, and settlement</summary><p>{{ contract.method }}</p><p>{{ contract.rules }}</p><p>Model version: {{ contract.model_version }}. Gaps compare saved values before fees. A positive gap means RATi values this outcome more highly than the quoted market.</p>{% if screen.market_source %}<p>Source: {{ screen.market_source }}</p>{% endif %}
+    {% if screen.item.matchup is defined and screen.item.matchup.forecast and screen.item.matchup.forecast.factors %}<dl class="prediction-factors">{% for factor in screen.item.matchup.forecast.factors %}<div><dt>{{ factor.label }} · {{ screen.item.matchup.forecast.team }}</dt><dd>{{ '%+.1f'|format(factor.value) }} pp</dd></div>{% endfor %}</dl>{% endif %}
+    {% for venue in selected.venues if venue.rules %}<p><strong>{{ venue.label }} settlement</strong> {{ venue.rules }}</p>{% endfor %}
+    {% if contract.record and contract.record.paired_games %}<p class="prediction-record"><strong>{{ contract.record.paired_games }} settled games with both forecasts</strong><br>Probability error (Brier): RATi {{ contract.record.paired_model_brier }} · saved sportsbook {{ contract.record.paired_market_brier }}. Lower is better. Each game counts once, using its last saved pregame forecast.</p>{% endif %}
   </details>
-  {% else %}<p class="sports-opinion-legacy">Factor details appear with new model snapshots.</p>{% endif %}
-  {% if assessment.risks %}<details class="sports-opinion-risks"><summary>What to watch</summary><ul>{% for risk in assessment.risks %}<li>{{ risk }}</li>{% endfor %}</ul></details>{% endif %}
+  {% if selected.percent is none %}<p class="prediction-caption">{{ ticker.pending }}</p>{% endif %}
+  {% else %}<p>{{ ticker.pending }}</p>{% endif %}
 </section>
-{% endif %}

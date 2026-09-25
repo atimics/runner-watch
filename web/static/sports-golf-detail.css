@@ -61,3 +61,13 @@
   .golf-match-number, .golf-match-teams, .golf-match-session li strong,
   .golf-match-session li small { grid-column: 1; }
 }
+.golf-detail-head { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+.golf-detail-head > div:first-child { min-width:0; }
+.golf-detail-head > div > p:last-child { color:var(--muted); font-size:12px; }
+.golf-current-score { display:flex; flex-direction:column; align-items:flex-end; gap:5px; text-align:right; flex:none; }
+.golf-current-score strong { font-size:32px; line-height:1.2; white-space:nowrap; }
+.golf-current-score small { max-width:140px; color:var(--muted); font-size:10px; }
+@media (max-width:600px) {
+  .golf-detail-head { gap:12px; }.golf-detail-head h1 { font-size:26px; }
+  .golf-current-score strong { font-size:25px; }.golf-current-score small { max-width:92px; }
+}

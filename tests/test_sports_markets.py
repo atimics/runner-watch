@@ -210,8 +210,19 @@ def test_game_detail_labels_each_venue_and_model_gap(tmp_path, monkeypatch):
     game_detail = sports_event(event["id"])
     assert game_detail is not None
     screen = detail("sports", game_detail)
-    assert {row["source"] for row in screen["prediction_markets"]} == {
-        "Kalshi", "Polymarket"
-    }
+    assert {row["source"] for row in screen["prediction_markets"]} == {"Kalshi", "Polymarket"}
     assert {row["chance"] for row in screen["prediction_markets"]} == {30.0, 40.0}
     assert all(row["gap_pp"] is not None for row in screen["prediction_markets"])
+
+
+def test_polymarket_quote_quality_keeps_wide_prices_out_of_gap_signals():
+    raw = polymarket_event()
+    raw["markets"][0]["spread"] = 0.98
+    quote = sports_markets.normalize_polymarket([game()], [raw], AT)[0]
+    assert quote["quality"] == "wide spread"
+    raw["markets"][0]["spread"] = 0.02
+    quote = sports_markets.normalize_polymarket([game()], [raw], AT)[0]
+    assert quote["quality"] == "quoted"
+    del raw["markets"][0]["spread"]
+    quote = sports_markets.normalize_polymarket([game()], [raw], AT)[0]
+    assert quote["quality"] == "spread pending"

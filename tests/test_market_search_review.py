@@ -120,18 +120,14 @@ def test_sports_forecast_names_the_favorite_and_tag_names_the_value_side(
 ):
     response = main._simple_board(request(""), None, "sports", [game(side)], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    assert html.select_one(".sports-chance-ring")["aria-label"] == (
-        "Pregame model: Boston Celtics 63% win chance."
-    )
+    assert html.select_one(".prediction-glyph")["aria-label"] == ("BOS: RATi 63.0%")
     assert html.select_one(".tag")["title"] == f"{abbreviation} · lean signal"
 
 
 def test_selected_team_falls_back_to_full_name(board_context):
     response = main._simple_board(request(""), None, "sports", [game(home_abbreviation="")], "list")
     html = BeautifulSoup(response.body, "html.parser")
-    assert html.select_one(".sports-chance-ring")["aria-label"] == (
-        "Pregame model: Boston Celtics 63% win chance."
-    )
+    assert html.select_one(".prediction-glyph")["aria-label"] == ("Boston Celtics: RATi 63.0%")
     assert [team.get_text() for team in html.select(".sports-team")] == ["LAL", "Boston Celtics"]
 
 
