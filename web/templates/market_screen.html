@@ -124,7 +124,7 @@
       </p>
       {% endif %}
       {% if screen.market == 'sports' and screen.item.matchup is defined %}{% include '_sports_opinion.html' %}{% endif %}
-      {% if screen.market in ['sports', 'memecoins'] %}{% include "_market_assessment.html" %}{% endif %}
+      {% if screen.market == 'memecoins' or (screen.market == 'sports' and (screen.item.matchup is not defined or not screen.item.matchup.forecast)) %}{% include "_market_assessment.html" %}{% endif %}
       <section class="visual" aria-label="{{ 'Game' if screen.teams else 'Price history' }}">
       {% if screen.teams %}<div class="teams">{% for team in screen.teams %}<div><span class="team-mark">{{ team.mark }}</span><h2>{% if team.href %}<a href="{{ team.href }}">{{ team.name }}</a>{% else %}{{ team.name }}{% endif %}</h2><strong>{{ team.score }}</strong></div>{% endfor %}</div><p class="visual-caption" data-game-note>{{ screen.note }}</p>
       {% else %}<svg class="price-chart" viewBox="0 0 800 280" role="img" aria-label="Price history" hidden><path class="chart-area"/><path class="chart-line"/><circle class="chart-point" r="4" hidden/></svg><p class="chart-status" data-chart-status>Price history is loading.</p><div class="chart-state-legend" data-chart-state-legend aria-label="Status legend" hidden></div>{% endif %}

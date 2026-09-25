@@ -1158,7 +1158,7 @@ def test_bovada_odds_show_feed_attribution_and_freeze_on_paper_pick(sports_db) -
     assert b"market-screen.css" in response.body
     assert b'aria-label="Market"' in response.body
     assert b"source_error" not in response.body
-    assert b"The Odds API" not in response.body
+    assert b"Source: Bovada via The Odds API" in response.body
 
 
 def test_sports_host_gets_the_sports_product(sports_db, monkeypatch) -> None:
@@ -1307,6 +1307,7 @@ def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
     assert history["side"] == "home"
     assert history["team"] == "HOM"
     assert [point["edge_pct"] for point in history["points"]] == [5.4, 2.2]
+    assert all("model_pct" in point and "market_pct" in point for point in history["points"])
     assert history["change_pct"] == -3.2
     assert len(history["plot_points"].split()) == 2
     assert "fell 3.2 points" in history["label"]

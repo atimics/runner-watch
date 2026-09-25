@@ -33,9 +33,16 @@ calls retain the outer ring and identify their factor breakdown as pending.
 An even model gives each team a 50% chance. A pending model uses a dashed
 outline with an accessible **Pregame model pending** label.
 
-The game page shows the saved starting point, signed adjustments, input records,
-model version, and a market comparison. The list and game page select the same
-last pregame model snapshot. Later feed updates remain in history.
+The game page shows both teams' model and saved no-vig market chances in one
+card. A team can be the model favorite while the other has the positive gap
+against market. The headline names that gap, and the forecast glyph sits with
+the team whose factors it depicts. The chart traces the selected team's model
+and market chances across saved pregame readings. Its labels name both lines,
+the team, the time range, and the first and latest gap. The page refreshes this
+card with each game-detail poll and keeps an open factor panel open. The factor
+panel contains the saved starting point, signed adjustments, input records, and
+model version. The list and game page select the same last pregame model
+snapshot. Later feed updates remain in history.
 
 The green team highlight follows the scoreboard during play. The blue forecast
 ring follows the saved pregame estimate. This lets a reader see when a forecast

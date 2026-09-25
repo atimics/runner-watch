@@ -140,6 +140,7 @@ def test_saved_sports_factors_appear_in_row_glyph_and_game_detail(page: Page, wi
             "away_probability": 0.566807,
             "home_market_probability": 0.489166,
             "away_market_probability": 0.510834,
+            "edge": 0.055973,
             "selection": "away",
             "signal": "watch",
             "factors": {
@@ -163,11 +164,139 @@ def test_saved_sports_factors_appear_in_row_glyph_and_game_detail(page: Page, wi
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
     open_screen(page, detail("sports", event))
-    expect(page.get_by_role("region", name="Saved pregame opinion")).to_be_visible()
+    opinion = page.get_by_role("region", name="Pregame model and market")
+    expect(opinion.locator(".sports-opinion-side")).to_have_count(2)
+    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("ARI")
+    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("56.7%")
+    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("51.1%")
+    expect(opinion.locator(".sports-opinion-side").last).to_contain_text("COL")
+    expect(opinion.locator(".sports-opinion-side").last).to_contain_text("43.3%")
+    opinion.locator(".sports-opinion-breakdown summary").click()
     expect(page.locator(".sports-opinion-steps li")).to_have_count(2)
     expect(page.get_by_text("ARI season record 90–60")).to_be_visible()
-    expect(page.get_by_text("Market chance 51.1% · gap +5.6 pp")).to_be_visible()
+    expect(page.get_by_text("ARI above market by 5.6 pp")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 1280])
+def test_sports_detail_keeps_favorite_and_market_value_side_clear(page: Page, width):
+    event = fixtures.sample("sports")
+    event.update(
+        league="nfl",
+        away_abbreviation="ATL",
+        away_team_name="Atlanta Falcons",
+        home_abbreviation="GB",
+        home_team_name="Green Bay Packers",
+        away_score=7,
+        home_score=7,
+        prediction={
+            "home_probability": 0.5914,
+            "away_probability": 0.4086,
+            "home_market_probability": 0.6846,
+            "away_market_probability": 0.3154,
+            "selection": "away",
+            "signal": "watch",
+            "edge": 0.0932,
+        },
+        edge_history={
+            "side": "away",
+            "team": "ATL",
+            "points": [
+                {
+                    "observed_at": "2026-09-24T21:00:00Z",
+                    "model_pct": 39.8,
+                    "market_pct": 34.0,
+                    "edge_pct": 5.8,
+                },
+                {
+                    "observed_at": "2026-09-24T22:48:00Z",
+                    "model_pct": 40.9,
+                    "market_pct": 31.5,
+                    "edge_pct": 9.3,
+                },
+            ],
+        },
+    )
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, detail("sports", event))
+
+    opinion = page.get_by_role("region", name="Pregame model and market")
+    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("ATL")
+    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("40.9%")
+    expect(opinion.locator(".sports-opinion-side").first).to_contain_text("31.5%")
+    expect(opinion.locator(".sports-opinion-side.is-value")).to_contain_text("+9.3 pp above market")
+    expect(opinion.locator(".sports-opinion-side.is-favorite")).to_contain_text("GB")
+    expect(opinion.locator(".sports-opinion-side.is-favorite")).to_contain_text("59.1%")
+    expect(opinion.locator(".sports-opinion-side.is-favorite")).to_contain_text("68.5%")
+    expect(opinion.locator(".sports-opinion-side.is-favorite")).to_contain_text(
+        "-9.3 pp below market"
+    )
+    expect(
+        opinion.locator(".sports-opinion-side.is-favorite .sports-opinion-result svg")
+    ).to_be_visible()
+    chart = opinion.get_by_role("region", name="ATL pregame chance history")
+    expect(chart.get_by_role("img")).to_be_visible()
+    expect(chart.locator("polyline")).to_have_count(2)
+    expect(chart).to_contain_text("+5.8 pp first saved → +9.3 pp latest pregame")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_sports_detail_poll_refreshes_saved_chances_and_chart(page: Page):
+    page.clock.install()
+    event = fixtures.sample("sports")
+    event["prediction"] = {
+        "away_probability": 0.6,
+        "home_probability": 0.4,
+        "away_market_probability": 0.55,
+        "home_market_probability": 0.45,
+        "selection": "away",
+        "signal": "watch",
+        "edge": 0.05,
+    }
+    event["edge_history"] = {
+        "side": "away",
+        "team": "BOS",
+        "points": [
+            {
+                "observed_at": "2026-09-24T21:00:00Z",
+                "model_pct": 60,
+                "market_pct": 55,
+                "edge_pct": 5,
+            }
+        ],
+    }
+    open_screen(page, detail("sports", event))
+    expect(page.locator(".sports-opinion-chart")).to_contain_text("1 saved pregame reading")
+    updated = {
+        **event,
+        "prediction": {
+            **event["prediction"],
+            "away_market_probability": 0.52,
+            "home_market_probability": 0.48,
+            "edge": 0.08,
+        },
+    }
+    updated["edge_history"] = {
+        **event["edge_history"],
+        "points": [
+            *event["edge_history"]["points"],
+            {
+                "observed_at": "2026-09-24T22:00:00Z",
+                "model_pct": 60,
+                "market_pct": 52,
+                "edge_pct": 8,
+            },
+        ],
+    }
+    next_screen = detail("sports", updated)
+    next_screen["opinion_html"] = fixtures.web.templates.env.get_template(
+        "_sports_opinion.html"
+    ).render(screen=next_screen)
+    page.route("**/api/screens/sports/**/detail", lambda route: route.fulfill(json=next_screen))
+    page.clock.fast_forward(60000)
+    expect(page.locator(".sports-opinion-chart")).to_contain_text("2 saved pregame readings")
+    expect(page.locator(".sports-opinion-side.is-value")).to_contain_text("52.0%")
+    expect(page.locator(".sports-opinion-side.is-value")).to_contain_text("+8.0 pp above market")
 
 
 def test_narrow_stock_rows_are_single_line(page: Page):

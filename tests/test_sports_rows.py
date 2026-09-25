@@ -33,6 +33,7 @@ def test_pregame_names_favorite_in_forecast_while_teams_keep_equal_weight():
     assert result["matchup"]["emphasis"] is None
     assert result["matchup"]["emphasis_label"] == ""
     assert result["matchup"]["forecast"]["label"] == "ARI 56%"
+    assert [team["model_percent"] for team in result["matchup"]["teams"]] == [56, 44]
     assert result["value"] == "vs"
 
 

@@ -130,6 +130,10 @@ def test_sports_probability_is_separate_from_score_and_event_status():
     assert listed["tag"] == "LEAN"
     assert listed["assessment"]["value"] == 60
     assert listed["assessment"]["unit"] == "%"
+    assert listed["assessment"]["selected_team_label"] == "Home"
+    assert listed["assessment"]["selected_model_percent"] == 60
+    assert listed["assessment"]["selected_market_percent"] == 57
+    assert listed["assessment"]["edge_pp"] == 3
     assert listed["assessment"]["contributions"] == []
     assert listed["assessment"]["drivers"][2]["value"] == 3
     assert listed["assessment"]["drivers"][2]["unit"] == "pp"
