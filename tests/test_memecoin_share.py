@@ -5,6 +5,7 @@ import io
 from PIL import Image
 
 from runner_web import main as web_main
+from runner_web import share_cards
 
 CA = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr"
 DETAIL = {
@@ -29,7 +30,7 @@ DETAIL = {
 
 
 def test_a_shared_coin_unfurls_under_its_address_not_its_claimed_name():
-    share = web_main.memecoin_share(DETAIL, "chain-abc")
+    share = share_cards.memecoin_share(DETAIL, "chain-abc")
 
     assert share["title"].startswith("7GCihg")
     assert "+42.5% 24h" in share["title"]
@@ -39,7 +40,7 @@ def test_a_shared_coin_unfurls_under_its_address_not_its_claimed_name():
 
 
 def test_the_coin_card_is_a_share_sized_png():
-    image = Image.open(io.BytesIO(web_main._memecoin_card_png(DETAIL)))
+    image = Image.open(io.BytesIO(share_cards._memecoin_card_png(DETAIL)))
 
     assert image.size == (1200, 630)
 
@@ -60,7 +61,7 @@ def test_the_coin_card_route_serves_a_png(monkeypatch):
 def test_an_unreported_amount_is_left_off_the_share():
     detail = {**DETAIL, "coin": {**DETAIL["coin"], "market_cap_label": "—"}}
 
-    share = web_main.memecoin_share(detail, "chain-abc")
+    share = share_cards.memecoin_share(detail, "chain-abc")
 
     assert "Market cap" not in share["summary"]
     assert "Volume $1.2M" in share["summary"]
