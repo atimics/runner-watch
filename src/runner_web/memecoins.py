@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import re
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -23,6 +26,7 @@ from runner_web.memecoin_integrity import creator_trades
 from runner_web.memecoin_model import assess_memecoin, display_assessment
 from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
 
+LOG = logging.getLogger(__name__)
 POOL_QUOTES_URL = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/"
 SOURCE = "GeckoTerminal"
 MIN_POOL_LIQUIDITY_USD = 1000
@@ -32,6 +36,16 @@ MIN_CALL_LIQUIDITY_USD = 5000
 COLLAPSE_CHANGE_PCT = -90.0
 REFRESH_SECONDS = 300
 STALE_SECONDS = 900
+# Bonding curves quoted each cycle: those that traded last cycle keep their
+# place, and the newest launches fill the rest.
+CURVE_SLOTS = 90
+POOL_SLOTS = 100
+# Graduated pools and bonding curves are quoted in one pass.
+MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS
+# GeckoTerminal answers a burst of batch requests with 429, so space them out.
+QUOTE_PAUSE_SECONDS = 2.0
+ACTIVE_CURVE_SLOTS = 60
+CURVE_HOURS = 24
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 Download = Callable[[str, float], bytes]
 
@@ -133,8 +147,8 @@ def normalize_chain_pools(payload: Any, *, at: datetime) -> list[dict[str, Any]]
     """Discover from pool records. Token identity and selection use chain fields only."""
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         raise ValueError("Expected DEX pool records")
-    if len(payload["data"]) > 100:
-        raise ValueError("Expected up to 100 pool records")
+    if len(payload["data"]) > MAX_QUOTED_POOLS:
+        raise ValueError(f"Expected up to {MAX_QUOTED_POOLS} pool records")
     rows: dict[str, dict[str, Any]] = {}
     for pool in payload["data"]:
         try:
@@ -244,6 +258,34 @@ def _save_state(key: str, value: Any, at: datetime) -> None:
         )
 
 
+def _curve_watch(
+    launches: list[dict[str, Any]],
+    active: list[dict[str, Any]],
+    graduated: set[str],
+    at: datetime,
+) -> list[dict[str, Any]]:
+    """Which launches' bonding curves to quote this cycle."""
+
+    def open_curve(curve: dict[str, Any]) -> bool:
+        created = _time(curve.get("created_at"))
+        return (
+            created is not None
+            and 0 <= (at - created).total_seconds() <= CURVE_HOURS * 3600
+            and curve.get("token_address") not in graduated
+        )
+
+    chosen: dict[str, dict[str, Any]] = {}
+    for curve in active:
+        if len(chosen) < ACTIVE_CURVE_SLOTS and open_curve(curve):
+            chosen.setdefault(curve["pool_address"], curve)
+    for curve in sorted(launches, key=lambda item: item["created_at"], reverse=True):
+        if len(chosen) >= CURVE_SLOTS:
+            break
+        if open_curve(curve):
+            chosen.setdefault(curve["pool_address"], curve)
+    return list(chosen.values())
+
+
 def _collect_helius(
     *, download: Download, at: datetime, rpc: Rpc | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -261,7 +303,9 @@ def _collect_helius(
         created = _time(candidate.get("created_at"))
         if created and 0 <= (at - created).total_seconds() <= 30 * 86400:
             candidates.setdefault(candidate["pool_address"], candidate)
-    selected = sorted(candidates.values(), key=lambda item: item["created_at"], reverse=True)[:100]
+    selected = sorted(candidates.values(), key=lambda item: item["created_at"], reverse=True)[
+        :POOL_SLOTS
+    ]
     # Keep chain discoveries while USD quotes become available in the pool index.
     _save_state("helius_discovered_pools", selected, at)
     analytics = analyze_events(discovery.get("events", []))
@@ -293,14 +337,38 @@ def _collect_helius(
         "mode": "resumable",
     }
     _save_state("memecoin_integrity_coverage", coverage, at)
-    allowed = {item["pool_address"]: item for item in selected}
+    with connection() as database:
+        saved_curves = database.execute(
+            "SELECT value FROM worker_state WHERE key='memecoin_curve_watch'"
+        ).fetchone()
+    try:
+        active_curves = json.loads(saved_curves["value"]) if saved_curves else []
+    except (ValueError, TypeError):
+        active_curves = []
+    curves = _curve_watch(
+        discovery.get("curves", []),
+        active_curves,
+        {item["token_address"] for item in selected},
+        at,
+    )
+    allowed = {item["pool_address"]: item for item in selected + curves}
     payload = []
-    addresses = list(allowed)
+    curve_addresses = {item["pool_address"] for item in curves}
+    # Graduated pools first: the curves are extra and may be cut short.
+    addresses = [address for address in allowed if address not in curve_addresses]
+    addresses += [address for address in allowed if address in curve_addresses]
     for offset in range(0, len(addresses), 30):
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(
-            addresses[offset : offset + 30]
-        )
-        body = download(url, 10.0)
+        chunk = addresses[offset : offset + 30]
+        if offset:
+            time.sleep(QUOTE_PAUSE_SECONDS)
+        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(chunk)
+        try:
+            body = download(url, 10.0)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and curve_addresses.issuperset(chunk):
+                LOG.warning("Pool quotes rate limited; skipped %d curves", len(addresses) - offset)
+                break
+            raise
         if len(body) > MAX_RESPONSE_BYTES:
             raise ValueError("Pool quote response exceeds the size limit")
         batch = json.loads(body)
@@ -329,6 +397,7 @@ def _collect_helius(
     for row in rows:
         row["discovery"] = allowed[row["pool_address"]]
         row["discovery_source"] = "Helius"
+        row["venue"] = row["discovery"].get("venue", "pool")
         launch = claims.get(row["token_address"]) or {}
         row["claimed_symbol"] = launch.get("claimed_symbol") or None
         row["claimed_name"] = launch.get("claimed_name") or None
@@ -342,14 +411,21 @@ def _collect_helius(
             )
         )
         row["early"] = early_signal(row)
+    # A curve that traded keeps its slot next cycle, busiest first.
+    traded = sorted(
+        (row for row in rows if row["venue"] == "bonding_curve"),
+        key=lambda row: -(row.get("volume_h1") or 0),
+    )
+    _save_state("memecoin_curve_watch", [row["discovery"] for row in traded], at)
     metadata = {
         key: value
         for key, value in discovery.items()
-        if key not in {"pools", "transactions", "events"}
+        if key not in {"pools", "curves", "transactions", "events"}
     }
     metadata.update(
         discovered_pools=len(discovery["pools"]),
         tracked_pools=len(selected),
+        tracked_curves=len(curves),
         quoted_pools=len(rows),
         selection="helius_pumpswap_create_pool",
     )
@@ -375,6 +451,7 @@ def refresh_memecoins(
     try:
         rows, metadata = _collect_helius(download=download or _download, at=started, rpc=rpc)
     except Exception as exc:
+        LOG.exception("Memecoin refresh failed")
         run_id = record_source_fetch(
             SourceFetch.failure(
                 source="helius",
@@ -434,6 +511,12 @@ def pool_state(coin: dict[str, Any]) -> dict[str, Any] | None:
     left = f"{_amount_label(liquidity)} left in the pool"
     if change is not None and change <= COLLAPSE_CHANGE_PCT:
         text = f"Collapsed: down {abs(change):.2f}% in 24h" + (f", {left}." if thin else ".")
+    elif thin and coin.get("venue") == "bonding_curve":
+        # Nothing was drained: a curve starts small and fills as people buy.
+        text = (
+            f"Early bonding curve: {_amount_label(liquidity)} in the curve. "
+            "One trade can move the price a long way."
+        )
     elif thin:
         text = f"Thin pool: {left}. One trade can move the price a long way."
     else:

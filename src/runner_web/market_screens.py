@@ -870,7 +870,15 @@ def _pool_facts(coin: dict[str, Any]) -> list[dict[str, str]]:
         at = at if at.tzinfo else at.replace(tzinfo=UTC)
         days = max(0, (datetime.now(UTC) - at).days)
         age = "today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
-        facts.append({"label": "Pool opened", "value": f"{at:%b} {at.day} · {age}"})
+        on_curve = coin.get("venue") == "bonding_curve"
+        facts.append(
+            {
+                "label": "Launched" if on_curve else "Pool opened",
+                "value": f"{at:%b} {at.day} · {age}",
+            }
+        )
+        if on_curve:
+            facts.append({"label": "Stage", "value": "Bonding curve · not yet graduated"})
     # The tag beside the price names the state; this says what it was read from.
     reasons = (coin.get("early") or {}).get("reasons") or []
     if reasons and not coin.get("stale"):

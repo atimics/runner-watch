@@ -23,6 +23,8 @@ INITIALIZE_PERMISSION = bytes([63, 55, 254, 65, 49, 178, 89, 121])
 BUY = bytes([102, 6, 61, 18, 1, 218, 235, 234])
 BUY_QUOTE = bytes([198, 46, 21, 82, 180, 217, 232, 112])
 SELL = bytes([51, 230, 133, 164, 1, 127, 131, 173])
+# Pump shares Anchor's buy and sell discriminators with PumpSwap.
+PUMP_BUY_EXACT_SOL_IN = bytes([56, 252, 116, 8, 158, 223, 205, 95])
 WITHDRAW = bytes([183, 18, 70, 156, 148, 109, 161, 34])
 SWAP_IN = bytes([143, 190, 90, 218, 196, 30, 51, 222])
 SWAP_OUT = bytes([55, 217, 98, 86, 163, 74, 180, 173])
@@ -271,6 +273,19 @@ def parse_events(entry: dict[str, Any]) -> list[dict[str, Any]]:
                             "bonding_curve": _address(accounts[2]),
                             "claimed_name": claim_text(claims[0], 64),
                             "claimed_symbol": claim_text(claims[1], 16),
+                        }
+                    )
+                elif program == PUMP and discriminator in (BUY, PUMP_BUY_EXACT_SOL_IN, SELL):
+                    # A trade on the launch's bonding curve, before it graduates to a pool.
+                    # Official Pump IDL: 2 mint, 3 bonding curve, 6 user.
+                    fields.append(
+                        {
+                            "kind": "swap",
+                            "pool_address": _address(accounts[3]),
+                            "wallet": _address(accounts[6]),
+                            "token_address": _address(accounts[2]),
+                            "direction": "sell" if discriminator == SELL else "buy",
+                            "venue": "bonding_curve",
                         }
                     )
                 elif program == RAYDIUM and discriminator in (INITIALIZE, INITIALIZE_PERMISSION):
