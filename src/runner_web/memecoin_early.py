@@ -18,6 +18,7 @@ its features so they can be tested against what the coin did next.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any
 
 VERSION = "memecoin-early-v2"
@@ -67,13 +68,36 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _pace(recent: float | None, earlier: float | None, periods: float) -> float | None:
-    """How many times faster the latest period ran than the earlier periods' average."""
+def _pace(
+    recent: float | None,
+    earlier: float | None,
+    periods: float,
+    *,
+    age_periods: float | None,
+    min_earlier: float,
+) -> float | None:
+    """How many times faster the latest period ran than the earlier periods' average.
+
+    Only periods the pool existed for count: a pool seven minutes old has no
+    "rest of the hour", and dividing by it gave paces like 98,877×.
+    """
 
     if recent is None or earlier is None or recent <= 0:
         return None
-    before = max(earlier - recent, 0.0) / (periods - 1)
+    before_periods = periods - 1 if age_periods is None else min(periods, age_periods) - 1
+    if before_periods < min_earlier:
+        return None
+    before = max(earlier - recent, 0.0) / before_periods
     return recent / before if before > 0 else None
+
+
+def _age_seconds(row: dict[str, Any]) -> float | None:
+    try:
+        created = datetime.fromisoformat(str(row["pool_created_at"]).replace("Z", "+00:00"))
+        now = datetime.fromisoformat(str(row["observed_at"]).replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return max((now - created).total_seconds(), 0.0)
 
 
 def _points(pace: float | None, cap: float) -> float:
@@ -128,12 +152,15 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
     if not active and not copies:
         return {**result, "state": "quiet", "reasons": []}
     # Too little trading to read a pace; copies alone can still point here.
+    age = _age_seconds(row)
+    hours = age / 3600 if age is not None else None
+    fives = age / 300 if age is not None else None
     volume_pace, volume_window = (
         (None, "6h")
         if not active
         else _faster(
-            _pace(volume_h1, features["volume_h6"], 6),
-            _pace(features["volume_m5"], volume_h1, 12)
+            _pace(volume_h1, features["volume_h6"], 6, age_periods=hours, min_earlier=1),
+            _pace(features["volume_m5"], volume_h1, 12, age_periods=fives, min_earlier=2)
             if (features["volume_m5"] or 0) >= MIN_M5_VOLUME_USD
             else None,
         )
@@ -142,8 +169,8 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
         (None, "6h")
         if not active
         else _faster(
-            _pace(buyers_h1, features["buyers_h6"], 6),
-            _pace(features["buyers_m5"], buyers_h1, 12)
+            _pace(buyers_h1, features["buyers_h6"], 6, age_periods=hours, min_earlier=1),
+            _pace(features["buyers_m5"], buyers_h1, 12, age_periods=fives, min_earlier=2)
             if (features["buyers_m5"] or 0) >= MIN_M5_BUYERS
             else None,
         )
