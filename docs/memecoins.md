@@ -14,8 +14,15 @@ Failed requests retain their reservation as a conservative allowance. The cap
 survives restarts and applies across workers running this ingestion pipeline.
 Other applications using the same Helius account have their own usage.
 
-Each five-minute cycle reads two program pages and one wallet page, each with a
-limit of 100 full transactions. Under Helius's current documented metering, that
+Each five-minute cycle reads two pages and one wallet page, each with a
+limit of 100 full transactions. Every third cycle the second page reads the
+graduation stream instead of a program: the history of Pump's migration
+authority (`39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg`, the Global
+account's `withdraw_authority`), which takes part in every graduation to
+PumpSwap. About a thousand graduations a day fit in a page every 15 minutes,
+where sampling the programs caught about eleven. Graduated pools that traded
+last cycle keep up to 60 of the 100 pool slots, busiest first, so a runner is
+not pushed out by newer graduations. Under Helius's current documented metering, that
 uses at most 30 credits per cycle, or 8,640 credits per day. The program pages
 rotate across the three supported programs. Wallet pages rotate across observed
 creators and buyers. `MEMECOINS_ENABLED=false` pauses collection.

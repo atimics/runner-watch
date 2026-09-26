@@ -543,3 +543,64 @@ def test_a_failed_search_lookup_keeps_the_refresh(database, monkeypatch):
     )
 
     assert result["status"] == "ok"
+
+
+def test_graduations_are_read_every_third_run_within_the_same_pages(database):
+    from runner_web.memecoin_chain_ingestion import MIGRATION_AUTHORITY, collect_chain
+
+    runs = []
+    for number in range(3):
+        addresses = []
+
+        def rpc(body, addresses=addresses):
+            addresses.append(body["params"][0])
+            return reply([])
+
+        collect_chain(at=AT + timedelta(minutes=5 * number), rpc=rpc)
+        runs.append(addresses)
+
+    # Two pages and at most one wallet page each run, so the credit cost is unchanged.
+    assert all(len(addresses) <= 3 for addresses in runs)
+    assert [MIGRATION_AUTHORITY in addresses for addresses in runs] == [True, False, False]
+
+
+def test_a_graduation_creates_its_pool_from_the_migration(database):
+    from runner_web.memecoin_chain_ingestion import MIGRATION_AUTHORITY, collect_chain
+    from runner_web.memecoin_chain_parser import PUMP
+
+    graduation = creation()
+    message = graduation["transaction"]["message"]
+    pool_creation = message["instructions"][0]
+    # The pool is created inside Pump's migrate instruction, not at the top level.
+    message["instructions"] = [
+        {
+            "programId": PUMP,
+            "accounts": [OTHER, MIGRATION_AUTHORITY, MINT],
+            "data": helius._encode(bytes([155, 234, 231, 146, 236, 158, 162, 30])),
+        }
+    ]
+    graduation["meta"]["innerInstructions"] = [{"index": 0, "instructions": [pool_creation]}]
+
+    def rpc(body):
+        return reply([graduation] if body["params"][0] == MIGRATION_AUTHORITY else [])
+
+    pools = collect_chain(at=AT, rpc=rpc)["pools"]
+
+    assert [(pool["pool_address"], pool["token_address"]) for pool in pools] == [(POOL, MINT)]
+
+
+def test_a_pool_that_traded_keeps_its_slot_against_newer_graduations(database):
+    from runner_web.memecoins import POOL_SLOTS, _watch
+
+    def pool(number, minutes_ago):
+        created = (AT - timedelta(minutes=minutes_ago)).isoformat()
+        return {"pool_address": f"pool-{number}", "created_at": created}
+
+    runner = pool(0, 600)
+    newer = [pool(number, number) for number in range(1, POOL_SLOTS + 20)]
+
+    chosen = _watch(newer + [runner], [runner], slots=POOL_SLOTS, active_slots=60, is_open=bool)
+
+    assert len(chosen) == POOL_SLOTS
+    assert chosen[0] is runner
+    assert chosen[1]["pool_address"] == "pool-1"
