@@ -2249,8 +2249,9 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
                         "instruction": (
                             "Nobody asked you anything. Write one short desk note "
                             "about what changed in the world, under 60 words, plain "
-                            "text, no markdown, no advice, no list of commands. If "
-                            "nothing is worth saying, return an empty string."
+                            "text with a new line for each separate thought, no "
+                            "markdown, no advice, no list of commands. If nothing "
+                            "is worth saying, return an empty string."
                         ),
                         "world": world,
                     },
@@ -2270,7 +2271,7 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
     if first.get("finish_reason") == "length":
         # A cut note ends mid-word, often mid-address, and even a final "." may
         # be a decimal point. Keep only the sentences that were followed by more.
-        end = max(note.rfind(mark) for mark in (". ", "! ", "? "))
+        end = max(note.rfind(mark) for mark in (". ", "! ", "? ", ".\n", "!\n", "?\n"))
         note = note[: end + 1] if end >= 0 else ""
     return note
 

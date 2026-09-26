@@ -642,6 +642,24 @@ def test_a_reply_makes_addresses_copyable_and_links_the_coin_page():
     assert preview == "https://runners.test/memecoins/coin/chain-abc"
 
 
+def test_an_address_gets_its_own_line():
+    body, _ = chat.format_reply(
+        f"New launch {CA}, up 40% on thin volume. Hiss.",
+        origin="https://runners.test",
+        coins={},
+        tickers=set(),
+    )
+
+    assert body == f"New launch\n<code>{CA}</code>,\nup 40% on thin volume. Hiss."
+
+
+def test_an_address_already_on_its_own_line_is_left_alone():
+    text = f"Watching this one:\n{CA}\nno flags yet"
+    body, _ = chat.format_reply(text, origin="https://runners.test", coins={}, tickers=set())
+
+    assert body == f"Watching this one:\n<code>{CA}</code>\nno flags yet"
+
+
 def test_a_reply_links_stocks_with_pages_and_unfurls_the_first():
     body, preview = chat.format_reply(
         "MSGM and $msgm, not CEO", origin="https://runners.test", coins={}, tickers={"MSGM"}

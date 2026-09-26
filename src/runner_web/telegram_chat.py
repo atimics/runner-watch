@@ -120,6 +120,7 @@ def resolve_tickers(database: Any, text: str, *, limit: int | None = None) -> li
 ADDRESS_PATTERN = re.compile(
     r"(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])"
 )
+ADDRESS_TAIL_PATTERN = re.compile(r"[,.;:!?)]*[ \t]*")
 REPLY_TOKEN_PATTERN = re.compile(ADDRESS_PATTERN.pattern + r"|\$[A-Za-z]{1,6}\b|\b[A-Z]{3,6}\b")
 
 
@@ -149,7 +150,8 @@ def format_reply(
 ) -> tuple[str, str]:
     """Dash's plain words as Telegram HTML, and the page to unfurl under them.
 
-    A contract address becomes monospace so one tap copies it. A stock symbol
+    A contract address becomes monospace so one tap copies it, and stands on a
+    line of its own so it does not bury the words around it. A stock symbol
     links to its page. The first coin the reply names, or failing that the first
     stock, unfurls as the page's share card. Everything else is escaped as text.
     """
@@ -160,12 +162,23 @@ def format_reply(
     cursor = 0
     for match in REPLY_TOKEN_PATTERN.finditer(text):
         token = match.group(0)
-        if token in coins:
-            rendered = f"<code>{token}</code>"
-            pages.append(("coin", f"{base}/memecoins/coin/{coins[token]}"))
-        elif ADDRESS_PATTERN.fullmatch(token):
-            rendered = f"<code>{token}</code>"
-        elif token.lstrip("$").upper() in tickers and (token.startswith("$") or token.isupper()):
+        if ADDRESS_PATTERN.fullmatch(token):
+            # The address gets a line of its own, keeping the punctuation that
+            # ends its sentence.
+            before = text[cursor : match.start()].rstrip(" \t")
+            if before and not before.endswith("\n"):
+                before += "\n"
+            tail = ADDRESS_TAIL_PATTERN.match(text, match.end())
+            rendered = f"<code>{token}</code>" + html.escape(tail.group(0).rstrip())
+            if tail.end() < len(text) and text[tail.end()] != "\n":
+                rendered += "\n"
+            if token in coins:
+                pages.append(("coin", f"{base}/memecoins/coin/{coins[token]}"))
+            parts.append(html.escape(before))
+            parts.append(rendered)
+            cursor = tail.end()
+            continue
+        if token.lstrip("$").upper() in tickers and (token.startswith("$") or token.isupper()):
             symbol = token.lstrip("$").upper()
             url = f"{base}/stock/{symbol}"
             rendered = f'<a href="{url}">{html.escape(token)}</a>'
@@ -423,6 +436,8 @@ CHEETAH_PERSONA = (
     "If you do speak, say something: an ellipsis or a bare acknowledgement reads "
     "as being ignored, so either answer the person or hold and say nothing. "
     "Write plain text: no asterisks, no markdown, no bullet lists, no URLs. "
+    "Start a new line for each separate thought, so a phone screen reads it in "
+    "short lines rather than one block. "
     "Name a coin by its full contract address and a stock as $SYMBOL; the room "
     "turns those into copyable addresses, page links and a preview card for you. "
     "Keep it under about forty words unless someone asked for detail."
