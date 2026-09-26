@@ -45,6 +45,9 @@ kill_timeout = 30
   REQUIRE_EDGE_PROXY_SECRET = "1"
   REGISTRATION_MODE = "open"
   TELEGRAM_MEMECOIN_ALERTS = "1"
+  # Memecoin prices from their own pools through Helius; GeckoTerminal only for
+  # activity windows. gecko or shadow switch back (docs/memecoins.md).
+  MEMECOIN_PRICE_SOURCE = "chain"
 
   # The release command runs migrations before this image serves traffic, so a
   # rollback after a schema change must tolerate a database the newer release
