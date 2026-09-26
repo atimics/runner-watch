@@ -76,6 +76,28 @@ Each cycle one GeckoTerminal token lookup finds the busiest pool of every
 queued address, and those pools are quoted with the other extras. Such rows
 carry `discovery_source: "Searched by address"`.
 
+### Chain prices
+
+`MEMECOIN_PRICE_SOURCE` picks where board prices come from:
+
+- `gecko`: GeckoTerminal for every pool, as before.
+- `shadow` (default): GeckoTerminal prices the board, and each cycle also reads
+  prices from the chain and records how far they sit from GeckoTerminal's in
+  `/api/memecoins` → `price_check` (median and 90th-percentile gap).
+- `chain`: PumpSwap pools and Pump bonding curves are priced from their own
+  accounts through Helius (`src/runner_web/memecoin_chain_prices.py`), about
+  three `getMultipleAccounts` calls a cycle at one credit each. GeckoTerminal
+  then only prices pools the chain reader cannot and brings activity windows
+  (volume, buyers, sellers) for a 30-coin shortlist: half the pools with no
+  price yet, half the biggest movers since last cycle. Price changes it did not
+  window come from our saved history. If the chain read fails, the cycle
+  quotes everything from GeckoTerminal.
+
+Chain liquidity is twice the real quote side of the pool; it leaves out the
+virtual reserve a graduated pool carries over from its curve, so it reads lower
+than GeckoTerminal's for small pools. A bonding curve is shown once $100 has
+gone into it.
+
 Quote rows require positive price and volume, recorded trades and at least $1,000
 pool liquidity. Price and volume come from the same representative pool. Quote
 time records the indexer fetch; creation and trade receipts use Solana block time.
