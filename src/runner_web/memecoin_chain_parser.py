@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -37,21 +38,115 @@ def short_address(address: str) -> str:
     return address if len(address) <= 13 else address[:6] + "…" + address[-6:]
 
 
-def claim_text(raw: bytes, limit: int) -> str:
+_BASE58 = frozenset("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+# Letters that render as blank space: Hangul fillers and the Braille blank.
+_INVISIBLE = frozenset("\u115f\u1160\u3164\uffa0\u2800")
+# A pasted short form: base58 head, an ellipsis, base58 tail.
+_PASTED_ADDRESS = re.compile(
+    r"([1-9A-HJ-NP-Za-km-z]{3,})(?:\u2026|\.\.\.)([1-9A-HJ-NP-Za-km-z]{3,})"
+)
+
+
+def clean_claim(text: str, limit: int) -> str:
     """Creator-chosen launch text, reduced to plain visible characters.
 
-    Drops control, format (bidi overrides, zero-width) and unassigned code
-    points so the text cannot reorder or hide itself next to an address.
+    NFKC folds fullwidth and mathematical look-alike letters to plain ones.
+    Control, format (bidi overrides, zero-width) and unassigned code points
+    are dropped so the text cannot reorder or hide itself next to an
+    address, as are blank-rendering letters and stacked combining marks.
     """
 
     kept = []
-    for char in raw.decode("utf-8", errors="replace"):
+    marks = 0
+    for char in unicodedata.normalize("NFKC", text):
         category = unicodedata.category(char)
         if category.startswith("Z"):
             kept.append(" ")
-        elif not category.startswith("C") and char != "�":
+            marks = 0
+        elif category.startswith("C") or char in _INVISIBLE or char == "\ufffd":
+            continue
+        elif category in ("Mn", "Me"):
+            # One mark per letter covers real accents; more is a Zalgo stack.
+            if marks == 0:
+                kept.append(char)
+            marks += 1
+        else:
             kept.append(char)
+            marks = 0
     return " ".join("".join(kept).split())[:limit]
+
+
+def claim_text(raw: bytes, limit: int) -> str:
+    return clean_claim(raw.decode("utf-8", errors="replace"), limit)
+
+
+def looks_like_address(text: str) -> bool:
+    """Text that could pass for a contract address: a short form such as
+    `DezXAZ…pPB263`, or a base58 run as long as an address."""
+
+    if _PASTED_ADDRESS.search(text):
+        return True
+    run = 0
+    for char in text:
+        run = run + 1 if char in _BASE58 else 0
+        if run >= 32:
+            return True
+    return False
+
+
+def display_claim(coin: dict[str, Any]) -> str | None:
+    """The creator-set name to show beneath an address, or None. A claim
+    that looks like an address is never shown: it could impersonate the
+    coin it names."""
+
+    claimed = clean_claim(str(coin.get("claimed_symbol") or coin.get("claimed_name") or ""), 64)
+    if not claimed or looks_like_address(claimed):
+        return None
+    return claimed
+
+
+def coin_search_rank(query: str, coin: dict[str, Any]) -> int | None:
+    """How a search query matches a coin, best first, or None.
+
+    0: the exact address or coin id. 1: the shown short form, a pasted
+    head…tail, or an address prefix or suffix of at least four characters,
+    case-sensitive as Solana addresses are. 2: the creator-set name. A query
+    that looks like an address never falls back to names, so a coin cannot
+    win an address search by copying the address into its name.
+    """
+
+    query = query.strip()
+    address = str(coin.get("token_address") or "")
+    if not query:
+        return None
+    if query == address or query.casefold() == str(coin.get("id") or ""):
+        return 0
+    # A full address typed in another case can only be this coin.
+    if address and len(query) >= 32 and query.casefold() == address.casefold():
+        return 0
+    if not address:
+        # Listings without an address are curated, not creator-set.
+        text = f"{coin.get('symbol') or ''} {coin.get('name') or ''}".casefold()
+        return 2 if query.casefold() in text else None
+    if query == short_address(address):
+        return 1
+    pasted = _PASTED_ADDRESS.fullmatch(query)
+    if pasted:
+        head, tail = pasted.groups()
+        return 1 if address.startswith(head) and address.endswith(tail) else None
+    if looks_like_address(query):
+        return None
+    if (
+        len(query) >= 4
+        and set(query) <= _BASE58
+        and (address.startswith(query) or address.endswith(query))
+    ):
+        return 1
+    for key in ("claimed_symbol", "claimed_name"):
+        claimed = clean_claim(str(coin.get(key) or ""), 64)
+        if claimed and not looks_like_address(claimed) and query.casefold() in claimed.casefold():
+            return 2
+    return None
 
 
 def balance_change(meta: dict[str, Any], wallet: str, mint: str) -> Decimal | None:

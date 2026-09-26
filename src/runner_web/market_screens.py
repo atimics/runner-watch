@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 from runner_web.market_assessments import assessment
-from runner_web.memecoin_chain_parser import short_address
+from runner_web.memecoin_chain_parser import coin_search_rank, display_claim, short_address
 from runner_web.prediction_tickers import ticker as prediction_ticker
 from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
@@ -459,7 +459,7 @@ def row(
     if address:
         # The address is the headline; the launch's own name is secondary and marked.
         name = short_address(address)
-        claimed = str(item.get("claimed_symbol") or item.get("claimed_name") or "")
+        claimed = display_claim(item)
         subtitle = f"Creator-set: {claimed}" if claimed else "No launch name recorded"
     indicator = (
         stock_indicator(item) if market == "stocks" else memecoin_indicator(item) if coin else None
@@ -569,9 +569,7 @@ def state_tag(item: dict[str, Any]) -> tuple[str, str, bool]:
 def _search_text(market: str, source: dict[str, Any], display: dict[str, Any]) -> str:
     """Search original identities without adding raw fields to public view models."""
     text = display["name"] + " " + display["subtitle"]
-    if market == "memecoins":
-        fields = ("id", "symbol", "name", "token_address", "claimed_symbol", "claimed_name")
-    elif market == "sports":
+    if market == "sports":
         fields = (
             "id",
             "name",
@@ -612,18 +610,22 @@ def listing(
         for index, (_, display) in enumerate(pairs):
             display["chart_offset"] = (index // 50) * 50
     query = query.strip()[:80]
-    if query:
+    if query and market == "memecoins":
+        # Anyone can launch under a copied name; address matches lead, and an
+        # address-shaped query never falls back to names.
+        ranked_pairs = [
+            (rank, source, display)
+            for source, display in pairs
+            if (rank := coin_search_rank(query, source)) is not None
+        ]
+        ranked_pairs.sort(key=lambda entry: entry[0])
+        pairs = [(source, display) for _, source, display in ranked_pairs]
+    elif query:
         pairs = [
             (source, display)
             for source, display in pairs
             if query.casefold() in _search_text(market, source, display).casefold()
         ]
-        if market == "memecoins":
-            # Anyone can launch under a copied name; the coin whose address was typed leads.
-            typed = query.casefold()
-            pairs.sort(
-                key=lambda pair: typed not in str(pair[0].get("token_address") or "").casefold()
-            )
     now = datetime.now(UTC)
     target_day = ""
     calls_by_ticker: dict[str, dict[str, Any]] = {}
@@ -1011,9 +1013,7 @@ def detail(
             result["chart_url"] = f"/api/screens/stocks/{identifier}/chart"
         if market == "memecoins" and item.get("contract_address"):
             result["facts"].append({"label": "Contract", "value": item["contract_address"]})
-            claimed = " · ".join(
-                str(source[key]) for key in ("claimed_symbol", "claimed_name") if source.get(key)
-            )
+            claimed = display_claim(source)
             result["facts"].append(
                 {
                     "label": "Creator-set name (unverified)",

@@ -140,7 +140,12 @@ def test_stock_search_keeps_its_existing_fields():
 
 
 def test_search_fields_stay_out_of_public_models():
-    coin = {"id": "wif", "symbol": "WIF", "name": "dogwifhat", "token_address": "PRIVATE-SENTINEL"}
+    coin = {
+        "id": "wif",
+        "symbol": "WIF",
+        "claimed_name": "dogwifhat",
+        "token_address": "PRIVATE-SENTINEL",
+    }
     listed = listing("memecoins", [coin], query="dogwifhat")
     opened = detail("memecoins", {"coin": coin})
     assert len(listed["rows"]) == 1

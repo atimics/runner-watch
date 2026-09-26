@@ -924,7 +924,9 @@ def sports_now(
 
 
 def _coin(row: dict[str, Any]) -> dict[str, Any]:
-    claimed = row.get("claimed_symbol") or row.get("claimed_name")
+    from runner_web.memecoin_chain_parser import display_claim
+
+    claimed = display_claim(row)
     return {
         "id": row["id"],
         "contract_address": row.get("token_address"),
@@ -981,6 +983,7 @@ def coin_detail(query: str) -> dict[str, Any]:
     returns the matching contract addresses so the reader picks by address.
     """
 
+    from runner_web.memecoin_chain_parser import display_claim, looks_like_address
     from runner_web.memecoins import memecoin_detail, memecoin_market
 
     wanted = query.strip()
@@ -989,20 +992,17 @@ def coin_detail(query: str) -> dict[str, Any]:
     by_address = next((row for row in rows if row.get("token_address") == wanted), None)
     detail = memecoin_detail(str(by_address["id"] if by_address else wanted.lower()))
     if detail is None:
-        name = wanted.lstrip("$").casefold()
+        # An address that is not on the board is unknown. It never falls back
+        # to names, or a coin could answer for another by copying its address.
+        name = "" if looks_like_address(wanted) else wanted.lstrip("$").casefold()
         candidates = [
             {
                 "contract_address": row.get("token_address"),
-                "creator_set_name_unverified": row.get("claimed_symbol") or row.get("claimed_name"),
+                "creator_set_name_unverified": display_claim(row),
                 "volume_24h": row.get("volume_label"),
             }
             for row in rows
-            if name
-            and name
-            in {
-                str(row.get("claimed_symbol") or "").casefold(),
-                str(row.get("claimed_name") or "").casefold(),
-            }
+            if name and name == str(display_claim(row) or "").casefold()
         ][:10]
         return {
             "known": False,
