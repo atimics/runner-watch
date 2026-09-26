@@ -58,6 +58,10 @@ SOLANA_ADDRESS = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
 QUOTE_PAUSE_SECONDS = 5.0
 # A rate-limited pool batch waits this long and tries once more.
 RATE_LIMIT_RETRY_SECONDS = 30.0
+# Nobody has read a memecoin page for this long: skip the paid sampling pages.
+QUIET_AFTER_SECONDS = 1800
+# Each web process records a view at most this often.
+VIEW_NOTE_SECONDS = 60
 # With chain prices, GeckoTerminal brings activity windows for this many coins.
 ACTIVITY_SHORTLIST = 30
 # A bonding curve is shown once someone has put this much into it.
@@ -423,6 +427,51 @@ def _saved_list(key: str) -> list[dict[str, Any]]:
     return value if isinstance(value, list) else []
 
 
+_view_noted_at = 0.0
+
+
+def is_memecoin_view(path: str) -> bool:
+    """A person reading memecoins: the pages, the board API and a coin's live refresh.
+
+    Share cards and replay GIFs are left out: Telegram fetches them when our own
+    bot posts, which would keep the worker awake with nobody reading.
+    """
+
+    if path.endswith((".png", ".gif", ".json")) or "/replays/" in path:
+        return False
+    return (
+        path == "/memecoins"
+        or path.startswith("/memecoins/coin/")
+        or path == "/api/memecoins"
+        or path.startswith("/api/screens/memecoins/")
+    )
+
+
+def view_note_due(now: float) -> bool:
+    """Whether this process should record a view now (once a minute at most)."""
+
+    global _view_noted_at
+    if now - _view_noted_at < VIEW_NOTE_SECONDS:
+        return False
+    _view_noted_at = now
+    return True
+
+
+def note_memecoin_view(at: datetime | None = None) -> None:
+    current = at or datetime.now(UTC)
+    _save_state("memecoin_last_view", current.isoformat(), current)
+
+
+def memecoins_quiet(at: datetime) -> bool:
+    """True when nobody has read a memecoin page for half an hour.
+
+    With no view recorded yet (a new install) the worker samples in full.
+    """
+
+    seen = _time(_market_states(keys=("memecoin_last_view",)).get("memecoin_last_view"))
+    return seen is not None and (at - seen).total_seconds() > QUIET_AFTER_SECONDS
+
+
 def price_source() -> str:
     """Where board prices come from: gecko, shadow (gecko, with chain compared) or chain."""
 
@@ -644,7 +693,8 @@ def _with_chain_prices(
 def _collect_helius(
     *, download: Download, at: datetime, rpc: Rpc | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    discovery = discover_pools(at=at, rpc=rpc)
+    quiet = memecoins_quiet(at)
+    discovery = discover_pools(at=at, rpc=rpc, quiet=quiet)
     with connection() as database:
         saved = database.execute(
             "SELECT value FROM worker_state WHERE key='helius_discovered_pools'"
@@ -829,6 +879,7 @@ def _collect_helius(
         discovered_pools=len(discovery["pools"]),
         tracked_pools=len(selected),
         tracked_curves=len(curves),
+        quiet=quiet,
         quoted_pools=len(rows),
         selection="helius_pumpswap_create_pool",
     )

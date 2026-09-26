@@ -98,7 +98,8 @@ def test_ingestion_resumes_same_window_and_keeps_cursor_on_provider_failure():
 
     def first(body):
         calls.append(body)
-        return {"result": {"data": [transaction()], "paginationToken": "100:1"}}
+        # A full page: only then does a next-page token mean more to read.
+        return {"result": {"data": [transaction()] * 100, "paginationToken": "100:1"}}
 
     ingest_stream("program:test", POOL, at=AT, rpc=first)
     first_filter = calls[0]["params"][1]["filters"]
@@ -391,3 +392,18 @@ def test_a_bonding_curve_trade_is_a_swap_on_its_curve(discriminator, before, aft
     assert swap["pool_address"] == curve
     assert swap["wallet"] == trader and swap["token_address"] == MINT
     assert swap["net_token_amount"] == ("5.000000" if direction == "buy" else "4.000000")
+
+
+def test_a_partial_page_ends_its_window_even_with_a_next_token():
+    # Helius can send a token after a partial page; following it cost 10
+    # credits for an empty page.
+    state = ingest_stream(
+        "program:test",
+        POOL,
+        at=AT,
+        rpc=lambda _: {"result": {"data": [transaction()], "paginationToken": "100:1"}},
+    )["state"]
+
+    assert state["has_more"] is False
+    assert state["cursor"] is None
+    assert state["completed_until"] == int(AT.timestamp()) - 60

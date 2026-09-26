@@ -729,3 +729,70 @@ def test_a_chain_priced_row_names_both_sources(database, monkeypatch):
 
     assert rows[0]["source"] == "Solana (Helius)"
     assert rows[0]["activity_source"] == "GeckoTerminal"
+
+
+@pytest.mark.parametrize(
+    ("path", "reading"),
+    [
+        ("/memecoins", True),
+        ("/memecoins/coin/chain-abc", True),
+        ("/api/memecoins", True),
+        ("/api/screens/memecoins/chain-abc/detail", True),
+        # Telegram fetches these when our own bot posts; they are not readers.
+        ("/memecoins/coin/chain-abc/card.png", False),
+        ("/api/memecoins/chain-abc/replays/r1.gif", False),
+        ("/", False),
+    ],
+)
+def test_which_requests_count_as_someone_reading(path, reading):
+    assert memecoins.is_memecoin_view(path) is reading
+
+
+def test_a_process_records_a_view_at_most_once_a_minute(monkeypatch):
+    monkeypatch.setattr(memecoins, "_view_noted_at", 0.0)
+
+    assert memecoins.view_note_due(1000.0)
+    assert not memecoins.view_note_due(1030.0)
+    assert memecoins.view_note_due(1061.0)
+
+
+def test_quiet_after_half_an_hour_unread(database):
+    assert not memecoins.memecoins_quiet(AT)  # nothing recorded yet: sample in full
+    memecoins.note_memecoin_view(at=AT)
+
+    assert not memecoins.memecoins_quiet(AT + timedelta(minutes=29))
+    assert memecoins.memecoins_quiet(AT + timedelta(minutes=31))
+
+
+def test_quiet_runs_read_only_the_graduations(database):
+    from runner_web.memecoin_chain_ingestion import MIGRATION_AUTHORITY, collect_chain
+
+    runs = []
+    for number in range(3):
+        addresses = []
+
+        def rpc(body, addresses=addresses):
+            addresses.append(body["params"][0])
+            return reply([sale()])
+
+        collect_chain(at=AT + timedelta(minutes=5 * number), rpc=rpc, quiet=True)
+        runs.append(addresses)
+
+    # No program or wallet samples: one graduation page every third run.
+    assert runs == [[MIGRATION_AUTHORITY], [], []]
+
+
+def test_a_view_on_the_site_keeps_the_worker_sampling(database, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runner_web import main
+
+    monkeypatch.setattr(memecoins, "_view_noted_at", 0.0)
+    monkeypatch.setattr(main, "enforce_rate", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main, "current_user", lambda *_: None)
+    client = TestClient(main.app)
+
+    client.get("/memecoins/coin/chain-missing/card.png")
+    assert memecoins._market_states(keys=("memecoin_last_view",)) == {}
+    assert client.get("/memecoins").status_code == 200
+    assert memecoins._market_states(keys=("memecoin_last_view",))["memecoin_last_view"]
