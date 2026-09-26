@@ -179,3 +179,26 @@ def test_production_redis_requires_an_encrypted_connection(monkeypatch: Any) -> 
 
     monkeypatch.setattr(shared_state, "REDIS_URL", "rediss://example")
     assert shared_state.redis_configured() is True
+
+
+def test_cache_write_failure_logs_one_line_with_name_and_size(
+    monkeypatch: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = _configure(monkeypatch)
+
+    def broken_setex(key: str, ttl: int, value: str) -> None:
+        raise ConnectionError("Error 32 while writing to socket. Broken pipe.")
+
+    monkeypatch.setattr(fake, "setex", broken_setex)
+
+    with caplog.at_level("WARNING", logger=shared_state.__name__):
+        shared_state.cache_set("db-id:public-screen:v3:stock-list:abc", {"rows": [1]}, 60)
+
+    [record] = caplog.records
+    assert record.levelname == "WARNING"
+    assert record.exc_info is None
+    message = record.getMessage()
+    assert "public-screen:v3:stock-list:abc" in message
+    assert "db-id" not in message
+    assert "12 bytes" in message
+    assert "Broken pipe" in message
