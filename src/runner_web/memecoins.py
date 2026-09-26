@@ -20,6 +20,7 @@ from runner_web.helius_discovery import RPC_URL, Rpc
 from runner_web.ingestion import record_source_fetch
 from runner_web.memecoin_chain_ingestion import collect_chain as discover_pools
 from runner_web.memecoin_chain_parser import coin_search_rank, short_address
+from runner_web.memecoin_copycats import copycat_bursts, find_originals, mark_copycats
 from runner_web.memecoin_early import early_signal
 from runner_web.memecoin_forensics import analyze_events
 from runner_web.memecoin_integrity import creator_trades
@@ -40,8 +41,10 @@ STALE_SECONDS = 900
 # place, and the newest launches fill the rest.
 CURVE_SLOTS = 90
 POOL_SLOTS = 100
-# Graduated pools and bonding curves are quoted in one pass.
-MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS
+# Originals of copied launch names, found by name search and checked by address.
+ORIGINAL_SLOTS = 10
+# Graduated pools, bonding curves and originals are quoted in one pass.
+MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS + ORIGINAL_SLOTS
 # GeckoTerminal answers a burst of batch requests with 429, so space them out.
 # Two seconds still drew a 429 on the fourth of seven batches in production.
 QUOTE_PAUSE_SECONDS = 5.0
@@ -352,22 +355,53 @@ def _collect_helius(
         {item["token_address"] for item in selected},
         at,
     )
-    allowed = {item["pool_address"]: item for item in selected + curves}
+    bursts = copycat_bursts(discovery.get("events", []), at)
+    with connection() as database:
+        saved_originals = database.execute(
+            "SELECT value FROM worker_state WHERE key='memecoin_copycat_originals'"
+        ).fetchone()
+    try:
+        original_cache = json.loads(saved_originals["value"]) if saved_originals else {}
+    except (ValueError, TypeError):
+        original_cache = {}
+    originals, original_cache, searches = find_originals(
+        bursts,
+        original_cache if isinstance(original_cache, dict) else {},
+        download=download,
+        at=at,
+        pause=QUOTE_PAUSE_SECONDS,
+    )
+    _save_state("memecoin_copycat_originals", original_cache, at)
+    tracked = {item["token_address"] for item in selected + curves}
+    found = [
+        {
+            "pool_address": original["pool_address"],
+            "token_address": original["token_address"],
+            "network": "solana",
+            "created_at": original["created_at"],
+            "source_url": f"https://www.geckoterminal.com/solana/pools/{original['pool_address']}",
+            "venue": "pool",
+            "found_by": "copycat_name_search",
+        }
+        for original in list(originals.values())[:ORIGINAL_SLOTS]
+        if original["token_address"] not in tracked
+    ]
+    allowed = {item["pool_address"]: item for item in selected + curves + found}
     payload = []
-    curve_addresses = {item["pool_address"] for item in curves}
-    # Graduated pools first: the curves are extra and may be cut short.
-    addresses = [address for address in allowed if address not in curve_addresses]
-    addresses += [address for address in allowed if address in curve_addresses]
+    extra = {item["pool_address"] for item in curves + found}
+    # Graduated pools first: curves and originals are extra and may be cut short.
+    addresses = [address for address in allowed if address not in extra]
+    addresses += [address for address in allowed if address in extra]
     for offset in range(0, len(addresses), 30):
         chunk = addresses[offset : offset + 30]
-        if offset:
+        if offset or searches:
             time.sleep(QUOTE_PAUSE_SECONDS)
         url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(chunk)
         try:
             body = download(url, 10.0)
         except urllib.error.HTTPError as exc:
-            if exc.code == 429 and curve_addresses.issuperset(chunk):
-                LOG.warning("Pool quotes rate limited; skipped %d curves", len(addresses) - offset)
+            if exc.code == 429 and extra.issuperset(chunk):
+                LOG.warning("Pool quotes rate limited; skipped %d extras", len(addresses) - offset)
                 break
             raise
         if len(body) > MAX_RESPONSE_BYTES:
@@ -397,7 +431,11 @@ def _collect_helius(
     }
     for row in rows:
         row["discovery"] = allowed[row["pool_address"]]
-        row["discovery_source"] = "Helius"
+        row["discovery_source"] = (
+            "GeckoTerminal name search"
+            if row["discovery"].get("found_by") == "copycat_name_search"
+            else "Helius"
+        )
         row["venue"] = row["discovery"].get("venue", "pool")
         launch = claims.get(row["token_address"]) or {}
         row["claimed_symbol"] = launch.get("claimed_symbol") or None
@@ -411,6 +449,8 @@ def _collect_helius(
                 at=at,
             )
         )
+    mark_copycats(rows, bursts, originals)
+    for row in rows:
         row["early"] = early_signal(row)
     # A curve that traded keeps its slot next cycle, busiest first.
     traded = sorted(

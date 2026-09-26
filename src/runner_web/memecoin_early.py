@@ -5,10 +5,13 @@ its move, up or down. This reading compares the latest hour with the coin's
 own pace over the previous six, and only counts it while the price has not
 yet run and nothing on the chain says the launch is being drained.
 
+New launches copying a coin's name point at it: a verified original earns
+copycat points even before its own trading picks up, and each copy is AVOID.
+
 States use the stock tags: setup (speeding up, price not yet moved),
 running, extended, avoid (drained or staged) and quiet (no tag).
 
-The weights are a starting heuristic (`memecoin-early-v1`). Each quote saves
+The weights are a starting heuristic (`memecoin-early-v2`). Each quote saves
 its features so they can be tested against what the coin did next.
 """
 
@@ -17,7 +20,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-VERSION = "memecoin-early-v1"
+VERSION = "memecoin-early-v2"
 # Below this the hour's trading is too small to read a pace from.
 MIN_HOUR_VOLUME_USD = 1_000.0
 MIN_HOUR_BUYERS = 10
@@ -94,6 +97,10 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
     features["organic_buyers"] = _finite(counts.get("bullish"))
     on_curve = row.get("venue") == "bonding_curve"
     features["on_curve"] = on_curve
+    copycats = row.get("copycats") or {}
+    features["copycats_h1"] = _finite(copycats.get("h1"))
+    features["copycats_h24"] = _finite(copycats.get("h24"))
+    copies = features["copycats_h24"] or 0.0
     factors = ((row.get("memecoin_assessment") or {}).get("risk") or {}).get("factors") or []
     blocked = list(
         dict.fromkeys(
@@ -102,6 +109,8 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
             if isinstance(factor, dict) and factor.get("kind") in BLOCKING_KINDS
         )
     )
+    if row.get("copies"):
+        blocked.insert(0, "Copies an older coin's name")
     liquidity = features["liquidity_usd"]
     # A bonding curve always quotes; there is no pool to drain until it graduates.
     if not on_curve and liquidity is not None and liquidity < MIN_LIQUIDITY_USD:
@@ -114,37 +123,50 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {"version": VERSION, "features": features, "score": None}
     if blocked:
         return {**result, "state": "avoid", "reasons": blocked}
-    volume_h1, buyers_h1 = features["volume_h1"], features["buyers_h1"]
-    if (
-        volume_h1 is None
-        or volume_h1 < MIN_HOUR_VOLUME_USD
-        or buyers_h1 is None
-        or buyers_h1 < MIN_HOUR_BUYERS
-    ):
+    volume_h1, buyers_h1 = features["volume_h1"] or 0.0, features["buyers_h1"] or 0.0
+    active = volume_h1 >= MIN_HOUR_VOLUME_USD and buyers_h1 >= MIN_HOUR_BUYERS
+    if not active and not copies:
         return {**result, "state": "quiet", "reasons": []}
-    volume_pace, volume_window = _faster(
-        _pace(volume_h1, features["volume_h6"], 6),
-        _pace(features["volume_m5"], volume_h1, 12)
-        if (features["volume_m5"] or 0) >= MIN_M5_VOLUME_USD
-        else None,
+    # Too little trading to read a pace; copies alone can still point here.
+    volume_pace, volume_window = (
+        (None, "6h")
+        if not active
+        else _faster(
+            _pace(volume_h1, features["volume_h6"], 6),
+            _pace(features["volume_m5"], volume_h1, 12)
+            if (features["volume_m5"] or 0) >= MIN_M5_VOLUME_USD
+            else None,
+        )
     )
-    buyer_pace, buyer_window = _faster(
-        _pace(buyers_h1, features["buyers_h6"], 6),
-        _pace(features["buyers_m5"], buyers_h1, 12)
-        if (features["buyers_m5"] or 0) >= MIN_M5_BUYERS
-        else None,
+    buyer_pace, buyer_window = (
+        (None, "6h")
+        if not active
+        else _faster(
+            _pace(buyers_h1, features["buyers_h6"], 6),
+            _pace(features["buyers_m5"], buyers_h1, 12)
+            if (features["buyers_m5"] or 0) >= MIN_M5_BUYERS
+            else None,
+        )
     )
     sellers_h1 = features["sellers_h1"] or 0.0
-    buyer_share = buyers_h1 / (buyers_h1 + sellers_h1)
+    buyer_share = buyers_h1 / (buyers_h1 + sellers_h1) if active else 0.0
     organic = features["organic_buyers"] or 0.0
     parts = {
         "volume_pace": _points(volume_pace, 35),
         "buyer_pace": _points(buyer_pace, 35),
         "buyer_share": min(20.0, max(0.0, (buyer_share - 0.5) * 80)),
         "organic_buyers": min(10.0, 2.5 * math.log2(1 + organic)),
+        # A verified burst (three copies in a day) is enough on its own.
+        "copycats": min(30.0, 15 * math.log2(1 + copies)),
     }
     score = round(sum(parts.values()), 1)
     reasons = []
+    if copies:
+        recent = features["copycats_h1"] or 0
+        reasons.append(
+            f"{copies:.0f} copycat launches in 24h"
+            + (f", {recent:.0f} in the last hour" if recent else "")
+        )
     if volume_pace and volume_pace >= 1.5:
         reasons.append(f"Volume {volume_pace:.1f}× its {volume_window} pace")
     if buyer_pace and buyer_pace >= 1.5:

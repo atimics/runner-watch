@@ -879,6 +879,10 @@ def _pool_facts(coin: dict[str, Any]) -> list[dict[str, str]]:
         )
         if on_curve:
             facts.append({"label": "Stage", "value": "Bonding curve · not yet graduated"})
+    original = (coin.get("copies") or {}).get("token_address")
+    if original:
+        # A copy points readers to the coin it copies, by address, never by name.
+        facts.append({"label": "Original coin", "value": str(original)})
     # The tag beside the price names the state; this says what it was read from.
     reasons = (coin.get("early") or {}).get("reasons") or []
     if reasons and not coin.get("stale"):

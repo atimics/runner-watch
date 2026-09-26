@@ -339,6 +339,8 @@ def test_a_rate_limit_on_curves_keeps_the_pools_and_the_refresh(database, monkey
     requests = []
 
     def download(url, timeout):
+        if "/search/" in url:
+            return b'{"data":[]}'
         requests.append(url)
         if len(requests) > 1:
             raise _rate_limited(url)
@@ -351,8 +353,8 @@ def test_a_rate_limit_on_curves_keeps_the_pools_and_the_refresh(database, monkey
     assert result["status"] == "ok"
     # The graduated pool is asked for first; the curves come after it.
     assert requests[0].rsplit("/", 1)[1].split(",")[0] == POOL
-    # Batches are spaced so GeckoTerminal does not see a burst.
-    assert sleeps == [memecoins.QUOTE_PAUSE_SECONDS]
+    # Every request after the first waits, so GeckoTerminal does not see a burst.
+    assert set(sleeps) == {memecoins.QUOTE_PAUSE_SECONDS}
 
 
 def test_a_rate_limit_on_pools_fails_the_refresh_and_is_logged(database, caplog):
@@ -393,3 +395,56 @@ def test_a_full_curve_watch_still_refreshes(database, monkeypatch):
 
     assert result["status"] == "ok"
     assert result["count"] == CURVE_SLOTS
+
+
+def test_copied_launch_names_bring_the_original_onto_the_board(database, monkeypatch):
+    from runner_web.memecoin_chain_parser import PUMP_CREATE_V2
+
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    original = helius._encode(bytes([9]) * 32)
+    original_pool = helius._encode(bytes([10]) * 32)
+    launches, mints = _many_launches(3)
+    for number, tx in enumerate(launches):
+        raw = PUMP_CREATE_V2
+        for value in (["Trolloween", "TR0LLOWEEN", "tro11oween"][number].encode(), b"TROLL", b""):
+            raw += len(value).to_bytes(4, "little") + value
+        ix = tx["transaction"]["message"]["instructions"][0]
+        ix["data"] = helius._encode(raw + helius._decode(CREATOR) + bytes(2))
+    searches = []
+
+    def download(url, timeout):
+        if "/search/" in url:
+            searches.append(url)
+            pool = curve_quote()
+            pool["attributes"].update(
+                address=original_pool, name="TROLLOWEEN / SOL", reserve_in_usd="14000"
+            )
+            pool["attributes"]["pool_created_at"] = "2025-10-07T12:00:00Z"
+            pool["relationships"]["base_token"]["data"]["id"] = "solana_" + original
+            token = {"name": "TROLLOWEEN", "symbol": "TROLLOWEEN"}
+            included = [{"type": "token", "id": "solana_" + original, "attributes": token}]
+            return json.dumps({"data": [pool], "included": included}).encode()
+        quotes = []
+        for address in url.rsplit("/", 1)[1].split(","):
+            quote = curve_quote()
+            quote["attributes"]["address"] = address
+            if address == original_pool:
+                quote["attributes"].update(
+                    reserve_in_usd="14000", pool_created_at="2025-10-07T12:00:00Z"
+                )
+                quote["relationships"]["base_token"]["data"]["id"] = "solana_" + original
+            elif address in mints:
+                quote["relationships"]["base_token"]["data"]["id"] = "solana_" + mints[address]
+            quotes.append(quote)
+        return json.dumps({"data": quotes}).encode()
+
+    rows, _ = memecoins._collect_helius(at=AT, rpc=lambda _: reply(launches), download=download)
+
+    assert len(searches) == 1 and "query=Trolloween&" in searches[0]
+    by_token = {row["token_address"]: row for row in rows}
+    assert by_token[original]["discovery_source"] == "GeckoTerminal name search"
+    assert by_token[original]["early"]["state"] == "setup"
+    assert by_token[original]["early"]["reasons"][0].startswith("3 copycat launches in 24h")
+    copies = [row for row in rows if row["token_address"] != original]
+    assert len(copies) == 3
+    assert all(row["early"]["state"] == "avoid" for row in copies)
