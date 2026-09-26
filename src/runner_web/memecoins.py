@@ -43,7 +43,8 @@ POOL_SLOTS = 100
 # Graduated pools and bonding curves are quoted in one pass.
 MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS
 # GeckoTerminal answers a burst of batch requests with 429, so space them out.
-QUOTE_PAUSE_SECONDS = 2.0
+# Two seconds still drew a 429 on the fourth of seven batches in production.
+QUOTE_PAUSE_SECONDS = 5.0
 ACTIVE_CURVE_SLOTS = 60
 CURVE_HOURS = 24
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
