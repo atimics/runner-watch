@@ -13,6 +13,7 @@ import logging
 import os
 import resource
 import sys
+import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -21,6 +22,9 @@ from fastapi.concurrency import run_in_threadpool as _run_in_threadpool
 LOG = logging.getLogger(__name__)
 
 GROWTH_LOG_MB = max(1.0, float(os.getenv("WORKER_MEMORY_GROWTH_LOG_MB", "25")))
+TREND_LOG_SECONDS = max(30.0, float(os.getenv("WORKER_MEMORY_TREND_SECONDS", "300")))
+
+_last_trend_at: float | None = None
 
 T = TypeVar("T")
 
@@ -70,3 +74,24 @@ async def run_in_threadpool(func: Callable[..., T], *args: Any, **kwargs: Any) -
                 after,
                 peak_rss_mb(),
             )
+
+
+def log_memory_trend(*, clock: Callable[[], float] = time.monotonic) -> None:
+    """Log resident memory every few minutes.
+
+    A leak of a few MB a cycle never trips the per-job line above, but it
+    still reaches the limit. A steady series of these lines shows the curve.
+    """
+
+    global _last_trend_at
+    current = clock()
+    if _last_trend_at is not None and current - _last_trend_at < TREND_LOG_SECONDS:
+        return
+    _last_trend_at = current
+    # Warning, not info: nothing configures logging, so the worker only prints
+    # warnings and above, and an info line would never reach the Fly logs.
+    LOG.warning("memory_trend rss_mb=%s peak_mb=%.0f", _rounded(rss_mb()), peak_rss_mb())
+
+
+def _rounded(value: float | None) -> str:
+    return "unknown" if value is None else f"{value:.0f}"

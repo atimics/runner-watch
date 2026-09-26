@@ -233,7 +233,12 @@ from runner_web.privacy import (
     export_user_data,
     user_data_summary,
 )
-from runner_web.process_memory import peak_rss_mb, rss_mb, run_in_threadpool
+from runner_web.process_memory import (
+    log_memory_trend,
+    peak_rss_mb,
+    rss_mb,
+    run_in_threadpool,
+)
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import BASE_RATES, EVIDENCE_GATE, OPERATIONS
 from runner_web.pseudonyms import (
@@ -1016,6 +1021,7 @@ async def worker_process_heartbeat(
             "rss_mb": round(current_mb) if current_mb is not None else None,
             "peak_mb": round(peak_rss_mb()),
         }
+        log_memory_trend()
         try:
             detail["stale_workers"] = await asyncio.to_thread(_stale_workers)
         except Exception:
