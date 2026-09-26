@@ -296,8 +296,7 @@ def _normalize_actions(payload: Any) -> dict[str, list[dict[str, Any]]]:
         date = ""
         try:
             date = (
-                f"{int(process['year']):04d}-{int(process['month']):02d}-"
-                f"{int(process['day']):02d}"
+                f"{int(process['year']):04d}-{int(process['month']):02d}-{int(process['day']):02d}"
             )
         except (KeyError, TypeError, ValueError):
             date = ""

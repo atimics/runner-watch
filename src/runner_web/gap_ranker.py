@@ -267,8 +267,7 @@ def evaluate(
 
 def _serialize(weights: dict[str, np.ndarray]) -> str:
     payload = {
-        key: np.asarray(value, dtype=np.float64).round(6).tolist()
-        for key, value in weights.items()
+        key: np.asarray(value, dtype=np.float64).round(6).tolist() for key, value in weights.items()
     }
     return json.dumps(payload, separators=(",", ":"))
 
@@ -306,9 +305,8 @@ def _train_and_store(database: DatabaseConnection, moment: datetime) -> dict[str
     if result.get("status") != "trained":
         return {key: value for key, value in result.items() if key != "weights"}
     metrics = result["metrics"]
-    promoted = (
-        metrics["samples"] >= MIN_SAMPLES
-        and metrics["sign_accuracy"] >= max(MIN_SIGN_ACCURACY, metrics["baseline_sign_accuracy"])
+    promoted = metrics["samples"] >= MIN_SAMPLES and metrics["sign_accuracy"] >= max(
+        MIN_SIGN_ACCURACY, metrics["baseline_sign_accuracy"]
     )
     model_id = f"gap-{moment.strftime('%Y%m%dT%H%M%S')}"
     database.execute(
