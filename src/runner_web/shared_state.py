@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any
 
 LOG = logging.getLogger(__name__)
@@ -87,14 +88,27 @@ def cache_get(name: str) -> Any | None:
 def cache_set(name: str, value: Any, ttl_seconds: int) -> None:
     if not REDIS_URL:
         return
+    data = json.dumps(value, separators=(",", ":"))
+    started = time.monotonic()
     try:
-        _client().setex(
-            _key(f"cache:{name}"),
-            max(1, ttl_seconds),
-            json.dumps(value, separators=(",", ":")),
+        _client().setex(_key(f"cache:{name}"), max(1, ttl_seconds), data)
+    except Exception as exc:
+        # One line, not a traceback: this runs every warm cycle, and the name,
+        # size and time are what tell a too-big value from a flaky connection.
+        LOG.warning(
+            "Shared cache write failed for %s: %d bytes after %.2fs: %s: %s",
+            _log_name(name),
+            len(data.encode()),
+            time.monotonic() - started,
+            type(exc).__name__,
+            exc,
         )
-    except Exception:
-        LOG.exception("Shared cache write failed")
+
+
+def _log_name(name: str) -> str:
+    # The first segment of a cache name is the database identity; leave it out
+    # of logs so a warning names only the screen.
+    return name.split(":", 1)[-1]
 
 
 def cache_delete(*names: str) -> None:
