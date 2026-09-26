@@ -266,7 +266,9 @@
       put('[data-assessment-tag]', next.item.tag);
       put('[data-assessment-reason]', next.item.eligibility_note);
       put('[data-assessment-quote]', next.item.assessment_quote_label);
-      assessment.hidden = !next.item.tag && !next.item.eligibility_note && !next.item.assessment_quote_label;
+      assessment.hidden = !next.item.tag;
+      assessment.className = `state-chip chip-${next.item.tag_tone || 'none'}`;
+      assessment.title = [next.item.eligibility_note, next.item.assessment_quote_label].filter(Boolean).join(' · ');
     }
     const move = document.querySelector('[data-change]');
     if (move) move.className = ['up','down','neutral'].includes(next.item.tone) ? next.item.tone : 'neutral';

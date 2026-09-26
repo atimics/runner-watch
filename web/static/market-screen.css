@@ -451,9 +451,14 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
    Desktop retains its original chip and chart column. One SVG serves both. */
 :is(.market-stocks,.market-memecoins) .ticker-trend{display:block;width:64px;min-width:0}
 .stock-freshness-note{margin:0 0 16px;padding:10px 12px;border-left:2px solid var(--muted);background:var(--panel);color:var(--text);font-size:12px}
-.stock-assessment-note{display:flex;flex-wrap:wrap;gap:4px 9px;align-items:baseline;margin:8px 0 0;color:var(--text);font-size:12px}
-.stock-assessment-note strong{font-size:11px;letter-spacing:.04em}
-.stock-assessment-note small{width:100%;color:var(--muted);font-size:11px}.stock-assessment-checks{margin:6px 0 0;color:var(--muted);font-size:11px}.stock-assessment-checks summary{cursor:pointer;width:max-content}.stock-assessment-checks p{margin:6px 0}.stock-assessment-checks ul{margin:6px 0;padding-left:18px}
+/* The run state sits beside the price as one small chip; its reasons live in the tooltip. */
+.state-chip,.asset-value>.state-chip{position:relative;display:inline-flex;align-items:center;gap:5px;align-self:center;padding:3px 9px;border:1px solid var(--line);border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.04em;cursor:help}
+.state-chip i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.state-chip-pause{display:none;width:12px;height:12px;fill:currentColor}
+.state-chip.chip-paused{padding:4px;border-color:transparent;background:var(--accent-wash)}
+.state-chip.chip-paused .state-chip-pause{display:block}
+.state-chip.chip-paused i,.state-chip.chip-paused .state-chip-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.stock-assessment-checks{margin:6px 0 0;color:var(--muted);font-size:11px}.stock-assessment-checks summary{cursor:pointer;width:max-content}.stock-assessment-checks p{margin:6px 0}.stock-assessment-checks ul{margin:6px 0;padding-left:18px}
 :is(.market-stocks,.market-memecoins) .ticker-run-status{display:none}
 :is(.market-stocks,.market-memecoins) .mini-chart{display:block;color:var(--muted)}
 :is(.market-stocks,.market-memecoins) .mini-chart.rising{color:var(--green)}
