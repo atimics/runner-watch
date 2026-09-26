@@ -129,6 +129,31 @@ def saved_replay(
     return result
 
 
+def _previous_receipts(coin_id: str) -> tuple[str | None, list[dict]]:
+    """The latest saved replay's receipts, even if that replay no longer verifies.
+
+    A decoder change (for example a new field on launch events) makes a saved
+    replay fail verify_replay. Its receipts are still hash-checked raw
+    transactions, and build_replay re-checks each one, so the replay is rebuilt
+    under the current decoder instead of staying stuck on the old one.
+    """
+    with connection() as database:
+        row = database.execute(
+            "SELECT r.id,r.payload_json FROM memecoin_replays r "
+            "JOIN memecoin_replay_cases c ON c.latest_id=r.id WHERE r.coin_id=?",
+            (coin_id,),
+        ).fetchone()
+    if not row:
+        return None, []
+    try:
+        payload = json.loads(row["payload_json"])
+        verified = payload["coin_id"] == coin_id and payload["id"] == row["id"]
+        receipts = payload["receipts"] if verified and isinstance(payload["receipts"], list) else []
+    except (KeyError, TypeError, ValueError):
+        return None, []
+    return (row["id"] if verify_replay(payload) else None), receipts
+
+
 def replay_status(coin_id: str, replay_id: str | None = None) -> dict:
     record = saved_replay(coin_id, replay_id)
     with connection() as database:
@@ -192,11 +217,10 @@ def render_pending_replays(
             if coin.get("network") != "solana":
                 raise ValueError("subject_scope")
             receipts, coverage = _load_evidence(coin["token_address"])
-            previous = saved_replay(coin_id)
-            if previous:
-                receipts += previous["payload"]["receipts"]
+            previous_id, previous_receipts = _previous_receipts(coin_id)
+            receipts += previous_receipts
             payload = build_replay(coin, receipts, coverage)
-            same = previous and previous["payload"]["id"] == payload["id"]
+            same = previous_id == payload["id"]
             with connection() as database:
                 count = database.execute(
                     "SELECT COUNT(*) FROM memecoin_replays WHERE coin_id=?",
