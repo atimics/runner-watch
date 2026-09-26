@@ -83,7 +83,10 @@ def test_late_assessment_script_consumes_completed_detail_refresh(page):
     )
     page.goto("https://app.test/", wait_until="commit")
     expect(page.locator("[data-value]")).to_have_text("$123.00")
-    summary = page.get_by_role("region", name="Token evidence").locator("summary")
+    evidence = page.locator("[data-market-assessment]")
+    summary = evidence.locator("summary")
+    # Nothing found yet, so the block waits out of sight.
+    expect(evidence).to_be_hidden()
     expect(summary).to_have_text("Token evidence · no chain findings saved")
     assert (
         page.evaluate(
@@ -95,6 +98,7 @@ def test_late_assessment_script_consumes_completed_detail_refresh(page):
     held[0].fulfill(path=str(ROOT / "web/static/market-anchor.js"))
     page.wait_for_load_state("load")
     expect(summary).to_have_text("Token evidence · 1 finding")
+    expect(evidence).to_be_visible()
 
 
 def test_state_change_refreshes_counts_and_all_recovers_the_list(page):
