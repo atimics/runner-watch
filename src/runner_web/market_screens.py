@@ -745,6 +745,19 @@ def series(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return clean[-360:]
 
 
+def _memecoin_stake_terms() -> str:
+    from runner_web.flash_wallet import CALL_WIN_FLASH_CAP, MEMECOIN_CALL_STAKE
+
+    return (
+        f"Stakes {MEMECOIN_CALL_STAKE} Flash and opens at the next quote, not this price. "
+        f"You win or lose 1 Flash per 1% move, from -{MEMECOIN_CALL_STAKE} "
+        f"to +{CALL_WIN_FLASH_CAP}."
+    )
+
+
+_MEMECOIN_STAKE_TERMS = _memecoin_stake_terms()
+
+
 def settlement_terms(market: str, entered: Any) -> str:
     if market == "sports":
         return "Settles on the confirmed game result. A cancelled game is void."
@@ -760,12 +773,16 @@ def settlement_terms(market: str, entered: Any) -> str:
         from runner_web.memecoin_calls import MEMECOIN_CALL_MAX_AGE_DAYS
 
         due = moment + timedelta(days=MEMECOIN_CALL_MAX_AGE_DAYS)
-        return f"Settles after {stamp(due)} at the latest saved price. You can close early."
+        return (
+            f"{_MEMECOIN_STAKE_TERMS} Settles after {stamp(due)} at the latest saved price. "
+            "You can close early."
+        )
     except (ValueError, TypeError):
         return (
             "Settles after session close. You can close early."
             if market == "stocks"
-            else "Settles after seven days at the latest saved price. You can close early."
+            else f"{_MEMECOIN_STAKE_TERMS} Settles after seven days at the latest saved "
+            "price. You can close early."
         )
 
 
@@ -1031,6 +1048,18 @@ def detail(
         result["call"] = call_record(market, source, active_call)
         if active_call and active_call.get("status") == "closed":
             active_call = None
+        if market == "memecoins":
+            waiting = (
+                "Opening at the next quote"
+                if data.get("pending_order")
+                else "Closing at the next quote"
+                if active_call and active_call.get("closing")
+                else ""
+            )
+            if waiting:
+                # A request is already queued; the next quote fills it.
+                result["facts"].append({"label": "Your Call", "value": waiting})
+                can_call = False
         if can_call:
             endpoint = (
                 (
@@ -1051,7 +1080,12 @@ def detail(
                     "endpoint": endpoint,
                     "body": {"expected_price": number(source.get("price"))},
                     "preview": (
-                        f"Close your Call at {money(source.get('price'))}. "
+                        (
+                            "Close your Call at the next quote, not this price. "
+                            "Your result and stake settle at that quote."
+                        )
+                        if active_call and market == "memecoins"
+                        else f"Close your Call at {money(source.get('price'))}. "
                         "Your result uses this price."
                         if active_call
                         else f"Call {item['name']} to rise from {money(source.get('price'))}. "

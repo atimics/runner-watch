@@ -201,7 +201,9 @@ from runner_web.memecoin_calls import (
     close_memecoin_call,
     create_memecoin_call,
     expire_memecoin_calls,
+    fill_memecoin_call_orders,
     memecoin_calls,
+    pending_memecoin_order,
 )
 from runner_web.memecoins import (
     REFRESH_SECONDS,
@@ -2567,6 +2569,14 @@ async def memecoin_worker() -> None:
             raise
         except Exception:
             LOG.exception("Memecoin refresh failed")
+        try:
+            # Calls fill at the first quote after their request.
+            for handle in dict.fromkeys(await run_in_threadpool(fill_memecoin_call_orders)):
+                _invalidate_public_screen_data("caller", handle)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("Memecoin Call fills failed")
         await asyncio.sleep(REFRESH_SECONDS)
 
 
@@ -3674,7 +3684,16 @@ def _unified_caller_page_data(caller_handle: str) -> dict[str, Any]:
                 "reward_label": (
                     call.get("reward_label")
                     or (
-                        f"Up to +{int(call['projected_flash_reward'])} Flash"
+                        # A staked Call settles both ways; show the signed
+                        # result at the current price.
+                        (
+                            f"{'+' if call['projected_flash_reward'] > 0 else '−'}"
+                            f"{abs(int(call['projected_flash_reward']))} Flash at this price"
+                        )
+                        if call["status"] == "active"
+                        and int(call.get("stake") or 0) > 0
+                        and int(call.get("projected_flash_reward") or 0) != 0
+                        else f"Up to +{int(call['projected_flash_reward'])} Flash"
                         if call["status"] == "active"
                         and int(call.get("projected_flash_reward") or 0) > 0
                         else None
@@ -7734,6 +7753,8 @@ def memecoin_detail_page(
         query=q.strip()[:80],
         sort=sort,
     )
+    if context["user"]:
+        detail["pending_order"] = pending_memecoin_order(str(context["user"]["id"]), coin_id)
     context["active_call"] = (
         (
             active_memecoin_call(str(context["user"]["id"]), coin_id)
@@ -8063,15 +8084,19 @@ async def make_memecoin_call_api(
     enforce_rate(request, "call-create", limit=12, seconds=3600, subject=user["id"])
     expected = await _expected_call_price(request)
     try:
-        call = await run_in_threadpool(
+        order = await run_in_threadpool(
             create_memecoin_call, str(user["id"]), coin_id, expected_price=expected
         )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
-    _invalidate_public_screen_data("caller", str(call["caller_handle"]))
-    return JSONResponse({"call": call}, status_code=201)
+    _invalidate_public_screen_data("caller", str(order["caller_handle"]))
+    # Accepted, not filled: the Call opens at the next quote.
+    return JSONResponse(
+        {"order": order, "balance": wallet_for_user(str(user["id"]))["balance"]},
+        status_code=202,
+    )
 
 
 @app.post("/api/memecoin-calls/{public_id}/close")
@@ -9828,6 +9853,7 @@ def screen_detail_state(
             active = active_memecoin_call(user_id, subject) or next(
                 iter(memecoin_calls(user_id=user_id, coin_id=subject, limit=1)), None
             )
+            data["pending_order"] = pending_memecoin_order(user_id, subject)
     elif market == "sports":
         golf = subject.startswith("golf:")
         data = golf_event(subject) if golf else sports_event(subject)

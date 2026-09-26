@@ -15,6 +15,11 @@ CALL_WIN_FLASH_CAP = 50
 WINNING_CALL_REWARD = 25
 CALL_CLOSE_REWARD_MULTIPLIER = 10
 MEMECOIN_CALL_REWARD_MULTIPLIER = 1
+# A memecoin Call escrows this much Flash and settles both ways: the stake
+# comes back with the return, clamped to [-stake, CALL_WIN_FLASH_CAP]. A loss
+# therefore costs Flash, so opening many Calls and closing only the winners
+# no longer pays.
+MEMECOIN_CALL_STAKE = 50
 REPORT_EXCLUSIVE_HOURS = 1
 
 
@@ -46,6 +51,18 @@ def memecoin_call_reward(return_pct: float | int | None) -> int:
     if return_pct is None or float(return_pct) <= 0:
         return 0
     return _capped_call_reward(Decimal(str(return_pct)) * MEMECOIN_CALL_REWARD_MULTIPLIER)
+
+
+def memecoin_call_settlement(return_pct: float | int | None, stake: int) -> int:
+    """Net Flash for a staked memecoin Call: the return in Flash, won or lost."""
+
+    if return_pct is None:
+        return 0
+    amount = Decimal(str(return_pct)) * MEMECOIN_CALL_REWARD_MULTIPLIER
+    if not amount.is_finite():
+        return 0
+    net = int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return max(-stake, min(CALL_WIN_FLASH_CAP, net))
 
 
 def sports_call_reward(american_odds: int | float | None) -> int:
