@@ -197,7 +197,7 @@ def test_omitting_an_observed_event_cannot_pass_by_rehashing():
 def test_renderer_failure_retries_saved_evidence_without_another_source_fetch():
     collect()
 
-    def failed(_):
+    def failed(_, **__):
         raise OSError("render failed")
 
     assert store.render_pending_replays(at=AT, renderer=failed)["deferred"] == 1
@@ -322,9 +322,9 @@ def test_saved_replay_survives_source_retention_and_does_not_render_twice():
     first = store.saved_replay(COIN["id"], with_gif=True)
     assert first and first["gif"].startswith(b"GIF89a")
     assert (
-        store.render_pending_replays(at=AT, renderer=lambda _: pytest.fail("duplicate render"))[
-            "ready"
-        ]
+        store.render_pending_replays(
+            at=AT, renderer=lambda _, **__: pytest.fail("duplicate render")
+        )["ready"]
         == 0
     )
     evidence.prune_evidence(at=AT + timedelta(days=31))
@@ -367,10 +367,10 @@ def test_concurrent_render_claim_has_one_owner_and_recovers_after_lease():
     assert store.render_pending_replays(at=AT)["ready"] == 0
     entered, finish = Event(), Event()
 
-    def renderer(data):
+    def renderer(data, **options):
         entered.set()
         assert finish.wait(10)
-        return render_gif(data)
+        return render_gif(data, **options)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         future = pool.submit(

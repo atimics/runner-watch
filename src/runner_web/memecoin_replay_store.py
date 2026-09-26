@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from runner_web.memecoin_replay import build_replay, canonical, verify_replay
 from runner_web.memecoin_replay_gif import render_gif
 from runner_web.telegram import config_from_env, memecoin_alerts_enabled
 
+LOG = logging.getLogger(__name__)
 MAX_REVISIONS_PER_COIN = 16
 
 
@@ -182,6 +184,18 @@ def replay_status(coin_id: str, replay_id: str | None = None) -> dict:
     }
 
 
+def _indicator(coin: dict, at: datetime) -> dict | None:
+    """The coin's attention glyph as the page shows it, for the GIF's centre."""
+    from runner_web.memecoin_model import display_assessment
+    from runner_web.stock_indicator import memecoin_indicator
+
+    try:
+        return memecoin_indicator(display_assessment(dict(coin), at=at))
+    except Exception:  # noqa: BLE001 - a missing assessment draws the unknown glyph
+        LOG.warning("Replay glyph unavailable for %s", coin.get("id"), exc_info=True)
+        return None
+
+
 def render_pending_replays(
     *, at: datetime | None = None, limit: int = 2, renderer=render_gif
 ) -> dict:
@@ -228,7 +242,7 @@ def render_pending_replays(
                 ).fetchone()[0]
             if not same and count >= MAX_REVISIONS_PER_COIN:
                 raise ValueError("archive_capacity")
-            gif = None if same else renderer(payload)
+            gif = None if same else renderer(payload, indicator=_indicator(coin, current))
             if not verify_replay(payload):
                 raise ValueError("quality_failed")
             with connection() as database:

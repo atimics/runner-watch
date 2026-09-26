@@ -19,6 +19,8 @@ from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont
 
 from runner_web.memecoin_chain_parser import short_address
+from runner_web.ring_glyph_image import glyph_outer, paste_glyph
+from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -134,12 +136,13 @@ def _memecoin_card_png(detail: dict[str, Any]) -> bytes:
     coin = detail.get("coin") or {}
     address = _coin_share_address(coin)
     change = _number(coin.get("change_24h"))
-    image = Image.new("RGB", (1200, 630), "#090b0b")
+    # Memecoins wear the page's purple, as stocks wear green.
+    image = Image.new("RGB", (1200, 630), "#0a080d")
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle(
-        (55, 55, 1145, 575), radius=34, fill="#111514", outline="#57e389", width=3
+        (55, 55, 1145, 575), radius=34, fill="#141119", outline="#c9aaf7", width=3
     )
-    draw.text((95, 84), _card_text("RATi RUNNERS · MEMECOIN"), "#87e8a9", font=font(26, True))
+    draw.text((95, 84), _card_text("RATi RUNNERS · MEMECOIN"), "#c9aaf7", font=font(26, True))
     label = short_address(address) if address else f"${coin.get('symbol') or ''}"
     draw.text((95, CARD_PRICE_Y), _card_text(label), "#f4f8f6", font=font(64, True))
     if address:
@@ -150,12 +153,20 @@ def _memecoin_card_png(detail: dict[str, Any]) -> bytes:
     move = f"{change:+.1f}% 24h" if change is not None else "—"
     tone = "#87e8a9" if (change or 0) > 0 else "#f2a3ac" if (change or 0) < 0 else "#9fb2a8"
     draw.text((1105, CARD_CHANGE_Y), move, tone, font=font(32, True), anchor="ra")
-    draw.line((95, 292, 1105, 292), fill="#26302c", width=2)
+    draw.line((95, 292, 1105, 292), fill="#2b2535", width=2)
     points = [
         {"time": row.get("observed_at"), "close": row.get("price")}
         for row in detail.get("history") or []
     ]
-    _draw_card_chart(draw, {"points": points}, (95, 312, 690, 500))
+    _draw_card_chart(draw, {"points": points}, (95, 312, 690, 500), area="#241c33")
+    paste_glyph(
+        image,
+        (1020, 406),
+        memecoin_indicator(coin),
+        outer=0.9 * glyph_outer(memecoin_indicator(coin)),
+        background="#141119",
+        line="#2b2535",
+    )
     facts = [
         ("VOLUME 24H", _coin_amount(coin, "volume")),
         ("MARKET CAP", _coin_amount(coin, "market_cap")),
@@ -201,15 +212,6 @@ CARD_TONES = {
 }
 
 
-CARD_DRIVERS = {
-    "market": "#73ceff",
-    "sec_event": "#c4a7ef",
-    "news": "#a5e5b9",
-    "social_search": "#ffad70",
-    "community": "#f5c66b",
-}
-
-
 def _card_chart_rows(chart: dict[str, Any]) -> list[tuple[float, float]]:
     rows = []
     for point in chart.get("points") or []:
@@ -243,6 +245,8 @@ def _draw_card_chart(
     draw: Any,
     chart: dict[str, Any],
     box: tuple[int, int, int, int],
+    *,
+    area: str = "#17291e",
 ) -> list[str]:
     x0, y0, x1, y1 = box
     rows = _card_chart_rows(chart)
@@ -263,7 +267,7 @@ def _draw_card_chart(
         return y1 - (value - low) / span * (y1 - y0)
 
     coords = [(px(moment), py(value)) for moment, value in rows]
-    draw.polygon([*coords, (x1, y1), (x0, y1)], fill="#17291e")
+    draw.polygon([*coords, (x1, y1), (x0, y1)], fill=area)
 
     tones: list[str] = []
     run: list[tuple[float, float]] = []
@@ -292,41 +296,6 @@ def _draw_card_legend(draw: Any, tones: list[str], x: int, y: int) -> None:
         text = tone.upper()
         draw.text((cursor + 20, y), text, "#9fb2a8", font=label_font)
         cursor += 30 + int(draw.textlength(text, font=label_font)) + 26
-
-
-def _draw_card_ring(draw: Any, cx: int, cy: int, radius: int, detail: dict[str, Any]) -> None:
-    current = detail.get("current") or {}
-    score_detail = current.get("score_detail") or {}
-    parts: list[tuple[float, str]] = []
-    for driver in score_detail.get("drivers") or []:
-        value = _number(driver.get("value")) or 0.0
-        if value > 0:
-            parts.append((value, CARD_DRIVERS.get(str(driver.get("key")), "#73ceff")))
-    for penalty in score_detail.get("penalties") or []:
-        value = _number(penalty.get("value")) or 0.0
-        if value:
-            parts.append((abs(value), "#ef99a4"))
-    box = (cx - radius, cy - radius, cx + radius, cy + radius)
-    width = max(10, radius // 4)
-    draw.ellipse(box, outline="#26302c", width=width)
-    total = sum(value for value, _ in parts)
-    if total:
-        angle = -90.0
-        for value, color in parts:
-            sweep = value / total * 360.0
-            draw.arc(box, angle, angle + sweep, fill=color, width=width)
-            angle += sweep
-    inner = radius - width // 2 - 4
-    draw.ellipse(
-        (cx - inner, cy - inner, cx + inner, cy + inner),
-        fill="#253e2d",
-        outline="#668770",
-    )
-    ticker = _card_text(detail.get("ticker") or "")
-    score = current.get("score")
-    draw.text((cx, cy - 12), ticker, "#f4f8f6", font=font(20, True), anchor="mm")
-    if score is not None:
-        draw.text((cx, cy + 14), f"{float(score):.0f}", "#f4f8f6", font=font(22, True), anchor="mm")
 
 
 def _draw_card_map(draw: Any, map_data: dict[str, Any], box: tuple[int, int, int, int]) -> None:
@@ -423,7 +392,15 @@ def _ticker_card_png(
     tones = _draw_card_chart(draw, chart or {}, (95, 312, 690, 500))
     _draw_card_legend(draw, tones or ["watch"], 95, 516)
     _draw_card_map(draw, map_data or {"events": []}, (720, 300, 1105, 520))
-    _draw_card_ring(draw, 912, 410, 46, detail)
+    indicator = stock_indicator(current)
+    paste_glyph(
+        image,
+        (912, 410),
+        indicator,
+        outer=0.75 * glyph_outer(indicator),
+        background="#111514",
+        line="#26302c",
+    )
 
     draw.text(
         (95, CARD_FOOTER_Y),
