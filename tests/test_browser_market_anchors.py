@@ -228,3 +228,26 @@ def test_selected_team_probability_fits_with_full_team_names(page, width):
     no_overlap(page.locator(".ticker-name"), page.locator(".ticker-value"))
     no_overlap(page.locator(".ticker-value"), rating)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390, 430])
+def test_a_setup_coin_reason_sits_below_its_name(page, width):
+    from runner_web.memecoin_early import early_signal
+    from tests.test_memecoin_early import waking_coin
+
+    raw = screens.sample("memecoins")
+    raw.update(
+        symbol=ADDRESS, name=ADDRESS, token_address=ADDRESS, early=early_signal(waking_coin())
+    )
+    screen = listing("memecoins", [raw])
+    page.set_viewport_size(dict(width=width, height=844))
+    open_html(page, screens.render(screen))
+    row = page.locator(".ticker").first
+    expect(row.locator(".rank-detail")).to_contain_text("Volume 4.0× its 6h pace")
+    detail_line = row.locator(".rank-detail")
+    for other in (row.locator(".ticker-name strong"), row.locator(".ticker-name small").first):
+        no_overlap(detail_line, other)
+    # The reason stays inside its row.
+    box, line = row.bounding_box(), detail_line.bounding_box()
+    assert line["y"] + line["height"] <= box["y"] + box["height"] + 1
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
