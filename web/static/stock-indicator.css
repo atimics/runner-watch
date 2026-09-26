@@ -42,6 +42,9 @@
   .ticker-name>.ticker-symbol,.market-memecoins .ticker-name>strong{grid-column:1;grid-row:1}
   .market-stocks .ticker-name>small,.market-memecoins .ticker-name>small{grid-column:2;grid-row:1}
   .ticker-sentiment{grid-column:1/-1;grid-row:2}
+  /* The ranking reason gets its own line under the name, above the reading. */
+  .market-stocks .ticker-name>.rank-detail,.market-memecoins .ticker-name>.rank-detail{grid-column:1/-1;grid-row:2}
+  .ticker-name:has(>.rank-detail)>.ticker-sentiment{grid-row:3}
 }
 @media(forced-colors:active){
   .indicator-glyph{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--indicator-cluster:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}

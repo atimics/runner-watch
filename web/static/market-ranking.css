@@ -20,3 +20,10 @@
     flex-basis: 100%;
   }
 }
+/* A coin's reason keeps one line under its name; the full text is in its title. */
+.market-memecoins .ticker-name .rank-detail {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
