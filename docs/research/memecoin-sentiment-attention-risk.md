@@ -92,7 +92,10 @@ SETUP points: volume pace and buyer pace (up to 35 each; twice the usual pace
 earns a third), buyer share above half (up to 20) and unlinked net buyers in the
 chain sample (up to 10). Each pace is the stronger of the last hour against the
 five before it and the last five minutes against the hour (which needs $500 and
-5 buyers in those five minutes), so a coin under an hour old can still show one.
+5 buyers in those five minutes), so a coin under an hour old can still show one. Only time the pool existed
+counts as "before": a 5-minute pace needs a pool at least 15 minutes old and an
+hourly pace one at least 2 hours old (a seven-minute-old pool once read
+98,877× its pace).
 A score of 30 with at least one stated reason is a SETUP. An hour under $1,000
 or 10 buyers is too small to read. A bonding curve is never AVOID for thinness:
 it always quotes and has no pool to drain until it graduates.

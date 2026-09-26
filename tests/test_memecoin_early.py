@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -230,3 +230,50 @@ def test_a_copy_names_the_original_by_address_on_its_page():
     }
 
     assert facts["Original coin"] == original
+
+
+def _aged(minutes, **extra):
+    return quiet_coin(
+        pool_created_at=(AT - timedelta(minutes=minutes)).isoformat(),
+        observed_at=AT.isoformat(),
+        **extra,
+    )
+
+
+def test_a_pool_minutes_old_has_no_pace_to_speed_up_from():
+    # Live case: seven minutes after graduating, nearly all of the hour's volume
+    # was in the last five minutes, and the old formula read 98,877× its pace.
+    signal = early_signal(
+        _aged(
+            7,
+            volume_m5=140_000.0,
+            volume_h1=142_404.0,
+            volume_h6=142_404.0,
+            buyers_m5=300.0,
+            buyers_h1=320.0,
+            buyers_h6=320.0,
+            sellers_h1=70.0,
+        )
+    )
+
+    assert not any("×" in reason for reason in signal["reasons"])
+    assert signal["parts"]["volume_pace"] == signal["parts"]["buyer_pace"] == 0
+
+
+def test_a_young_pool_is_compared_only_with_the_minutes_it_existed():
+    # 20 minutes old: the last 5 minutes against the 15 before them.
+    signal = early_signal(
+        _aged(
+            20,
+            volume_m5=900.0,
+            volume_h1=1_200.0,
+            volume_h6=1_200.0,
+            buyers_m5=25.0,
+            buyers_h1=30.0,
+            buyers_h6=30.0,
+            sellers_h1=5.0,
+        )
+    )
+
+    assert "Volume 9.0× its 1h pace" in signal["reasons"]
+    assert "Buyers 15.0× their 1h pace" in signal["reasons"]
