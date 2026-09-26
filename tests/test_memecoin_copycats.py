@@ -40,13 +40,14 @@ def burst_launches():
     ]
 
 
-def search_pool(mint, address, created, liquidity):
+def search_pool(mint, address, created, liquidity, volume):
     return {
         "attributes": {
             "address": address,
             "name": "TROLLOWEEN / SOL",
             "pool_created_at": created,
             "reserve_in_usd": str(liquidity),
+            "volume_usd": {"h24": str(volume)},
         },
         "relationships": {"base_token": {"data": {"id": "solana_" + mint}}},
     }
@@ -56,10 +57,10 @@ def search_body():
     token = {"type": "token", "attributes": {"name": "TROLLOWEEN", "symbol": "TROLLOWEEN"}}
     return {
         "data": [
-            search_pool(NEW_COPY, "NewPool", "2026-10-30T15:00:00Z", 27_352),
-            search_pool(ORIGINAL, "OgPumpswap", "2025-10-07T12:00:00Z", 13_222),
-            search_pool(ORIGINAL, "OgMeteora", "2025-10-09T12:00:00Z", 875),
-            search_pool(OLD_COPY, "OldCopyPool", "2025-10-02T12:00:00Z", 4_499),
+            search_pool(NEW_COPY, "NewPool", "2026-10-30T15:00:00Z", 27_352, 209_147),
+            search_pool(ORIGINAL, "OgPumpswap", "2025-10-07T12:00:00Z", 13_222, 7_200),
+            search_pool(ORIGINAL, "OgMeteora", "2025-10-09T12:00:00Z", 875, 635),
+            search_pool(OLD_COPY, "OldCopyPool", "2025-10-02T12:00:00Z", 4_499, 18),
         ],
         "included": [
             {**token, "id": "solana_" + NEW_COPY},
@@ -153,3 +154,50 @@ def test_the_original_sets_up_on_its_copies_and_each_copy_is_avoid():
     assert copy["state"] == "avoid"
     assert copy["reasons"][0] == "Copies an older coin's name"
     assert rows[1]["copies"] == {"token_address": ORIGINAL}
+
+
+def _originals_for(body):
+    bursts = copycat_bursts(burst_launches(), AT)
+    originals, _, _ = find_originals(
+        bursts, {}, download=lambda *_: json.dumps(body).encode(), at=AT, pause=0
+    )
+    return originals
+
+
+def test_a_matching_symbol_alone_does_not_make_an_original():
+    # Live case: "Hold My Glasses" (symbol GLASSES) answered a "Glasses" burst.
+    body = search_body()
+    for token in body["included"]:
+        if token["id"] == "solana_" + ORIGINAL:
+            token["attributes"] = {"name": "Hold My Trolloween", "symbol": "TROLLOWEEN"}
+
+    assert _originals_for(body) == {}
+
+
+def test_a_coin_that_no_longer_trades_is_not_an_original():
+    body = search_body()
+    for pool in body["data"]:
+        pool["attributes"]["volume_usd"] = {"h24": "0"}
+
+    assert _originals_for(body) == {}
+
+
+def test_answers_cached_under_older_rules_are_searched_again():
+    bursts = copycat_bursts(burst_launches(), AT)
+    stale = {
+        name_key("Trolloween"): {
+            "checked_at": AT.isoformat(),
+            "original": {"token_address": "WrongOldAnswer"},
+        }
+    }
+
+    originals, _, searches = find_originals(
+        bursts,
+        stale,
+        download=lambda *_: json.dumps(search_body()).encode(),
+        at=AT,
+        pause=0,
+    )
+
+    assert searches == 1
+    assert originals[name_key("Trolloween")]["token_address"] == ORIGINAL

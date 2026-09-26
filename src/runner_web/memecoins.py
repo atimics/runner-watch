@@ -385,12 +385,12 @@ def _collect_helius(
         for original in list(originals.values())[:ORIGINAL_SLOTS]
         if original["token_address"] not in tracked
     ]
-    allowed = {item["pool_address"]: item for item in selected + curves + found}
+    # Graduated pools first, then the few originals, then curves, busiest first:
+    # a rate limit cuts the end of the list.
+    allowed = {item["pool_address"]: item for item in selected + found + curves}
     payload = []
     extra = {item["pool_address"] for item in curves + found}
-    # Graduated pools first: curves and originals are extra and may be cut short.
-    addresses = [address for address in allowed if address not in extra]
-    addresses += [address for address in allowed if address in extra]
+    addresses = list(allowed)
     for offset in range(0, len(addresses), 30):
         chunk = addresses[offset : offset + 30]
         if offset:
