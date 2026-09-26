@@ -10,6 +10,11 @@ from runner_web.helius_discovery import Rpc, rpc_request
 from runner_web.memecoin_chain_parser import PROGRAMS, SOL, parse_events, valid_transactions
 
 PAGE_SIZE = 100
+# Pump's migration authority (Global.withdraw_authority, read from the Global
+# account 2026-09-26). Every graduation to PumpSwap involves it, so its history
+# is a stream of graduations: about a thousand a day, where sampling the
+# programs caught about eleven.
+MIGRATION_AUTHORITY = "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
 
 
 def ingest_stream(stream: str, address: str, *, at: datetime, rpc: Rpc) -> dict[str, Any]:
@@ -94,11 +99,16 @@ def collect_chain(*, at: datetime, rpc: Rpc | None = None) -> dict[str, Any]:
     transactions = []
     errors = []
     successes = 0
-    # Two program pages and one wallet page cost at most 30 credits per run.
-    for index in range(2):
-        name, address = programs[(offset + index) % len(programs)]
+    # Two pages and one wallet page cost at most 30 credits per run. Every third
+    # run the second page reads the graduations: 100 of them outlast 15 minutes.
+    pages = [("program:" + name, address) for name, address in programs]
+    pages = [pages[offset % len(pages)], pages[(offset + 1) % len(pages)]]
+    if offset == 0:
+        pages[1] = ("graduations", MIGRATION_AUTHORITY)
+    for stream, address in pages:
+        name = stream.split(":", 1)[-1]
         try:
-            batch = ingest_stream("program:" + name, address, at=at, rpc=call)
+            batch = ingest_stream(stream, address, at=at, rpc=call)
             transactions.extend(batch["transactions"])
             successes += 1
         except evidence.CreditBudgetReached:

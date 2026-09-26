@@ -40,6 +40,9 @@ STALE_SECONDS = 900
 # Bonding curves quoted each cycle: those that traded last cycle keep their
 # place, and the newest launches fill the rest.
 CURVE_SLOTS = 90
+# Graduated pools that traded last cycle keep their place the same way; with the
+# graduation stream, the newest alone would turn the list over every few hours.
+ACTIVE_POOL_SLOTS = 60
 POOL_SLOTS = 100
 # Originals of copied launch names, found by name search and checked by address.
 ORIGINAL_SLOTS = 10
@@ -362,6 +365,28 @@ def _searched_pools(
     return found, True
 
 
+def _watch(
+    newest: list[dict[str, Any]],
+    active: list[dict[str, Any]],
+    *,
+    slots: int,
+    active_slots: int,
+    is_open: Callable[[dict[str, Any]], bool],
+) -> list[dict[str, Any]]:
+    """What traded last cycle keeps its place, busiest first; the newest fill the rest."""
+
+    chosen: dict[str, dict[str, Any]] = {}
+    for item in active:
+        if len(chosen) < active_slots and is_open(item):
+            chosen.setdefault(item["pool_address"], item)
+    for item in sorted(newest, key=lambda item: item["created_at"], reverse=True):
+        if len(chosen) >= slots:
+            break
+        if is_open(item):
+            chosen.setdefault(item["pool_address"], item)
+    return list(chosen.values())
+
+
 def _curve_watch(
     launches: list[dict[str, Any]],
     active: list[dict[str, Any]],
@@ -378,16 +403,19 @@ def _curve_watch(
             and curve.get("token_address") not in graduated
         )
 
-    chosen: dict[str, dict[str, Any]] = {}
-    for curve in active:
-        if len(chosen) < ACTIVE_CURVE_SLOTS and open_curve(curve):
-            chosen.setdefault(curve["pool_address"], curve)
-    for curve in sorted(launches, key=lambda item: item["created_at"], reverse=True):
-        if len(chosen) >= CURVE_SLOTS:
-            break
-        if open_curve(curve):
-            chosen.setdefault(curve["pool_address"], curve)
-    return list(chosen.values())
+    return _watch(
+        launches, active, slots=CURVE_SLOTS, active_slots=ACTIVE_CURVE_SLOTS, is_open=open_curve
+    )
+
+
+def _saved_list(key: str) -> list[dict[str, Any]]:
+    with connection() as database:
+        saved = database.execute("SELECT value FROM worker_state WHERE key=?", (key,)).fetchone()
+    try:
+        value = json.loads(saved["value"]) if saved else []
+    except (ValueError, TypeError):
+        return []
+    return value if isinstance(value, list) else []
 
 
 def _collect_helius(
@@ -402,14 +430,18 @@ def _collect_helius(
         previous = json.loads(saved["value"]) if saved else []
     except (ValueError, TypeError):
         previous = []
-    candidates = {}
-    for candidate in discovery["pools"] + previous:
-        created = _time(candidate.get("created_at"))
-        if created and 0 <= (at - created).total_seconds() <= 30 * 86400:
-            candidates.setdefault(candidate["pool_address"], candidate)
-    selected = sorted(candidates.values(), key=lambda item: item["created_at"], reverse=True)[
-        :POOL_SLOTS
-    ]
+
+    def recent_pool(pool: dict[str, Any]) -> bool:
+        created = _time(pool.get("created_at"))
+        return bool(created) and 0 <= (at - created).total_seconds() <= 30 * 86400
+
+    selected = _watch(
+        discovery["pools"] + previous,
+        _saved_list("memecoin_pool_watch"),
+        slots=POOL_SLOTS,
+        active_slots=ACTIVE_POOL_SLOTS,
+        is_open=recent_pool,
+    )
     # Keep chain discoveries while USD quotes become available in the pool index.
     _save_state("helius_discovered_pools", selected, at)
     analytics = analyze_events(discovery.get("events", []))
@@ -441,17 +473,9 @@ def _collect_helius(
         "mode": "resumable",
     }
     _save_state("memecoin_integrity_coverage", coverage, at)
-    with connection() as database:
-        saved_curves = database.execute(
-            "SELECT value FROM worker_state WHERE key='memecoin_curve_watch'"
-        ).fetchone()
-    try:
-        active_curves = json.loads(saved_curves["value"]) if saved_curves else []
-    except (ValueError, TypeError):
-        active_curves = []
     curves = _curve_watch(
         discovery.get("curves", []),
-        active_curves,
+        _saved_list("memecoin_curve_watch"),
         {item["token_address"] for item in selected},
         at,
     )
@@ -561,12 +585,20 @@ def _collect_helius(
     mark_copycats(rows, bursts, originals)
     for row in rows:
         row["early"] = early_signal(row)
-    # A curve that traded keeps its slot next cycle, busiest first.
-    traded = sorted(
-        (row for row in rows if row["venue"] == "bonding_curve"),
-        key=lambda row: -(row.get("volume_h1") or 0),
-    )
-    _save_state("memecoin_curve_watch", [row["discovery"] for row in traded], at)
+    # A pool or curve that traded keeps its slot next cycle, busiest first.
+    traded = sorted(rows, key=lambda row: -(row.get("volume_h1") or 0))
+    for key, venue in (("memecoin_curve_watch", "bonding_curve"), ("memecoin_pool_watch", "pool")):
+        _save_state(
+            key,
+            [
+                row["discovery"]
+                for row in traded
+                if row["venue"] == venue
+                and not row["discovery"].get("found_by")
+                and (row.get("volume_h1") or 0) > 0
+            ],
+            at,
+        )
     metadata = {
         key: value
         for key, value in discovery.items()
