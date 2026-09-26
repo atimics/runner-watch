@@ -176,6 +176,7 @@ from runner_web.llm_routing import (
 )
 from runner_web.market_actors import (
     ACTOR_DERIVE_INTERVAL_SECONDS,
+    coin_subject_key,
     derive_market_actors,
     market_actor_comment_budget,
     market_actor_detail,
@@ -1932,6 +1933,17 @@ def _dash_reply_markup(database: Any, text: str) -> tuple[str, str]:
             for row in rows
             if row.get("token_address") in addresses
         }
+        # A coin that has left the live board still has its page, under the id
+        # the board gave it, as long as its quote was saved.
+        for address in addresses:
+            coin_id = coin_subject_key(address)
+            if (
+                address not in coins
+                and database.execute(
+                    "SELECT 1 FROM memecoin_assets WHERE coin_id=?", (coin_id,)
+                ).fetchone()
+            ):
+                coins[address] = coin_id
     return telegram_format_reply(
         text,
         origin=RUNNERS_ORIGIN,
