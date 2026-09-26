@@ -6,7 +6,7 @@ from pathlib import Path
 from pytest import MonkeyPatch
 from starlette.testclient import TestClient
 
-from runner_web import db
+from runner_web import db, share_cards
 from runner_web import main as web_main
 from runner_web.caller_ids import ensure_machine_trader
 from runner_web.calls import create_call
@@ -37,7 +37,7 @@ def _make_call(current: datetime, *, ticker: str = "OPK") -> dict:
 
 
 def test_call_share_names_the_caller_and_subject() -> None:
-    share = web_main.call_share(
+    share = share_cards.call_share(
         {
             "public_id": "abc123",
             "ticker": "OPK",
@@ -58,7 +58,7 @@ def test_call_share_names_the_caller_and_subject() -> None:
 
 
 def test_call_share_reports_a_settled_result() -> None:
-    share = web_main.call_share(
+    share = share_cards.call_share(
         {
             "public_id": "abc123",
             "ticker": "OPK",
@@ -120,5 +120,5 @@ def test_market_screen_shares_stock_calls_from_the_record() -> None:
 
     assert '@app.get("/c/{public_id}", response_class=HTMLResponse)' in source
     assert '@app.get("/c/{public_id}/card.png")' in source
-    assert "def call_share(" in source
+    assert "def call_share(" in (root / "src/runner_web/share_cards.py").read_text()
     assert 'href="/c/{{ screen.call.public_id }}"' in template

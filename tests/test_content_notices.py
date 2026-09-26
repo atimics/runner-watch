@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from runner_web import db
+from runner_web import db, share_cards
 from runner_web import main as web_main
 from runner_web.content_notices import (
     disclosure_input,
@@ -440,7 +440,7 @@ def test_report_share_metadata_and_card_carry_current_notices(
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
         assert "no-store" in response.headers["cache-control"]
-        with web_main.Image.open(io.BytesIO(response.content)) as image:
+        with share_cards.Image.open(io.BytesIO(response.content)) as image:
             assert image.size == (1200, 630)
             if labels:
                 assert image.getpixel((100, 275)) == (59, 41, 19)
@@ -477,13 +477,13 @@ def test_report_card_changes_after_correction_and_respects_private_access(notice
 
 
 def test_report_card_fallback_font_keeps_requested_size(monkeypatch):
-    original = web_main.ImageFont.truetype
+    original = share_cards.ImageFont.truetype
 
     def missing_named_font(name, *args, **kwargs):
         if isinstance(name, str):
             raise OSError("The preferred font is unavailable")
         return original(name, *args, **kwargs)
 
-    monkeypatch.setattr(web_main.ImageFont, "truetype", missing_named_font)
-    bounds = web_main.font(37, True).getbbox("Revenue was $2.1 million.")
+    monkeypatch.setattr(share_cards.ImageFont, "truetype", missing_named_font)
+    bounds = share_cards.font(37, True).getbbox("Revenue was $2.1 million.")
     assert bounds[3] - bounds[1] >= 30

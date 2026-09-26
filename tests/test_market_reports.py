@@ -773,8 +773,8 @@ def test_a_scan_that_overruns_the_interval_still_gets_a_gap(
 def test_evening_lead_matches_page_share_card_and_message(tmp_path, monkeypatch):
     from bs4 import BeautifulSoup
 
-    from runner_web.main import _market_report_card_png, _pick_line
     from runner_web.market_reports import market_report
+    from runner_web.share_cards import _market_report_card_png, _pick_line
     from runner_web.telegram import format_market_report_post_md
 
     client = _share_client(tmp_path, monkeypatch)
