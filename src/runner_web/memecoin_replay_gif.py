@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from io import BytesIO
 
 from PIL import Image, ImageDraw, ImageFont
@@ -10,6 +11,9 @@ from runner_web.memecoin_replay import COLORS, POLICY, TIMING, blend, verify_rep
 
 SIZE = (800, 600)
 BACKGROUND = "#131c22"
+CENTER = (400, 292)
+# Rings from the outside in: (x radius, y radius, how many nodes fit).
+RINGS = ((340, 190, 24), (240, 134, 16), (145, 82, 8))
 
 
 def _color(value: str, opacity: float) -> tuple:
@@ -18,6 +22,44 @@ def _color(value: str, opacity: float) -> tuple:
     return tuple(
         round(bg[i] + (int(value[i * 2 : i * 2 + 2], 16) - bg[i]) * opacity) for i in range(3)
     )
+
+
+def ring_positions(ids: list[str]) -> dict[str, tuple[float, float]]:
+    """Place nodes on rings around the launch, like the stock map.
+
+    Saved payloads keep their own coordinates because verify_replay checks
+    them, so the GIF lays nodes out again at render time. The outer ring fills
+    first; each ring spreads its nodes evenly, starting at the top.
+    """
+    positions, start = {}, 0
+    for rx, ry, capacity in RINGS:
+        ring = ids[start : start + capacity]
+        start += capacity
+        for index, key in enumerate(ring):
+            angle = -math.pi / 2 + index * 2 * math.pi / len(ring)
+            positions[key] = (
+                round(CENTER[0] + rx * math.cos(angle), 3),
+                round(CENTER[1] + ry * math.sin(angle), 3),
+            )
+    return positions
+
+
+def ring_frames(frames: list[dict]) -> list[dict]:
+    """Move every node in the saved keyframes onto the ring layout."""
+    ids = [n["id"] for n in frames[-1]["nodes"] if n["id"] != "launch"]
+    positions = {"launch": CENTER, **ring_positions(ids)}
+    return [
+        {
+            **frame,
+            "nodes": [
+                {**node, "x": positions[node["id"]][0], "y": positions[node["id"]][1]}
+                if node["id"] in positions
+                else node
+                for node in frame["nodes"]
+            ],
+        }
+        for frame in frames
+    ]
 
 
 def draw_frame(payload: dict, frame: dict, progress: float) -> Image.Image:
@@ -70,7 +112,7 @@ def render_gif(payload: dict) -> bytes:
         durations.append(duration)
         image.close()
 
-    keys = payload["frames"]
+    keys = ring_frames(payload["frames"])
     append(keys[0], TIMING["origin_hold"], 0)
     for index, target in enumerate(keys[1:], 1):
         for step in range(1, 17):

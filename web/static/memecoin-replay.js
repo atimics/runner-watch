@@ -4,8 +4,10 @@
   if (!root) return;
   const $ = key => root.querySelector(`[data-replay-${key}]`);
   const graph = $('graph'), screen = document.getElementById('screenData');
+  window.ratiOrbit?.attach(graph);
+  const navigation = window.EntityMapNavigation.attach(graph);
   let item = (screen?.ratiScreenDetail || JSON.parse(screen?.textContent || '{}')).item || {};
-  let data = null, page = 0, receiptBase = '/api/memecoins/evidence/', selected = null;
+  let data = null, fitted = null, receiptBase = '/api/memecoins/evidence/', selected = null;
   let controller, timer, selectedPart = null;
   let glyph = {}, contributions = [], controls = [], score = '—';
   const small = matchMedia('(max-width:500px)');
@@ -104,17 +106,32 @@
     readGlyph();
     graph.replaceChildren(); graph.dataset.phase = 'settled';
     const {cx,cy} = window.RatiRingGlyph.metrics(glyph,small.matches);
-    graph.setAttribute('viewBox',small.matches ? '0 0 360 390' : '0 0 760 440');
-    const frame = data?.frames.at(-1), size = small.matches ? 4 : 8;
+    const frame = data?.frames.at(-1);
     const all = (frame?.nodes || []).filter(n => n.id !== 'launch');
     const launchWallet = data?.launch?.wallet;
     all.sort((a,b) => Number(b.address === launchWallet)-Number(a.address === launchWallet));
-    page = Math.min(page,Math.max(0,Math.ceil(all.length/size)-1));
-    const shown = all.slice(page*size,page*size+size);
+    // Every wallet sits on the stock map's ring, never a page of it. Past
+    // eight the ring becomes the wallet map's spiral, opened on its first turn.
+    const rx = small.matches ? 150 : 270, ry = 150, spiral = all.length > 8;
+    const scaleAt = index => spiral ? 1+index/12 : 1;
+    const extent = scaleAt(Math.max(0,all.length-1)), margin = 96;
+    graph.dataset.orbitCenter = `${cx},${cy}`;
+    graph.dataset.orbitTrack = `${rx},${ry}`;
+    graph.dataset.layout = spiral ? 'spiral' : 'ring';
+    // Live score refreshes redraw the map; keep the reader's zoom unless the layout changed.
+    const layout = `${small.matches}:${all.length}`;
+    if (layout !== fitted) {
+      fitted = layout;
+      navigation.fit({x:cx-rx*extent-margin,y:cy-ry*extent-margin,width:2*(rx*extent+margin),height:2*(ry*extent+margin)});
+      if (spiral) navigation.zoom((rx*extent+margin)/(rx*scaleAt(7)+margin));
+    }
     const positions = new Map([['launch',{x:cx,y:cy}]]);
-    shown.forEach((n,i) => positions.set(n.id,{x:small.matches ? (i%2 ? 278 : 82) : (i%2 ? 595 : 165),y:small.matches ? 66+Math.floor(i/2)*240 : 50+Math.floor(i/2)*103}));
-    (frame?.edges || []).forEach(edge => {const a=positions.get(edge.source),b=positions.get(edge.target); if(a&&b) graph.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:`map-edge ${edge.role === 'bought' ? 'up' : edge.role === 'sold' ? 'down' : ''}`}));});
-    shown.forEach(n => {const {x,y}=positions.get(n.id), label=n.address === launchWallet ? 'Launch wallet' : n.kind; const g=svg('g',{class:'map-person',role:'button',tabindex:0,'data-node':n.id,'aria-label':`${n.kind}: ${n.address}`}); g.append(svg('circle',{cx:x,cy:y,r:22}),svg('text',{x,y:y+5,'text-anchor':'middle'},n.address.slice(0,4)),svg('text',{x,y:y+42,'text-anchor':'middle'},label),svg('title',{},n.address)); activate(g,()=>details(n)); graph.append(g);});
+    all.forEach((n,i) => {
+      const angle = -Math.PI/2 + i*Math.PI*2/(spiral ? 8 : Math.max(1,all.length)), scale = scaleAt(i);
+      positions.set(n.id,{x:cx+rx*scale*Math.cos(angle),y:cy+ry*scale*Math.sin(angle)});
+    });
+    (frame?.edges || []).forEach(edge => {const a=positions.get(edge.source),b=positions.get(edge.target); if(a&&b) graph.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:`map-edge ${edge.role === 'bought' ? 'up' : edge.role === 'sold' ? 'down' : ''}`,'vector-effect':'non-scaling-stroke','data-orbit':''}));});
+    all.forEach(n => {const {x,y}=positions.get(n.id), label=n.address === launchWallet ? 'Launch wallet' : n.kind; const g=svg('g',{class:'map-person',role:'button',tabindex:0,'data-node':n.id,'aria-label':`${n.kind}: ${n.address}`,'data-orbit-anchor':`${x},${y}`}); g.append(svg('circle',{cx:x,cy:y,r:22}),svg('text',{x,y:y+5,'text-anchor':'middle'},n.address.slice(0,4)),svg('text',{x,y:y+42,'text-anchor':'middle'},label),svg('title',{},n.address)); activate(g,()=>details(n)); graph.append(g);});
     const ringLayer = svg('g',{class:'map-ring map-glyph'});
     window.RatiRingGlyph.draw({
       ringLayer, graph, glyph, small:small.matches, contributions, controls, score,
@@ -127,7 +144,6 @@
       const target = focusKey ? graph.querySelector(`[data-score-key="${CSS.escape(focusKey)}"]`) : focusNode ? graph.querySelector(`[data-node="${CSS.escape(focusNode)}"]`) : null;
       (target || graph.querySelector('.map-score-center'))?.focus({preventScroll:true});
     }
-    $('paging').hidden=all.length<=size; $('previous').disabled=page===0; $('next').disabled=(page+1)*size>=all.length; $('page').textContent=`${page*size+1}–${page*size+shown.length} of ${all.length}`;
   }
   const findings = () => (item.assessment?.drivers || []).filter(f => f.evidence?.length);
   function findingDetails(finding) {
@@ -160,9 +176,9 @@
     const revision=new URL(location.href).searchParams.get('replay');
     try {const res=await fetch(`/api/memecoins/${encodeURIComponent(root.dataset.coinId)}/replay${revision?'?revision='+encodeURIComponent(revision):''}`,{signal:controller.signal,headers:{Accept:'application/json'}});if(!res.ok)throw Error('Please retry to load saved chain events.');const record=await res.json();if(record.status!=='ready'){$('status').textContent=record.message || 'Saved chain events will appear here.';timer=setTimeout(load,15000);return;}data=record.payload;receiptBase=record.receipt_base||'/api/memecoins/evidence/';$('status').textContent='';draw();activity();}catch(e){if(e.name!=='AbortError')$('status').textContent=e.message;}
   }
-  $('previous').addEventListener('click',()=>{page--;draw();});$('next').addEventListener('click',()=>{page++;draw();});$('score-return').addEventListener('click',()=>overview());
+  $('score-return').addEventListener('click',()=>overview());
   root.addEventListener('keydown',e=>{if(e.key==='Escape'){overview();graph.querySelector('.map-score-center')?.focus();}});
-  small.addEventListener('change',()=>{page=0;draw();});
+  small.addEventListener('change',draw);
   screen?.addEventListener('rati:screen-detail',e=>{if(e.detail?.market!=='memecoins'||e.detail.item?.id!==root.dataset.coinId)return;item=e.detail.item;draw();activity();if(selected?.startsWith('finding:') && !findings().some(f=>'finding:'+f.id===selected)){overview();graph.querySelector('.map-score-center')?.focus();}else if(!selected)overview(controls.find(part=>part.key===selectedPart));});
   window.addEventListener('pagehide',()=>{controller?.abort();clearTimeout(timer);});
   draw();overview();activity();load();

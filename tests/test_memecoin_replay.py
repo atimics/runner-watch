@@ -25,7 +25,7 @@ from runner_web.memecoin_chain_parser import (
     PUMP_SWAP,
     parse_events,
 )
-from runner_web.memecoin_replay_gif import render_gif
+from runner_web.memecoin_replay_gif import RINGS, render_gif
 from runner_web.memecoin_replay_posts import caption, dispatch_memecoin_replays
 from runner_web.memecoin_store import save_memecoin_snapshot
 from runner_web.telegram import AnimationDeliveryError
@@ -238,6 +238,32 @@ def test_event_node_and_keyframe_limits_are_recorded(monkeypatch):
     assert len(data["frames"][-1]["nodes"]) <= 6
     assert data["coverage"]["drawn_events"] < data["coverage"]["saved_events"]
     assert data["launch"] is not None
+
+
+def test_gif_places_every_node_on_rings_around_the_launch():
+    from runner_web.memecoin_replay_gif import CENTER, ring_frames
+
+    frames = ring_frames(payload()["frames"])
+    for frame in frames:
+        for node in frame["nodes"]:
+            if node["id"] == "launch":
+                assert (node["x"], node["y"]) == CENTER
+                continue
+            x, y = node["x"] - CENTER[0], node["y"] - CENTER[1]
+            assert any(abs((x / rx) ** 2 + (y / ry) ** 2 - 1) < 1e-3 for rx, ry, _ in RINGS)
+    ids = [n["id"] for n in frames[-1]["nodes"] if n["id"] != "launch"]
+    # The first node starts at the top of the outer ring, like the stock map.
+    first = next(n for n in frames[-1]["nodes"] if n["id"] == ids[0])
+    assert (first["x"], first["y"]) == (CENTER[0], CENTER[1] - RINGS[0][1])
+
+
+def test_gif_rings_hold_every_node_the_replay_can_draw():
+    from runner_web.memecoin_replay_gif import ring_positions
+
+    ids = [str(i) for i in range(replay.POLICY["max_nodes"] - 1)]
+    positions = ring_positions(ids)
+    assert len(positions) == len(ids)
+    assert len(set(positions.values())) == len(ids)
 
 
 def test_gif_is_animated_and_loops_with_readable_keyframe_holds():
