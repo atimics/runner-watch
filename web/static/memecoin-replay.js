@@ -47,7 +47,13 @@
     root.querySelectorAll('[data-replay-event], [data-finding-id]').forEach(b => b.setAttribute('aria-pressed','false'));
     graph.querySelectorAll('[data-score-key]').forEach(b => b.setAttribute('aria-pressed',String(b.dataset.scoreKey === selectedPart)));
     const panel = $('selection'); panel.replaceChildren();
-    panel.append(make('p',`Attention ${score === '—' ? 'unavailable' : score + ' points'} · Chain evidence tone: ${glyph.sentimentMix.reading} · ${window.RatiRingGlyph.riskReading(glyph.risk)}`,'map-glyph-reading'));
+    // Only what was measured: a reading that is unavailable is left out, not announced.
+    const reading = [
+      score === '—' ? null : `Attention ${score} points`,
+      glyph.sentimentMix.state === 'available' ? `Chain evidence tone: ${glyph.sentimentMix.reading}` : null,
+      glyph.risk === 'unknown' ? null : window.RatiRingGlyph.riskReading(glyph.risk),
+    ].filter(Boolean);
+    if (reading.length) panel.append(make('p',reading.join(' · '),'map-glyph-reading'));
     if (part) {
       panel.append(make('h4',part.label));
       if (part.key === 'risk') panel.append(make('p',`${window.RatiRingGlyph.riskReading(glyph.risk)}.`));
@@ -61,7 +67,7 @@
     const list = make('ul',null,'map-score-legend');
     contributions.forEach(p => {const li = make('li'), dot = make('span',null,'map-score-swatch'); dot.style.background = `var(--indicator-${p.key})`; dot.dataset.pattern = p.key; dot.setAttribute('aria-hidden','true'); li.append(dot,make('span',p.label),make('strong',points(p.value))); list.append(li);});
     if (list.children.length) panel.append(list);
-    else panel.append(make('p',glyph.mix === 'zero' ? 'Saved attention contributions total zero.' : 'Attention breakdown is awaiting a saved assessment.','map-glyph-empty'));
+    else if (glyph.mix === 'zero') panel.append(make('p','Saved attention contributions total zero.','map-glyph-empty'));
     if (item.assessment?.reason) panel.append(make('p',item.assessment.reason));
     document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
   }

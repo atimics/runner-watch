@@ -29,3 +29,4 @@
   .anchor-memecoins .chip,.anchor-sports .chip{min-height:36px}
 }
 @media(max-width:360px){.row-assessment .ticker-score{width:30px}.row-assessment>small{font-size:8px}}
+.anchor-memecoins .pool-state{margin:4px 0 16px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:10px;background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--text);font-size:14px;line-height:1.4}.anchor-memecoins .pool-state[hidden]{display:none}.anchor-memecoins [data-market-assessment][hidden]{display:none}

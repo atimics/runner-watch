@@ -292,6 +292,18 @@ def test_opening_requires_a_fresh_enabled_source(calls_db, monkeypatch, state):
     assert _balance("bob") == 500
 
 
+def test_a_call_is_refused_on_a_pool_too_thin_to_fill(calls_db, monkeypatch):
+    _refresh(calls_db)
+    _fund("alice")
+    detail = memecoins.memecoin_detail("dogecoin")
+    detail["coin"]["liquidity_usd"] = 2500.0
+    monkeypatch.setattr(memecoins, "memecoin_detail", lambda _coin_id: detail)
+
+    with pytest.raises(ValueError, match="too thin to fill a Call fairly"):
+        call_service.create_memecoin_call("alice", "dogecoin")
+    assert _rows() == []
+
+
 def test_a_close_fills_only_at_a_quote_after_the_request(calls_db):
     _refresh(calls_db)
     _fund("alice")

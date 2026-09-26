@@ -832,6 +832,30 @@ def call_record(
     }
 
 
+def _pool_facts(coin: dict[str, Any]) -> list[dict[str, str]]:
+    """Liquidity, value, trades and age: the pool numbers a reader judges a coin by."""
+
+    facts = []
+    for key, label in (("liquidity_label", "Liquidity"), ("fdv_label", "Fully diluted value")):
+        value = coin.get(key)
+        if value and value != "—":
+            facts.append({"label": label, "value": str(value)})
+    buys, sells = number(coin.get("buys_24h")), number(coin.get("sells_24h"))
+    if buys is not None and sells is not None:
+        facts.append({"label": "24h trades", "value": f"{buys:,.0f} buys · {sells:,.0f} sells"})
+    opened = coin.get("pool_created_at")
+    try:
+        at = datetime.fromisoformat(str(opened)) if opened else None
+    except ValueError:
+        at = None
+    if at is not None:
+        at = at if at.tzinfo else at.replace(tzinfo=UTC)
+        days = max(0, (datetime.now(UTC) - at).days)
+        age = "today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
+        facts.append({"label": "Pool opened", "value": f"{at:%b} {at.day} · {age}"})
+    return facts
+
+
 def detail(
     market: str,
     data: dict[str, Any],
@@ -1040,6 +1064,9 @@ def detail(
         volume = source.get("volume_label") if market == "memecoins" else None
         if volume:
             result["facts"].append({"label": "24h volume", "value": volume})
+        if market == "memecoins":
+            result["facts"].extend(_pool_facts(source))
+            result["pool_state"] = data.get("pool_state")
         can_call = (
             bool(data.get("can_call"))
             if "can_call" in data or market == "memecoins"
@@ -1059,6 +1086,12 @@ def detail(
             if waiting:
                 # A request is already queued; the next quote fills it.
                 result["facts"].append({"label": "Your Call", "value": waiting})
+                can_call = False
+            elif not active_call and (result["pool_state"] or {}).get("calls_closed"):
+                # An open Call can still be closed; only new ones are refused.
+                result["facts"].append(
+                    {"label": "Calls", "value": "Closed while the pool is this thin"}
+                )
                 can_call = False
         if can_call:
             endpoint = (

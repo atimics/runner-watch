@@ -487,6 +487,47 @@ def test_coin_actions_follow_quote_availability():
     assert action["endpoint"] == "/api/memecoin-calls/call-1/close"
 
 
+def _drained_coin():
+    return {
+        **sample("memecoins"),
+        "change_24h": -99.994,
+        "liquidity_label": "$2.51K",
+        "fdv_label": "$2.52K",
+        "buys_24h": 2592.0,
+        "sells_24h": 1696.0,
+        "pool_created_at": (datetime.now(UTC) - timedelta(days=4, hours=1)).isoformat(),
+    }
+
+
+def test_a_drained_pool_says_so_and_refuses_new_calls():
+    pool = {"text": "Collapsed: down 99.99% in 24h, $2.51K left in the pool.", "calls_closed": True}
+    screen = detail("memecoins", {"coin": _drained_coin(), "can_call": True, "pool_state": pool})
+
+    assert screen["actions"] == []
+    facts = {fact["label"]: fact["value"] for fact in screen["facts"]}
+    assert facts["Calls"] == "Closed while the pool is this thin"
+    assert facts["Liquidity"] == "$2.51K"
+    assert facts["Fully diluted value"] == "$2.52K"
+    assert facts["24h trades"] == "2,592 buys · 1,696 sells"
+    assert facts["Pool opened"].endswith("· 4 days ago")
+    assert pool["text"] in render(screen)
+
+
+def test_a_call_on_a_drained_pool_can_still_be_closed():
+    pool = {"text": "Thin pool", "calls_closed": True}
+    data = {"coin": _drained_coin(), "can_call": True, "pool_state": pool}
+    action = detail("memecoins", data, active_call={"public_id": "call-1"})["actions"][0]
+
+    assert action["label"] == "Close Call"
+
+
+def test_a_healthy_coin_shows_no_pool_warning_or_empty_evidence():
+    page = render(detail("memecoins", {"coin": sample("memecoins"), "can_call": True}))
+
+    assert "data-pool-state hidden" in page
+    assert "data-market-assessment hidden" in page
+
+
 def test_sports_closed_game_has_score_and_existing_call():
     screen = detail("sports", sample("sports"), my_pick={"result": "win"})
     assert screen["actions"] == []

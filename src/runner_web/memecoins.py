@@ -25,6 +25,10 @@ from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, 
 POOL_QUOTES_URL = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/"
 SOURCE = "GeckoTerminal"
 MIN_POOL_LIQUIDITY_USD = 1000
+# Below this a single trade moves the price a long way, so a Call would settle
+# at a quote nobody could trade at.
+MIN_CALL_LIQUIDITY_USD = 5000
+COLLAPSE_CHANGE_PCT = -90.0
 REFRESH_SECONDS = 300
 STALE_SECONDS = 900
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -398,6 +402,26 @@ def _amount_label(value: float | None) -> str:
     return f"${value:,.2f}"
 
 
+def pool_state(coin: dict[str, Any]) -> dict[str, Any] | None:
+    """What the pool says about the coin in plain words, or None when nothing is wrong.
+
+    Only the latest quote's liquidity and 24h change are read. A pool too thin
+    to trade closes Calls; a collapse on a deep pool is only reported.
+    """
+
+    liquidity = _number(coin.get("liquidity_usd"), minimum=0)
+    change = _number(coin.get("change_24h"))
+    thin = liquidity is not None and liquidity < MIN_CALL_LIQUIDITY_USD
+    left = f"{_amount_label(liquidity)} left in the pool"
+    if change is not None and change <= COLLAPSE_CHANGE_PCT:
+        text = f"Collapsed: down {abs(change):.2f}% in 24h" + (f", {left}." if thin else ".")
+    elif thin:
+        text = f"Thin pool: {left}. One trade can move the price a long way."
+    else:
+        return None
+    return {"text": text, "calls_closed": thin}
+
+
 def _market_states(*, keys: tuple[str, ...] | None = None) -> dict[str, Any]:
     requested = keys or (
         "memecoins_snapshot",
@@ -432,6 +456,8 @@ def _quote_display(row: dict[str, Any], collected_at: Any, at: datetime) -> dict
     row["price_label"] = _price_label(row["price"])
     row["volume_label"] = _amount_label(row["volume_24h"])
     row["market_cap_label"] = _amount_label(row["market_cap"])
+    row["liquidity_label"] = _amount_label(_number(row.get("liquidity_usd"), minimum=0))
+    row["fdv_label"] = _amount_label(_number(row.get("fully_diluted_valuation"), minimum=0))
     row["detail_url"] = f"/memecoins/coin/{row['id']}"
     if row.get("token_address"):
         # Rows saved before claimed_* existed carried an address prefix as symbol.

@@ -92,7 +92,8 @@ def test_coin_map_uses_stock_layout_and_ticker_center(page: Page, width: int):
     expect(page.locator("[data-replay-events] button")).to_have_count(
         len({e["event_id"] for e in data["frames"][-1]["edges"]})
     )
-    expect(page.get_by_role("region", name="Token evidence")).to_be_visible()
+    # With no chain finding saved, the evidence block stays out of the way.
+    expect(page.locator("[data-market-assessment]")).to_be_hidden()
     expect(page.locator("[data-replay-gif], .replay-controls")).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert not errors
@@ -198,7 +199,8 @@ def test_quote_only_ring_explains_unknown_values(page: Page):
     expect(page.locator("[data-replay-selection]")).to_contain_text(
         "Risk factor checks unavailable."
     )
-    expect(page.locator("[data-replay-selection]")).to_contain_text("Attention unavailable")
+    expect(page.locator("[data-replay-selection]")).not_to_contain_text("unavailable ·")
+    expect(page.locator(".map-glyph-reading")).to_have_count(0)
 
 
 def test_glyph_refresh_preserves_selection_and_clears_removed_assessment(page: Page):
@@ -230,7 +232,8 @@ def test_glyph_refresh_preserves_selection_and_clears_removed_assessment(page: P
     page.clock.fast_forward(61000)
     expect(page.locator(".map-glyph")).to_have_attribute("data-mix", "unknown")
     expect(page.locator(".map-score-segment")).to_have_count(0)
-    expect(page.locator("[data-replay-selection]")).to_contain_text("Attention unavailable")
+    expect(page.locator("[data-replay-selection]")).not_to_contain_text("unavailable ·")
+    expect(page.locator(".map-glyph-reading")).to_have_count(0)
     expect(page.locator("[data-replay-selection]")).to_contain_text(
         "Risk factor checks unavailable"
     )

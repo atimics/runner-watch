@@ -293,6 +293,8 @@
     } else {
       close?.remove();
     }
+    const pool = document.querySelector('[data-pool-state]');
+    if (pool) { pool.textContent = next.pool_state?.text || ''; pool.hidden = !next.pool_state; }
     const facts = document.querySelector('[data-facts]');
     if (facts) {
       facts.replaceChildren(...next.facts.map(fact => {

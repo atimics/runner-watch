@@ -633,3 +633,27 @@ def test_creator_names_are_folded_and_stripped_of_hiding_characters():
     assert display_claim({"claimed_name": REAL}) is None
     assert display_claim({"claimed_name": "DezXAZ…pPB263"}) is None
     assert display_claim({"claimed_name": "Wait... what"}) == "Wait... what"
+
+
+@pytest.mark.parametrize(
+    ("liquidity", "change", "text", "closed"),
+    [
+        (2514.16, -99.994, "Collapsed: down 99.99% in 24h, $2.51K left in the pool.", True),
+        (
+            2514.16,
+            3.0,
+            "Thin pool: $2.51K left in the pool. One trade can move the price a long way.",
+            True,
+        ),
+        (250_000, -95.0, "Collapsed: down 95.00% in 24h.", False),
+    ],
+)
+def test_pool_state_names_a_drained_or_thin_pool(liquidity, change, text, closed):
+    state = memecoins.pool_state({"liquidity_usd": liquidity, "change_24h": change})
+
+    assert state == {"text": text, "calls_closed": closed}
+
+
+def test_pool_state_is_quiet_for_a_healthy_or_unmeasured_pool():
+    assert memecoins.pool_state({"liquidity_usd": 250_000, "change_24h": -40.0}) is None
+    assert memecoins.pool_state({"change_24h": 3.0}) is None
