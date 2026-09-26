@@ -370,9 +370,10 @@
       applyTagFilter();
       // Surface replacement contains fresh SVG shells. Repaint saved histories
       // immediately, then refresh the same bounded batch (not one call per row).
-      if (content.querySelector('.market-stocks')) {
+      const charted = content.querySelector('.market-stocks, .market-memecoins');
+      if (charted) {
         window.TickerRow?.paintCharts();
-        window.TickerRow?.loadCharts('/api/pulse/charts');
+        window.TickerRow?.loadCharts(charted.classList.contains('market-memecoins') ? '/api/memecoins/charts' : '/api/pulse/charts');
       }
     } catch (_) { /* Keep the saved view during connection recovery. */ }
   }

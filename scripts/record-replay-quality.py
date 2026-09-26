@@ -48,7 +48,6 @@ sources = [
     Path("fly.toml"),
     Path("src/runner_web/memecoin_store.py"),
     Path("web/static/memecoin-replay.js"),
-    Path("web/static/memecoin-replay.css"),
     Path("web/templates/simple_coin_detail.html"),
     Path("web/templates/market_screen.html"),
     Path("web/templates/_memecoin_replay.html"),

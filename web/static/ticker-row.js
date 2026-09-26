@@ -320,14 +320,14 @@
   }
 
   function pageTickers(offset) {
-    return [...document.querySelectorAll(`.market-stocks .ticker[data-chart-offset="${offset}"] .mini-chart[data-ticker]`)]
+    return [...document.querySelectorAll(`.ticker-list .ticker[data-chart-offset="${offset}"] .mini-chart[data-ticker]`)]
       .map(svg => svg.dataset.ticker);
   }
 
   // Load the first page at once. Fetch later pages only as their rows enter view.
   function observeCharts(url) {
     chartObserver?.disconnect();
-    const rows = [...document.querySelectorAll('.market-stocks .ticker[data-chart-offset]')];
+    const rows = [...document.querySelectorAll('.ticker-list .ticker[data-chart-offset]')];
     const visible = new Set(rows.map(row => row.querySelector('.mini-chart')?.dataset.ticker).filter(Boolean));
     for (const ticker of chartCache.keys()) {
       if (!visible.has(ticker)) { chartCache.delete(ticker); annotationCache.delete(ticker); chartFailures.delete(ticker); }
@@ -367,6 +367,8 @@
       try {
         const target = new URL(url, window.location.href);
         if (offset) target.searchParams.set('offset', String(offset));
+        // Boards keyed by id (memecoins) ask for the rows on the page by name.
+        if (target.pathname.startsWith('/api/memecoins/')) target.searchParams.set('ids', tickers.join(','));
         const response = await fetch(target, {signal:controller.signal});
         if (!response.ok || response.redirected) throw new Error('Chart refresh unavailable');
         const data = await response.json();
@@ -388,7 +390,7 @@
         chartRetries.delete(offset);
       } catch (_) {
         tickers.forEach(ticker => chartFailures.add(ticker));
-        if (offset > 0 && !chartRetries.has(offset) && document.querySelector('.market-stocks')) {
+        if (offset > 0 && !chartRetries.has(offset) && document.querySelector('.market-stocks, .market-memecoins')) {
           chartRetries.add(offset);
           chartRetryTimers.set(offset, setTimeout(() => {
             chartRetryTimers.delete(offset);

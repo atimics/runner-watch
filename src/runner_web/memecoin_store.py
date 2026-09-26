@@ -87,6 +87,33 @@ def stored_memecoin(coin_id: str) -> dict[str, Any] | None:
     }
 
 
+SPARKLINE_POINTS = 48
+
+
+def memecoin_sparklines(coin_ids: list[str], *, at: datetime) -> dict[str, list[dict[str, Any]]]:
+    """Last 24 hours of saved prices for board rows, thinned to a sparkline's width."""
+    ids = list(dict.fromkeys(coin_ids))[:50]
+    if not ids:
+        return {}
+    with connection() as database:
+        rows = database.execute(
+            f"""
+            SELECT coin_id,observed_at,price FROM memecoin_quote_history
+            WHERE coin_id IN ({",".join("?" * len(ids))}) AND observed_at>=? AND observed_at<=?
+            ORDER BY coin_id,observed_at
+            """,
+            (*ids, (at - timedelta(days=1)).isoformat(), (at + timedelta(seconds=60)).isoformat()),
+        ).fetchall()
+    series: dict[str, list[dict[str, Any]]] = {coin_id: [] for coin_id in ids}
+    for row in rows:
+        series[row["coin_id"]].append({"time": row["observed_at"], "price": row["price"]})
+    for coin_id, points in series.items():
+        if len(points) > SPARKLINE_POINTS:
+            step = (len(points) - 1) / (SPARKLINE_POINTS - 1)
+            series[coin_id] = [points[round(i * step)] for i in range(SPARKLINE_POINTS)]
+    return series
+
+
 def memecoin_history(coin_id: str, *, at: datetime, limit: int = 288) -> list[dict[str, Any]]:
     bounded_limit = max(1, min(int(limit), MAX_DETAIL_HISTORY))
     with connection() as database:

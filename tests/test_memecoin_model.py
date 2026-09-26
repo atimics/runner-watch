@@ -299,7 +299,7 @@ def test_worker_saves_same_model_for_list_detail_and_render(market_db, monkeypat
     )
     html = render(detail("memecoins", opened))
     assert "Attention" in html and "15-minute swap sample" in html
-    assert "Checks awaiting data" in html and "Sale proceeds at a stated position size" in html
+    assert "Awaiting data: Sale proceeds at a stated position size" in html
     assert "2" in str(saved["memecoin_assessment"]["coverage"]["recorded_coverage_gaps"])
     paused = memecoins.memecoin_detail(coin["id"], at=AT + timedelta(minutes=16))
     assert paused["coin"]["attention_score"] is None

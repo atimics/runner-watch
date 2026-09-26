@@ -481,6 +481,12 @@ def row(
                 ),
             }
             if market == "stocks"
+            else {
+                "assessment_quote_label": (
+                    f"Assessment saved {stamp(rating['as_of'])}" if rating["as_of"] else ""
+                )
+            }
+            if rating is not None
             else {}
         ),
         "id": identifier,
@@ -509,6 +515,8 @@ def row(
             item.get("observed_at") if coin else item.get("quote_time") or item.get("event_at")
         ),
         "href": ("/memecoins/coin/" if coin else "/stock/") + quote(identifier, safe=""),
+        # Sparklines key coins by id: the displayed name is a shortened address.
+        **({"chart_key": identifier} if coin else {}),
         "mark": name[:2],
         "tag": tag,
         "tag_tone": tag_tone,
@@ -517,7 +525,8 @@ def row(
         "score_detail": score_detail,
         "score_as_of": item.get("score_as_of"),
         "score_policy": item.get("score_policy"),
-        "eligibility_note": item.get("eligibility_note"),
+        # Coins read their saved assessment on the same line stocks use for eligibility.
+        "eligibility_note": rating["reason"] if coin and rating else item.get("eligibility_note"),
         "attention_urgent": bool(item.get("attention_urgent")),
         "feature_as_of": item.get("feature_as_of"),
         "quote_as_of": item.get("quote_as_of"),
@@ -599,7 +608,7 @@ def listing(
 
     _ = view, graph  # Kept so saved links keep working; the map lives on the ticker page now.
     pairs = [(item, row(market, item)) for item in items]
-    if market == "stocks":
+    if market in {"stocks", "memecoins"}:
         for index, (_, display) in enumerate(pairs):
             display["chart_offset"] = (index // 50) * 50
     query = query.strip()[:80]
