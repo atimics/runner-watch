@@ -46,6 +46,7 @@ def test_saved_coin_score_and_contributions_reach_list_and_detail():
     )
     listed = listing("memecoins", [source])["rows"][0]
     opened = detail("memecoins", {"coin": source})["item"]
+    assert listed.pop("chart_offset") == 0
     assert listed == opened
     assert listed["score"] == 54
     assert listed["tag"] == "SETUP"

@@ -12,7 +12,7 @@
 .anchor-sports .sports-identity { grid-area: name; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
 .sports-team-pair { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .anchor-sports .sports-team-pair .sports-team { color: var(--soft); font-size: 15px; line-height: 1.25; font-weight: 550; white-space: normal; overflow-wrap: anywhere; }
-.anchor-sports .sports-team-pair .is-highlighted { color: var(--green); font-size: 20px; font-weight: 750; }
+.anchor-sports .sports-team-pair .is-highlighted { color: var(--accent); font-size: 20px; font-weight: 750; }
 .sports-versus { color: var(--muted); font-size: 11px; }
 .anchor-sports .sports-identity > .sports-league { font-size: 12px; }
 .anchor-sports .sports-score { grid-area: value; display: flex; flex-direction: column; align-items: flex-end; align-self: center; gap: 5px; min-width: 0; }
@@ -68,7 +68,7 @@
 .sports-opinion-chart-heading,.sports-opinion-chart-legend,.sports-opinion-chart-times { display: flex; justify-content: space-between; gap: 12px; }
 .sports-opinion-chart-heading h3 { margin: 0; font-size: 15px; }
 .sports-opinion-chart-legend { justify-content: flex-start; gap: 18px; margin-top: 8px; font-size: 11px; }
-.sports-opinion-chart-legend span::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: var(--green); }
+.sports-opinion-chart-legend span::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: var(--accent); }
 .sports-opinion-chart-legend .is-market::before { background: var(--blue); }
 .sports-opinion-chart-plot { position: relative; padding-left: 36px; margin-top: 8px; }
 .sports-opinion-chart-plot > span { position: absolute; left: 0; color: var(--muted); font-size: 10px; }
@@ -77,9 +77,9 @@
 .sports-opinion-chart-plot svg { display: block; width: 100%; height: 170px; }
 .sports-opinion-chart-plot polyline { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .sports-opinion-chart-grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.sports-opinion-chart-model { stroke: var(--green); }
+.sports-opinion-chart-model { stroke: var(--accent); }
 .sports-opinion-chart-market { stroke: var(--blue); }
-.sports-opinion-chart-model-dot { fill: var(--green); }
+.sports-opinion-chart-model-dot { fill: var(--accent); }
 .sports-opinion-chart-market-dot { fill: var(--blue); }
 .sports-opinion-chart-times { padding-left: 36px; color: var(--muted); font-size: 10px; }
 .sports-opinion-chart > p { margin: 8px 0 0; font-size: 11px; }
@@ -93,12 +93,12 @@
 .sports-opinion-steps li { display: grid; grid-template-columns: 105px minmax(0, 1fr) 76px; align-items: center; gap: 10px; min-height: 30px; font-size: 12px; }
 .sports-opinion-steps li strong { text-align: right; }
 .sports-opinion-track { position: relative; height: 9px; background: var(--line); border-radius: 8px; overflow: hidden; }
-.sports-opinion-bar { position: absolute; top: 0; height: 100%; background: var(--green); }
+.sports-opinion-bar { position: absolute; top: 0; height: 100%; background: var(--accent); }
 .sports-opinion-bar-venue { background: var(--amber); }
 .sports-opinion-bar-clamp { background: var(--purple); }
 .sports-opinion-bar.is-negative { background: repeating-linear-gradient(135deg, var(--amber) 0 3px, var(--line) 3px 5px); }
 .sports-opinion-context { display: flex; flex-wrap: wrap; gap: 4px 18px; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
-.sports-opinion-context a { color: var(--green); text-decoration: underline; }
+.sports-opinion-context a { color: var(--accent); text-decoration: underline; }
 .sports-opinion-legacy { margin: 12px 0 0; }
 @media (max-width: 760px) {
   .anchor-sports .ticker.sports-matchup {

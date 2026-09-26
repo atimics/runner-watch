@@ -100,7 +100,7 @@ def test_long_market_list_names_fit(page, width, kind):
     row = page.locator(".ticker")
     expect(row).to_have_count(1)
     if kind == "coin":
-        expect(row.locator(".row-assessment")).to_contain_text("Market quote")
+        expect(row.locator(".mini-chart")).to_have_attribute("data-ticker", raw["id"])
     if kind == "team":
         expect(row.locator(".sports-team")).to_have_text(
             [team["label"] for team in screen["rows"][0]["matchup"]["teams"]]
@@ -174,18 +174,23 @@ def test_detail_api_refresh_updates_assessment_evidence(page):
         ],
         risks=["Liquidity remains concentrated."],
     )
+    # The server derives the stock-style note line from the saved assessment.
+    refreshed["item"].update(
+        tag="WATCH",
+        eligibility_note=refreshed["item"]["assessment"]["reason"],
+        assessment_quote_label="Assessment saved 2026-09-19 14:00 UTC",
+    )
     page.set_viewport_size(dict(width=390, height=844))
     open_html(page, screens.render(screen), refreshed)
-    expect(page.locator("[data-assessment-label]")).to_have_text("Updated saved assessment")
-    expect(page.locator("[data-assessment-value]")).to_have_text("72")
+    expect(page.locator("[data-assessment-tag]")).to_have_text("WATCH")
     expect(page.locator("[data-assessment-reason]")).to_have_text(
         refreshed["item"]["assessment"]["reason"]
     )
-    expect(page.locator("[data-assessment-time]")).to_contain_text("2026-09-19 14:00 UTC")
-    source = page.locator("[data-assessment-drivers] a")
-    expect(source).to_have_attribute("href", "https://example.com/new")
-    page.locator("[data-assessment-evidence] summary").click()
-    expect(page.locator("[data-assessment-risks]")).to_have_text("Liquidity remains concentrated.")
+    expect(page.locator("[data-assessment-quote]")).to_contain_text("2026-09-19 14:00 UTC")
+    evidence = page.get_by_role("region", name="Token evidence")
+    expect(evidence.locator("summary")).to_have_text("Token evidence · 1 finding")
+    expect(evidence.locator("a")).to_have_attribute("href", "https://example.com/new")
+    expect(evidence.locator("li").last).to_have_text("Watch: Liquidity remains concentrated.")
 
 
 def test_coin_contract_copy_uses_the_full_address(page):
