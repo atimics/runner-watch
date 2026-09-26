@@ -52,3 +52,15 @@ def test_a_failing_job_is_still_measured_and_still_raises(monkeypatch, caplog):
 
 def test_peak_memory_is_reported_in_megabytes():
     assert 1 < process_memory.peak_rss_mb() < 100_000
+
+
+def test_the_memory_trend_is_logged_every_few_minutes(monkeypatch, caplog):
+    monkeypatch.setattr(process_memory, "_last_trend_at", None)
+    monkeypatch.setattr(process_memory, "rss_mb", lambda: 512.4)
+    moments = iter([0.0, 60.0, 301.0])
+
+    with caplog.at_level(logging.WARNING, logger="runner_web.process_memory"):
+        for _ in range(3):
+            process_memory.log_memory_trend(clock=lambda: next(moments))
+
+    assert caplog.text.count("memory_trend rss_mb=512") == 2
