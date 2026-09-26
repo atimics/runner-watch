@@ -48,6 +48,8 @@ MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS + ORIGINAL_SLOTS
 # GeckoTerminal answers a burst of batch requests with 429, so space them out.
 # Two seconds still drew a 429 on the fourth of seven batches in production.
 QUOTE_PAUSE_SECONDS = 5.0
+# A rate-limited pool batch waits this long and tries once more.
+RATE_LIMIT_RETRY_SECONDS = 30.0
 ACTIVE_CURVE_SLOTS = 60
 CURVE_HOURS = 24
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -364,14 +366,11 @@ def _collect_helius(
         original_cache = json.loads(saved_originals["value"]) if saved_originals else {}
     except (ValueError, TypeError):
         original_cache = {}
-    originals, original_cache, searches = find_originals(
-        bursts,
-        original_cache if isinstance(original_cache, dict) else {},
-        download=download,
-        at=at,
-        pause=QUOTE_PAUSE_SECONDS,
+    original_cache = original_cache if isinstance(original_cache, dict) else {}
+    # Quote the originals already found; new searches wait until the pools are in.
+    originals, _, _ = find_originals(
+        bursts, original_cache, download=download, at=at, pause=0, max_searches=0
     )
-    _save_state("memecoin_copycat_originals", original_cache, at)
     tracked = {item["token_address"] for item in selected + curves}
     found = [
         {
@@ -394,16 +393,21 @@ def _collect_helius(
     addresses += [address for address in allowed if address in extra]
     for offset in range(0, len(addresses), 30):
         chunk = addresses[offset : offset + 30]
-        if offset or searches:
+        if offset:
             time.sleep(QUOTE_PAUSE_SECONDS)
         url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(chunk)
         try:
             body = download(url, 10.0)
         except urllib.error.HTTPError as exc:
-            if exc.code == 429 and extra.issuperset(chunk):
+            if exc.code != 429:
+                raise
+            if extra.issuperset(chunk):
                 LOG.warning("Pool quotes rate limited; skipped %d extras", len(addresses) - offset)
                 break
-            raise
+            # The pools are the board itself, so wait out the limit once before failing.
+            LOG.warning("Pool quotes rate limited; retrying in %ds", RATE_LIMIT_RETRY_SECONDS)
+            time.sleep(RATE_LIMIT_RETRY_SECONDS)
+            body = download(url, 10.0)
         if len(body) > MAX_RESPONSE_BYTES:
             raise ValueError("Pool quote response exceeds the size limit")
         batch = json.loads(body)
@@ -424,6 +428,12 @@ def _collect_helius(
             except (KeyError, TypeError):
                 continue
     rows = normalize_chain_pools({"data": payload}, at=at)
+    # Search for new originals last, so a rate limit here costs only the search;
+    # what is found is quoted from the next cycle.
+    _, original_cache, _ = find_originals(
+        bursts, original_cache, download=download, at=at, pause=QUOTE_PAUSE_SECONDS
+    )
+    _save_state("memecoin_copycat_originals", original_cache, at)
     claims = {
         event["token_address"]: event
         for event in sorted(discovery.get("events", []), key=lambda event: event["observed_at"])

@@ -149,11 +149,13 @@ def find_originals(
     download: Callable[[str, float], bytes],
     at: datetime,
     pause: float,
+    max_searches: int = MAX_SEARCHES,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any], int]:
     """Originals for current bursts, searching at most a few names a cycle.
 
-    Results are cached for six hours, found or not. A failed search skips the
-    name this cycle; it never fails the refresh.
+    Results are cached for six hours, found or not, and each search waits
+    `pause` first. A failed search skips the name this cycle; it never fails
+    the refresh. With `max_searches=0` only the cache is read.
     """
 
     fresh: dict[str, Any] = {}
@@ -166,10 +168,9 @@ def find_originals(
             fresh[key] = entry
     searches = 0
     for key, burst in sorted(bursts.items(), key=lambda item: (-item[1]["h24"], item[0])):
-        if key in fresh or searches >= MAX_SEARCHES:
+        if key in fresh or searches >= max_searches:
             continue
-        if searches:
-            time.sleep(pause)
+        time.sleep(pause)
         searches += 1
         query = urlencode({"query": burst["query"], "network": "solana", "include": "base_token"})
         try:
