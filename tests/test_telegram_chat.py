@@ -696,3 +696,29 @@ def test_the_room_gets_a_formatted_reply(wired, monkeypatch):
     assert text == f"look at {CA}"
     assert f"<code>{CA}</code>" in kwargs["html"]
     assert kwargs["preview_url"].endswith("/memecoins/coin/chain-abc")
+
+
+def test_a_coin_off_the_live_board_still_links_to_its_saved_page(wired, monkeypatch):
+    from runner_web import main as web_main
+    from runner_web.market_actors import coin_subject_key
+
+    calls = []
+    monkeypatch.setattr(
+        web_main,
+        "send_telegram_reply",
+        lambda config, chat_id, text, **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(web_main, "memecoin_market", lambda **_: {"rows": []})
+    saved = coin_subject_key(CA)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO memecoin_assets(coin_id,quote_json,collected_at,run_id) VALUES(?,?,?,?)",
+            (saved, "{}", NOW.isoformat(), "run"),
+        )
+        chat.record_update(database, _update("anything new?", mention=True), NOW)
+
+    web_main.run_telegram_chat(
+        lambda message, transcript: {"action": "reply", "text": f"look at {CA}"}, at=NOW
+    )
+
+    assert calls[0]["preview_url"].endswith(f"/memecoins/coin/{saved}")
