@@ -16,7 +16,7 @@ from runner_web.db import connection
 from runner_web.helius_discovery import RPC_URL, Rpc
 from runner_web.ingestion import record_source_fetch
 from runner_web.memecoin_chain_ingestion import collect_chain as discover_pools
-from runner_web.memecoin_chain_parser import short_address
+from runner_web.memecoin_chain_parser import coin_search_rank, short_address
 from runner_web.memecoin_forensics import analyze_events
 from runner_web.memecoin_integrity import creator_trades
 from runner_web.memecoin_model import assess_memecoin, display_assessment
@@ -479,25 +479,13 @@ def memecoin_market(
             if not row["stale"] and row["change_24h"] is not None and row["volume_24h"] is not None
         ]
     query = query.strip()[:80]
-    address_match: set[str] = set()
+    ranks: dict[str, int] = {}
     if query:
-        address_match = {
-            row["id"]
-            for row in rows
-            if query.casefold() in (row.get("token_address") or "").casefold()
-            or query.casefold() == row["id"]
-        }
-        rows = [
-            row
-            for row in rows
-            if row["id"] in address_match
-            or query.casefold()
-            in (
-                f"{row.get('claimed_symbol') or ''} {row.get('claimed_name') or ''}"
-                if row.get("token_address")
-                else f"{row['symbol']} {row['name']}"
-            ).casefold()
-        ]
+        for row in rows:
+            rank = coin_search_rank(query, row)
+            if rank is not None:
+                ranks[row["id"]] = rank
+        rows = [row for row in rows if row["id"] in ranks]
     sort = sort if sort in {"volume", "market_cap", "gainers", "losers"} else "volume"
     field = {"volume": "volume_24h", "gainers": "change_24h", "losers": "change_24h"}.get(
         sort, "market_cap"
@@ -505,7 +493,7 @@ def memecoin_market(
     rows.sort(
         key=lambda row: (
             # A creator-set name can be copied by any launch; address matches lead.
-            row["id"] not in address_match,
+            ranks.get(row["id"], 0),
             row[field] is None,
             (row[field] or 0) * (1 if sort == "losers" else -1),
             row["id"],

@@ -568,3 +568,66 @@ def test_board_sparklines_cover_one_day_and_stay_sparkline_sized(market_db, monk
     response = TestClient(main.app).get("/api/memecoins/charts?ids=dogecoin,BAD%20ID,pepe")
     assert response.status_code == 200
     assert set(response.json()["charts"]) == {"dogecoin", "pepe"}
+
+
+def _impostor_board(real, fake, *, fake_claim, include_real=True, fake_volume=1_000):
+    rows = memecoins.normalize_memecoins(
+        [coin("real", total_volume=1), coin("fake", total_volume=fake_volume)]
+    )
+    rows[0].update(token_address=real, claimed_symbol="BONK")
+    rows[1].update(token_address=fake, claimed_symbol="BONK", claimed_name=fake_claim)
+    if not include_real:
+        rows = rows[1:]
+    with patch.object(memecoins, "_collect_helius", side_effect=lambda **_: (rows, {})):
+        memecoins.refresh_memecoins(download=lambda *_: b"", at=AT)
+    return rows
+
+
+REAL = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+FAKE = "FAKEaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7pump"
+
+
+def test_searching_the_shown_short_address_never_finds_an_impostor(market_db):
+    from runner_web.market_screens import listing
+    from runner_web.memecoin_chain_parser import short_address
+
+    short = short_address(REAL)
+    rows = _impostor_board(REAL, FAKE, fake_claim=short)
+    found = memecoins.memecoin_market(query=short, at=AT)["rows"]
+    assert [row["id"] for row in found] == ["real"]
+    assert [row["id"] for row in listing("memecoins", rows, query=short)["rows"]] == ["real"]
+    # The impostor's address-shaped name is never shown either.
+    fake_row = listing("memecoins", rows)["rows"][1]
+    assert short not in fake_row["subtitle"]
+
+
+def test_a_full_address_never_resolves_to_a_coin_that_copied_it(market_db):
+    from runner_web import dash
+
+    _impostor_board(REAL, FAKE, fake_claim=REAL, include_real=False)
+    assert memecoins.memecoin_market(query=REAL, at=AT)["rows"] == []
+    answer = dash.coin_detail(REAL)
+    assert answer["known"] is False
+    assert "same_name_candidates" not in answer
+
+
+def test_a_partial_address_matches_only_at_the_ends_and_in_case(market_db):
+    # A mint with the fragment in the middle, in another case, and more volume.
+    mixed = "Hk" + "dEZxaz" + "a" * 32 + "pump"
+    _impostor_board(REAL, mixed, fake_claim="x")
+    found = memecoins.memecoin_market(query="DezXAZ", at=AT)["rows"]
+    assert [row["id"] for row in found] == ["real"]
+    assert memecoins.memecoin_market(query=REAL.lower(), at=AT)["rows"][0]["id"] == "real"
+
+
+def test_creator_names_are_folded_and_stripped_of_hiding_characters():
+    from runner_web.memecoin_chain_parser import clean_claim, display_claim
+
+    assert clean_claim("ＢＯＮＫ", 64) == "BONK"
+    assert clean_claim("𝐁𝐎𝐍𝐊", 64) == "BONK"
+    assert clean_claim("Boㅤnk⠀", 64) == "Bonk"
+    zalgo = "B" + "́" * 60 + "onk"
+    assert clean_claim(zalgo, 64) == "B́onk"
+    assert display_claim({"claimed_name": REAL}) is None
+    assert display_claim({"claimed_name": "DezXAZ…pPB263"}) is None
+    assert display_claim({"claimed_name": "Wait... what"}) == "Wait... what"
