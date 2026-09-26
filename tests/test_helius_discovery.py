@@ -696,3 +696,36 @@ def test_chain_mode_falls_back_to_gecko_when_the_chain_read_fails(database, monk
     )
 
     assert rows[0]["price"] == 0.5
+
+
+def test_chain_mode_keeps_a_pool_whose_chain_price_moved(database, monkeypatch):
+    from tests.test_memecoin_chain_prices import QUOTE_VAULT, token_account
+
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "chain")
+    accounts = _pool_accounts()
+    no_activity = lambda *_: b'{"data":[]}'  # noqa: E731
+
+    memecoins.refresh_memecoins(at=AT, rpc=_chain_rpc(accounts), download=no_activity)
+    accounts[QUOTE_VAULT] = token_account(110 * 10**9, 9)
+    memecoins.refresh_memecoins(
+        at=AT + timedelta(minutes=5), rpc=_chain_rpc(accounts), download=no_activity
+    )
+
+    # No GeckoTerminal volume, but the price moved 10%: the pool keeps its slot.
+    watch = memecoins._saved_list("memecoin_pool_watch")
+    assert [pool["pool_address"] for pool in watch] == [POOL]
+
+
+def test_a_chain_priced_row_names_both_sources(database, monkeypatch):
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "chain")
+
+    rows, _ = memecoins._collect_helius(
+        at=AT,
+        rpc=_chain_rpc(_pool_accounts()),
+        download=lambda *_: json.dumps({"data": [_gecko_pool()]}).encode(),
+    )
+
+    assert rows[0]["source"] == "Solana (Helius)"
+    assert rows[0]["activity_source"] == "GeckoTerminal"
