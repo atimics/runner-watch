@@ -230,3 +230,72 @@ def test_quote_provider_cannot_add_discovery_candidates(database):
         download=lambda *_: json.dumps({"data": [quote]}).encode(),
     )
     assert rows == []
+
+
+CURVE = "6nRYepjJzCK1fLc9C3kcHjRJ92wzgyqNFZwGAP5TM3rU"
+
+
+def launch():
+    from runner_web.memecoin_chain_parser import PUMP, PUMP_CREATE_V2
+
+    tx = creation()
+    tx["slot"] = 90
+    tx["blockTime"] -= 60
+    tx["transaction"]["signatures"] = [helius._encode(bytes([3]) * 64)]
+    raw = PUMP_CREATE_V2
+    for value in (b"name", b"SYM", b"https://example.invalid"):
+        raw += len(value).to_bytes(4, "little") + value
+    tx["transaction"]["message"]["instructions"] = [
+        {
+            "programId": PUMP,
+            # create_v2: mint, mint authority, bonding curve, curve token account, ..., user.
+            "accounts": [MINT, OTHER, CURVE, OTHER, OTHER, CREATOR],
+            "data": helius._encode(raw + helius._decode(CREATOR) + bytes(2)),
+        }
+    ]
+    return tx
+
+
+def curve_quote():
+    return {
+        "attributes": {
+            "address": CURVE,
+            "base_token_price_usd": "0.00001",
+            "reserve_in_usd": "8000",
+            "pool_created_at": (AT - timedelta(minutes=3)).isoformat(),
+            "price_change_percentage": {"m5": "3", "h1": "3", "h6": "3", "h24": "3"},
+            "volume_usd": {"m5": "900", "h1": "1200", "h6": "1200", "h24": "1200"},
+            "transactions": {
+                window: {"buys": 30, "sells": 5, "buyers": 25, "sellers": 4}
+                for window in ("m5", "h1", "h6", "h24")
+            },
+        },
+        "relationships": {"base_token": {"data": {"id": "solana_" + MINT}}},
+    }
+
+
+def test_a_launch_is_quoted_on_its_bonding_curve_until_it_graduates(database):
+    from runner_web.memecoins import _collect_helius
+
+    requests = []
+
+    def download(url, timeout):
+        requests.append(url)
+        return json.dumps({"data": [curve_quote()] if CURVE in url else []}).encode()
+
+    rows, metadata = _collect_helius(at=AT, rpc=lambda _: reply([launch()]), download=download)
+
+    assert [row["pool_address"] for row in rows] == [CURVE]
+    assert rows[0]["venue"] == "bonding_curve"
+    assert rows[0]["early"]["features"]["on_curve"] is True
+    # A young curve is not ruled out as a thin pool.
+    assert "Pool is too thin" not in rows[0]["early"]["reasons"]
+    assert metadata["tracked_curves"] == 1
+
+    # Once the coin graduates to a pool, its curve is no longer quoted.
+    requests.clear()
+    later = AT + timedelta(minutes=5)
+    graduation = creation()
+    graduation["blockTime"] = int(later.timestamp()) - 120
+    _collect_helius(at=later, rpc=lambda _: reply([graduation]), download=download)
+    assert requests and not any(CURVE in url for url in requests)
