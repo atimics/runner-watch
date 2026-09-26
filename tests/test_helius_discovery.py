@@ -604,3 +604,95 @@ def test_a_pool_that_traded_keeps_its_slot_against_newer_graduations(database):
     assert len(chosen) == POOL_SLOTS
     assert chosen[0] is runner
     assert chosen[1]["pool_address"] == "pool-1"
+
+
+def _chain_rpc(accounts):
+    """Transaction pages carry the pool creation; account reads answer from `accounts`."""
+
+    def rpc(body, credits=None):
+        if body["method"] == "getMultipleAccounts":
+            return {"result": {"value": [accounts.get(a) for a in body["params"][0]]}}
+        return reply([creation()])
+
+    return rpc
+
+
+def _pool_accounts():
+    from tests.test_memecoin_chain_prices import (
+        BASE_VAULT,
+        QUOTE_VAULT,
+        SOL_VAULT,
+        USDC_VAULT,
+        pool_account,
+        token_account,
+    )
+
+    return {
+        SOL_VAULT: token_account(1_000 * 10**9, 9),
+        USDC_VAULT: token_account(121_290 * 10**6, 6),
+        POOL: pool_account(base_mint=MINT, virtual=0),
+        BASE_VAULT: token_account(1_000_000 * 10**6, 6),
+        QUOTE_VAULT: token_account(100 * 10**9, 9),
+    }
+
+
+def _gecko_pool(price="0.5"):
+    quote = curve_quote()
+    quote["attributes"].update(address=POOL, base_token_price_usd=price, reserve_in_usd="30000")
+    quote["relationships"]["base_token"]["data"]["id"] = "solana_" + MINT
+    return quote
+
+
+CHAIN_PRICE = 100 / 1_000_000 * 121.29
+
+
+def test_shadow_mode_keeps_gecko_prices_and_records_the_gap(database, monkeypatch):
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "shadow")
+    download = lambda *_: json.dumps({"data": [_gecko_pool(str(CHAIN_PRICE * 1.02))]}).encode()  # noqa: E731
+
+    rows, _ = memecoins._collect_helius(at=AT, rpc=_chain_rpc(_pool_accounts()), download=download)
+
+    assert rows[0]["price"] == pytest.approx(CHAIN_PRICE * 1.02)
+    check = memecoins._market_states(keys=("memecoin_price_check",))["memecoin_price_check"]
+    assert check["compared"] == 1 and check["median_gap_pct"] == pytest.approx(1.96, abs=0.01)
+
+
+def test_chain_mode_prices_from_the_pool_and_keeps_gecko_activity(database, monkeypatch):
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "chain")
+    download = lambda *_: json.dumps({"data": [_gecko_pool()]}).encode()  # noqa: E731
+
+    rows, _ = memecoins._collect_helius(at=AT, rpc=_chain_rpc(_pool_accounts()), download=download)
+
+    assert rows[0]["price"] == pytest.approx(CHAIN_PRICE)
+    assert rows[0]["liquidity_usd"] == pytest.approx(2 * 100 * 121.29)
+    # The new pool was shortlisted, so GeckoTerminal's windows are kept.
+    assert rows[0]["volume_h1"] == 1200.0
+
+
+def test_chain_mode_shows_a_pool_geckoterminal_did_not_quote(database, monkeypatch):
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "chain")
+
+    rows, _ = memecoins._collect_helius(
+        at=AT, rpc=_chain_rpc(_pool_accounts()), download=lambda *_: b'{"data":[]}'
+    )
+
+    assert rows[0]["price"] == pytest.approx(CHAIN_PRICE)
+    assert rows[0]["source"] == "Solana (Helius)" and rows[0]["volume_24h"] is None
+
+
+def test_chain_mode_falls_back_to_gecko_when_the_chain_read_fails(database, monkeypatch):
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "chain")
+    accounts = _pool_accounts()
+    accounts.pop(next(iter(accounts)))  # no SOL price
+
+    rows, _ = memecoins._collect_helius(
+        at=AT,
+        rpc=_chain_rpc(accounts),
+        download=lambda *_: json.dumps({"data": [_gecko_pool()]}).encode(),
+    )
+
+    assert rows[0]["price"] == 0.5

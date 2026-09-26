@@ -16,10 +16,11 @@ from typing import Any
 from runner_watch.ingestion import SourceFetch
 from runner_watch.xml_security import read_limited
 from runner_web.db import connection
-from runner_web.helius_discovery import RPC_URL, Rpc
+from runner_web.helius_discovery import RPC_URL, Rpc, rpc_request
 from runner_web.ingestion import record_source_fetch
 from runner_web.memecoin_chain_ingestion import collect_chain as discover_pools
 from runner_web.memecoin_chain_parser import coin_search_rank, short_address
+from runner_web.memecoin_chain_prices import chain_prices
 from runner_web.memecoin_copycats import copycat_bursts, find_originals, mark_copycats
 from runner_web.memecoin_early import early_signal
 from runner_web.memecoin_forensics import analyze_events
@@ -57,6 +58,10 @@ SOLANA_ADDRESS = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
 QUOTE_PAUSE_SECONDS = 5.0
 # A rate-limited pool batch waits this long and tries once more.
 RATE_LIMIT_RETRY_SECONDS = 30.0
+# With chain prices, GeckoTerminal brings activity windows for this many coins.
+ACTIVITY_SHORTLIST = 30
+# A bonding curve is shown once someone has put this much into it.
+MIN_CURVE_LIQUIDITY_USD = 100.0
 ACTIVE_CURVE_SLOTS = 60
 CURVE_HOURS = 24
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -418,6 +423,219 @@ def _saved_list(key: str) -> list[dict[str, Any]]:
     return value if isinstance(value, list) else []
 
 
+def price_source() -> str:
+    """Where board prices come from: gecko, shadow (gecko, with chain compared) or chain."""
+
+    value = os.getenv("MEMECOIN_PRICE_SOURCE", "shadow").strip().lower()
+    return value if value in {"gecko", "shadow", "chain"} else "shadow"
+
+
+def _gecko_quotes(
+    addresses: list[str],
+    allowed: dict[str, dict[str, Any]],
+    extra: set[str],
+    *,
+    download: Download,
+    pause_first: bool,
+) -> list[dict[str, Any]]:
+    """GeckoTerminal pool quotes in batches of 30, spaced against its rate limit."""
+
+    payload = []
+    for offset in range(0, len(addresses), 30):
+        chunk = addresses[offset : offset + 30]
+        if offset or pause_first:
+            time.sleep(QUOTE_PAUSE_SECONDS)
+        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(chunk)
+        try:
+            body = download(url, 10.0)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429:
+                raise
+            if extra.issuperset(chunk):
+                LOG.warning("Pool quotes rate limited; skipped %d extras", len(addresses) - offset)
+                break
+            # The pools are the board itself, so wait out the limit once before failing.
+            LOG.warning("Pool quotes rate limited; retrying in %ds", RATE_LIMIT_RETRY_SECONDS)
+            time.sleep(RATE_LIMIT_RETRY_SECONDS)
+            body = download(url, 10.0)
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise ValueError("Pool quote response exceeds the size limit")
+        batch = json.loads(body)
+        if not isinstance(batch, dict) or not isinstance(batch.get("data"), list):
+            raise ValueError("Pool quote response is invalid")
+        if len(batch["data"]) > 30:
+            raise ValueError("Pool quote response exceeds the row limit")
+        for pool in batch["data"]:
+            try:
+                address = pool["attributes"]["address"]
+                receipt = allowed.get(address)
+                if receipt is None or pool["relationships"]["base_token"]["data"]["id"] != (
+                    "solana_" + receipt["token_address"]
+                ):
+                    continue
+                pool["relationships"]["network"] = {"data": {"id": "solana"}}
+                payload.append(pool)
+            except (KeyError, TypeError):
+                continue
+    return payload
+
+
+def _previous_prices() -> dict[str, float]:
+    """Last cycle's price by pool address."""
+
+    snapshot = _market_states(keys=("memecoins_snapshot",)).get("memecoins_snapshot") or {}
+    return {
+        str(row.get("pool_address")): float(row["price"])
+        for row in snapshot.get("rows") or []
+        if isinstance(row, dict) and row.get("pool_address") and _number(row.get("price"))
+    }
+
+
+def _activity_shortlist(addresses: list[str], priced: dict[str, dict[str, Any]]) -> list[str]:
+    """The chain-priced pools most worth GeckoTerminal's activity windows.
+
+    Half are the biggest movers since last cycle; half are pools we have no
+    price for yet, since new graduations and curves are where a run starts.
+    """
+
+    previous = _previous_prices()
+    moves, new = [], []
+    for address in addresses:
+        price = priced[address]["price"]
+        before = previous.get(address)
+        if before:
+            moves.append((abs(price / before - 1), address))
+        else:
+            new.append((priced[address]["liquidity_usd"], address))
+    half = ACTIVITY_SHORTLIST // 2
+    chosen = [address for _, address in sorted(new, reverse=True)[:half]]
+    for _, address in sorted(moves, reverse=True):
+        if len(chosen) >= ACTIVITY_SHORTLIST:
+            break
+        chosen.append(address)
+    return chosen
+
+
+def _price_check(rows: list[dict[str, Any]], chain: dict[str, Any], at: datetime) -> dict[str, Any]:
+    """How far chain prices sit from GeckoTerminal's, for the shadow run."""
+
+    gaps = sorted(
+        (abs(quote["price"] / row["price"] - 1) * 100, row["symbol"])
+        for row in rows
+        if (quote := chain["prices"].get(row["pool_address"])) and row.get("price")
+    )
+    return {
+        "checked_at": at.isoformat(),
+        "sol_usd": round(chain["sol_usd"], 4),
+        "chain_priced": len(chain["prices"]),
+        "compared": len(gaps),
+        "median_gap_pct": round(gaps[len(gaps) // 2][0], 2) if gaps else None,
+        "p90_gap_pct": round(gaps[int(len(gaps) * 0.9)][0], 2) if gaps else None,
+        "worst": [{"symbol": symbol, "gap_pct": round(gap, 2)} for gap, symbol in gaps[-5:]],
+    }
+
+
+def _history_changes(coin_ids: list[str], at: datetime) -> dict[str, dict[str, float]]:
+    """Our own saved price 1, 6 and 24 hours ago, for coins GeckoTerminal did not window."""
+
+    found: dict[str, dict[str, float]] = {}
+    if not coin_ids:
+        return found
+    marks = ",".join("?" * len(coin_ids))
+    with connection() as database:
+        for label, hours in (("h1", 1), ("h6", 6), ("24h", 24)):
+            target = at - timedelta(hours=hours)
+            for row in database.execute(
+                f"SELECT coin_id,observed_at,price FROM memecoin_quote_history "
+                f"WHERE coin_id IN ({marks}) AND observed_at>=? AND observed_at<=? "
+                "ORDER BY observed_at",
+                (
+                    *coin_ids,
+                    (target - timedelta(minutes=10)).isoformat(),
+                    (target + timedelta(minutes=10)).isoformat(),
+                ),
+            ).fetchall():
+                found.setdefault(row["coin_id"], {})[label] = float(row["price"])
+    return found
+
+
+def _chain_row(receipt: dict[str, Any], quote: dict[str, Any], at: datetime) -> dict[str, Any]:
+    """A board row priced from the chain, before any activity windows are known."""
+
+    token, address = receipt["token_address"], receipt["pool_address"]
+    coin_id = "chain-" + hashlib.sha256(f"solana:{token}".encode()).hexdigest()
+    return {
+        "id": coin_id,
+        "symbol": short_address(token),
+        "name": token,
+        "claimed_symbol": None,
+        "claimed_name": None,
+        "network": "solana",
+        "token_address": token,
+        "pool_address": address,
+        "pool_created_at": receipt.get("created_at"),
+        "liquidity_usd": quote["liquidity_usd"],
+        "buys_24h": None,
+        "sells_24h": None,
+        "price": quote["price"],
+        "volume_24h": None,
+        "market_cap": None,
+        "change_24h": None,
+        "observed_at": at.isoformat(),
+        "time_basis": "chain_read",
+        "source": "Solana (Helius)",
+        "source_url": f"https://solscan.io/account/{address}",
+        "detail_url": f"/memecoins/coin/{coin_id}",
+        "fully_diluted_valuation": None,
+        **{
+            f"{field}_{window}": None
+            for field in ("change", "volume", "buyers", "sellers")
+            for window in ("m5", "h1", "h6")
+        },
+        "high_24h": None,
+        "low_24h": None,
+        "circulating_supply": None,
+        "total_supply": None,
+        "max_supply": None,
+    }
+
+
+def _with_chain_prices(
+    rows: list[dict[str, Any]],
+    allowed: dict[str, dict[str, Any]],
+    chain: dict[str, Any],
+    at: datetime,
+) -> list[dict[str, Any]]:
+    """Chain price and liquidity for every pool it read; GeckoTerminal keeps the rest.
+
+    A shortlisted row keeps GeckoTerminal's activity windows under the chain
+    price. Price changes GeckoTerminal did not give come from our saved history.
+    """
+
+    priced = chain["prices"]
+    by_pool = {row["pool_address"]: row for row in rows}
+    for address, quote in priced.items():
+        receipt = allowed[address]
+        on_curve = receipt.get("venue") == "bonding_curve"
+        if not on_curve and quote["liquidity_usd"] < MIN_POOL_LIQUIDITY_USD:
+            continue
+        if on_curve and quote["liquidity_usd"] < MIN_CURVE_LIQUIDITY_USD:
+            continue  # nobody has bought into it yet
+        row = by_pool.get(address)
+        if row is None:
+            by_pool[address] = _chain_row(receipt, quote, at)
+        else:
+            row.update(price=quote["price"], liquidity_usd=quote["liquidity_usd"])
+    merged = list(by_pool.values())
+    history = _history_changes([row["id"] for row in merged if row.get("change_h1") is None], at)
+    for row in merged:
+        for label, key in (("h1", "change_h1"), ("h6", "change_h6"), ("24h", "change_24h")):
+            before = history.get(row["id"], {}).get(label)
+            if row.get(key) is None and before:
+                row[key] = round((row["price"] / before - 1) * 100, 3)
+    return sorted(merged, key=lambda row: (-(row.get("volume_24h") or 0), row["id"]))
+
+
 def _collect_helius(
     *, download: Download, at: datetime, rpc: Rpc | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -512,46 +730,35 @@ def _collect_helius(
     # Graduated pools first, then the few originals, then curves, busiest first:
     # a rate limit cuts the end of the list.
     allowed = {item["pool_address"]: item for item in selected + found + searched + curves}
-    payload = []
     extra = {item["pool_address"] for item in curves + found + searched}
-    addresses = list(allowed)
-    for offset in range(0, len(addresses), 30):
-        chunk = addresses[offset : offset + 30]
-        if offset or looked_up:
-            time.sleep(QUOTE_PAUSE_SECONDS)
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(chunk)
+    source = price_source()
+    chain = None
+    if source in ("chain", "shadow"):
         try:
-            body = download(url, 10.0)
-        except urllib.error.HTTPError as exc:
-            if exc.code != 429:
-                raise
-            if extra.issuperset(chunk):
-                LOG.warning("Pool quotes rate limited; skipped %d extras", len(addresses) - offset)
-                break
-            # The pools are the board itself, so wait out the limit once before failing.
-            LOG.warning("Pool quotes rate limited; retrying in %ds", RATE_LIMIT_RETRY_SECONDS)
-            time.sleep(RATE_LIMIT_RETRY_SECONDS)
-            body = download(url, 10.0)
-        if len(body) > MAX_RESPONSE_BYTES:
-            raise ValueError("Pool quote response exceeds the size limit")
-        batch = json.loads(body)
-        if not isinstance(batch, dict) or not isinstance(batch.get("data"), list):
-            raise ValueError("Pool quote response is invalid")
-        if len(batch["data"]) > 30:
-            raise ValueError("Pool quote response exceeds the row limit")
-        for pool in batch["data"]:
-            try:
-                address = pool["attributes"]["address"]
-                receipt = allowed.get(address)
-                if receipt is None or pool["relationships"]["base_token"]["data"]["id"] != (
-                    "solana_" + receipt["token_address"]
-                ):
-                    continue
-                pool["relationships"]["network"] = {"data": {"id": "solana"}}
-                payload.append(pool)
-            except (KeyError, TypeError):
-                continue
+            chain = chain_prices(
+                [item for item in allowed.values() if item.get("venue") != "bonding_curve"],
+                curves,
+                rpc=rpc or rpc_request,
+            )
+        except Exception:
+            LOG.warning("Chain prices failed; quoting from GeckoTerminal", exc_info=True)
+    addresses = list(allowed)
+    if source == "chain" and chain is not None:
+        priced = chain["prices"]
+        # GeckoTerminal now only prices what the chain reader cannot and brings
+        # activity for a shortlist; all of it may be cut by a rate limit except
+        # the pools only it can price.
+        shortlist = _activity_shortlist(
+            [address for address in addresses if address in priced], priced
+        )
+        addresses = [address for address in addresses if address not in priced] + shortlist
+        extra |= set(shortlist)
+    payload = _gecko_quotes(addresses, allowed, extra, download=download, pause_first=looked_up)
     rows = normalize_chain_pools({"data": payload}, at=at)
+    if chain is not None and source == "shadow":
+        _save_state("memecoin_price_check", _price_check(rows, chain, at), at)
+    if chain is not None and source == "chain":
+        rows = _with_chain_prices(rows, allowed, chain, at)
     # Search for new originals last, so a rate limit here costs only the search;
     # what is found is quoted from the next cycle.
     _, original_cache, _ = find_originals(
@@ -713,6 +920,7 @@ def _market_states(*, keys: tuple[str, ...] | None = None) -> dict[str, Any]:
         "memecoin_integrity_alerts",
         "memecoin_integrity_coverage",
         "memecoin_forensics",
+        "memecoin_price_check",
     )
     placeholders = ",".join("?" for _ in requested)
     states = {}
@@ -833,6 +1041,9 @@ def memecoin_market(
         ),
         "integrity_coverage": states.get("memecoin_integrity_coverage") or {},
         "forensics": states.get("memecoin_forensics") or {},
+        # How far chain prices sit from GeckoTerminal's while both are read.
+        "price_check": states.get("memecoin_price_check"),
+        "price_source": price_source(),
     }
 
 

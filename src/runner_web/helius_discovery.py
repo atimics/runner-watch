@@ -47,15 +47,20 @@ def _address(value: Any) -> str:
     return value
 
 
-def rpc_request(body: dict[str, Any]) -> dict[str, Any]:
+def rpc_request(body: dict[str, Any], *, credits: int | None = None) -> dict[str, Any]:
+    """One Helius call. `credits` is its cost when known; transaction pages
+    default to 10 credits per 100 transactions."""
+
     key = os.getenv("HELIUS_API_KEY", "").strip()
     if not key:
         raise ValueError("HELIUS_API_KEY is required for Solana discovery")
     from runner_web.memecoin_evidence import reserve_credits
 
-    options = body.get("params", [None, {}])[1]
-    limit = options.get("limit", 100)
-    reserve_credits(max(10, ((limit + 99) // 100) * 10))
+    if credits is None:
+        options = body.get("params", [None, {}])[1]
+        limit = options.get("limit", 100)
+        credits = max(10, ((limit + 99) // 100) * 10)
+    reserve_credits(credits)
     request = urllib.request.Request(
         RPC_URL + "?" + urllib.parse.urlencode({"api-key": key}),
         data=json.dumps(body).encode(),
