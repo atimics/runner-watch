@@ -205,6 +205,36 @@ def test_renderer_failure_retries_saved_evidence_without_another_source_fetch():
     assert store.render_pending_replays(at=AT + timedelta(seconds=61))["ready"] == 1
 
 
+def test_replay_saved_under_an_older_decoder_is_rebuilt_not_stuck():
+    collect()
+    assert store.render_pending_replays(at=AT)["ready"] == 1
+    # An older decoder saved launch events without the creator-set claims.
+    with db.connection() as database:
+        row = database.execute("SELECT id,payload_json FROM memecoin_replays").fetchone()
+        old = json.loads(row["payload_json"])
+        for event in old["events"]:
+            event.pop("claimed_name", None)
+            event.pop("claimed_symbol", None)
+        old["id"] = replay.digest({k: v for k, v in old.items() if k != "id"})
+        database.execute(
+            "UPDATE memecoin_replays SET id=?,payload_json=? WHERE id=?",
+            (old["id"], replay.canonical(old), row["id"]),
+        )
+        database.execute("UPDATE memecoin_replay_cases SET latest_id=?", (old["id"],))
+        database.execute(
+            "UPDATE memecoin_replay_cases SET requested_at=?",
+            ((AT + timedelta(minutes=5)).isoformat(),),
+        )
+    assert not replay.verify_replay(old)
+    with pytest.raises(ValueError):
+        store.saved_replay(COIN["id"])
+
+    assert store.render_pending_replays(at=AT + timedelta(minutes=5))["ready"] == 1
+    rebuilt = store.saved_replay(COIN["id"])
+    assert rebuilt["payload"]["id"] != old["id"]
+    assert rebuilt["payload"]["receipts"] == old["receipts"]
+
+
 def test_animation_endpoints_and_history_preserve_the_selected_evidence():
     data = payload()
     first, last = data["frames"][0], data["frames"][-1]
