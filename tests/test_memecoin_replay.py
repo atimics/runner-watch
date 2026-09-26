@@ -25,7 +25,7 @@ from runner_web.memecoin_chain_parser import (
     PUMP_SWAP,
     parse_events,
 )
-from runner_web.memecoin_replay_gif import RINGS, render_gif
+from runner_web.memecoin_replay_gif import RINGS, render_gif, render_gif_isolated
 from runner_web.memecoin_replay_posts import caption, dispatch_memecoin_replays
 from runner_web.memecoin_store import save_memecoin_snapshot
 from runner_web.telegram import AnimationDeliveryError
@@ -297,6 +297,14 @@ def test_gif_rings_hold_every_node_the_replay_can_draw():
     positions = ring_positions(ids)
     assert len(positions) == len(ids)
     assert len(set(positions.values())) == len(ids)
+
+
+def test_isolated_render_matches_in_process_render_and_keeps_its_errors():
+    # The worker renders in a child process so the frames' memory leaves with it.
+    assert render_gif_isolated(payload()) == render_gif(payload())
+    broken = {**payload(), "frames": []}
+    with pytest.raises(ValueError, match="quality"):
+        render_gif_isolated(broken)
 
 
 def test_gif_is_animated_and_loops_with_readable_keyframe_holds():

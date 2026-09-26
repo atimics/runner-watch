@@ -11,7 +11,7 @@ from uuid import uuid4
 from runner_web.db import connection
 from runner_web.helius_discovery import _address
 from runner_web.memecoin_replay import build_replay, canonical, verify_replay
-from runner_web.memecoin_replay_gif import render_gif
+from runner_web.memecoin_replay_gif import render_gif_isolated
 from runner_web.telegram import config_from_env, memecoin_alerts_enabled
 
 LOG = logging.getLogger(__name__)
@@ -203,7 +203,7 @@ def _indicator(coin: dict, at: datetime) -> dict | None:
 
 
 def render_pending_replays(
-    *, at: datetime | None = None, limit: int = 2, renderer=render_gif
+    *, at: datetime | None = None, limit: int = 2, renderer=render_gif_isolated
 ) -> dict:
     current = at or datetime.now(UTC)
     stamp = current.isoformat()

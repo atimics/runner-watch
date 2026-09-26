@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import math
+import subprocess
+import sys
 from io import BytesIO
 
 from PIL import Image, ImageDraw, ImageFont
@@ -212,3 +215,34 @@ def render_gif(payload: dict, indicator: dict | None = None) -> bytes:
     finally:
         for frame in frames:
             frame.close()
+
+
+RENDER_TIMEOUT_SECONDS = 120
+
+
+def render_gif_isolated(payload: dict, indicator: dict | None = None) -> bytes:
+    """render_gif in a short-lived child process.
+
+    Pillow's GIF writer holds every frame until it encodes, so one replay
+    needs 100-300 MB. Python keeps freed memory for reuse, so rendering in the
+    worker ratcheted it into the OOM killer on its 1 GB machine. The child
+    hands all of it back to the system when it exits. It runs this module
+    alone, so it does not load the worker's app.
+    """
+
+    done = subprocess.run(
+        [sys.executable, "-m", __name__],
+        input=json.dumps({"payload": payload, "indicator": indicator}).encode(),
+        capture_output=True,
+        timeout=RENDER_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if done.returncode:
+        lines = done.stderr.decode(errors="replace").strip().splitlines()
+        raise ValueError(lines[-1] if lines else "GIF render failed")
+    return done.stdout
+
+
+if __name__ == "__main__":
+    job = json.load(sys.stdin)
+    sys.stdout.buffer.write(render_gif(job["payload"], job["indicator"]))
