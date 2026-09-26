@@ -36,14 +36,30 @@ def save_memecoin_snapshot(
             observed_time = datetime.fromisoformat(observed)
             if not -60 <= (collected_at - observed_time).total_seconds() <= HISTORY_DAYS * 86400:
                 continue
+            early = row.get("early") or {}
+            features = (
+                json.dumps(
+                    {
+                        "version": early.get("version"),
+                        **early.get("features", {}),
+                        "score": early.get("score"),
+                        "state": early.get("state"),
+                    },
+                    allow_nan=False,
+                )
+                if early
+                else None
+            )
             database.execute(
                 """
-                INSERT INTO memecoin_quote_history(coin_id,observed_at,collected_at,price,run_id)
-                VALUES(?,?,?,?,?) ON CONFLICT(coin_id,observed_at) DO UPDATE SET
-                    collected_at=excluded.collected_at,price=excluded.price,run_id=excluded.run_id
+                INSERT INTO memecoin_quote_history(
+                    coin_id,observed_at,collected_at,price,run_id,features_json
+                ) VALUES(?,?,?,?,?,?) ON CONFLICT(coin_id,observed_at) DO UPDATE SET
+                    collected_at=excluded.collected_at,price=excluded.price,run_id=excluded.run_id,
+                    features_json=excluded.features_json
                 WHERE memecoin_quote_history.collected_at<=excluded.collected_at
                 """,
-                (row["id"], observed, collected, row["price"], run_id),
+                (row["id"], observed, collected, row["price"], run_id, features),
             )
         database.execute("DELETE FROM memecoin_quote_history WHERE observed_at<?", (oldest,))
         database.execute(

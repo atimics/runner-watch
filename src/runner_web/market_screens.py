@@ -551,6 +551,15 @@ def state_tag(item: dict[str, Any]) -> tuple[str, str, bool]:
         return "PAUSED", "paused", False
     trade = str(item.get("trade_state") or "").upper()
     stage = str(item.get("stage") or "").upper()
+    early = item.get("early")
+    if isinstance(early, dict) and not (trade or stage) and not item.get("stale"):
+        # A memecoin's tag comes from its early reading, in the same words and colours.
+        state = str(early.get("state") or "")
+        if state == "avoid":
+            return "AVOID", "avoid", True
+        if state in {"extended", "running", "setup"}:
+            return state.upper(), state, False
+        return "", "", False
     rug = str(item.get("rug_level") or "").lower()
     risky = rug in {"high", "critical"}
     if trade in {"AVOID", "EXIT"} or risky:
@@ -690,7 +699,13 @@ def listing(
                 )
         else:
             score = number(display.get("score"))
-            if (
+            early = source.get("early") or {}
+            early_score = number(early.get("score"))
+            if display["tag_tone"] == "setup" and early_score is not None:
+                # Activity speeding up before the price has run leads the board.
+                rank = (2, early_score, 0.0)
+                display["rank_detail"] = " · ".join(early.get("reasons") or [])
+            elif (
                 score is not None
                 and display["tag_tone"] in {"running", "setup"}
                 and not source.get("stale")
@@ -718,7 +733,10 @@ def listing(
         "ranking_status": (
             {
                 "stocks": "Stock ranking pending · current eligible call needed.",
-                "memecoins": "Token ranking pending · directional assessment needed.",
+                "memecoins": (
+                    "No SETUP right now. A coin is tagged SETUP when its trading "
+                    "speeds up before the price has run."
+                ),
                 "sports": "Sports ranking pending · current model edge needed.",
             }[market]
             if not ranked_count and not query
@@ -853,6 +871,10 @@ def _pool_facts(coin: dict[str, Any]) -> list[dict[str, str]]:
         days = max(0, (datetime.now(UTC) - at).days)
         age = "today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
         facts.append({"label": "Pool opened", "value": f"{at:%b} {at.day} · {age}"})
+    # The tag beside the price names the state; this says what it was read from.
+    reasons = (coin.get("early") or {}).get("reasons") or []
+    if reasons and not coin.get("stale"):
+        facts.append({"label": "Signal", "value": " · ".join(reasons)})
     return facts
 
 
