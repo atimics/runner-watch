@@ -205,7 +205,9 @@ def test_renderer_failure_retries_saved_evidence_without_another_source_fetch():
     assert store.render_pending_replays(at=AT + timedelta(seconds=61))["ready"] == 1
 
 
-def test_replay_saved_under_an_older_decoder_is_rebuilt_not_stuck():
+def test_replay_saved_under_an_older_decoder_is_rebuilt_not_stuck(monkeypatch):
+    # Long-lived coins already fill their revision archive.
+    monkeypatch.setattr(store, "MAX_REVISIONS_PER_COIN", 1)
     collect()
     assert store.render_pending_replays(at=AT)["ready"] == 1
     # An older decoder saved launch events without the creator-set claims.
@@ -228,6 +230,7 @@ def test_replay_saved_under_an_older_decoder_is_rebuilt_not_stuck():
     assert not replay.verify_replay(old)
     with pytest.raises(ValueError):
         store.saved_replay(COIN["id"])
+    assert store.replay_status(COIN["id"])["status"] == "pending"
 
     assert store.render_pending_replays(at=AT + timedelta(minutes=5))["ready"] == 1
     rebuilt = store.saved_replay(COIN["id"])

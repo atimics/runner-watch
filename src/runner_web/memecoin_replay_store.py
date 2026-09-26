@@ -157,7 +157,13 @@ def _previous_receipts(coin_id: str) -> tuple[str | None, list[dict]]:
 
 
 def replay_status(coin_id: str, replay_id: str | None = None) -> dict:
-    record = saved_replay(coin_id, replay_id)
+    try:
+        record = saved_replay(coin_id, replay_id)
+    except ValueError:
+        if replay_id:
+            raise
+        # The latest replay predates the current decoder; it is rebuilt from its receipts.
+        return {"status": "pending", "message": "The replay is being rebuilt from saved evidence."}
     with connection() as database:
         row = database.execute(
             "SELECT processed_at,last_error FROM memecoin_replay_cases WHERE coin_id=?",
@@ -240,7 +246,9 @@ def render_pending_replays(
                     "SELECT COUNT(*) FROM memecoin_replays WHERE coin_id=?",
                     (coin_id,),
                 ).fetchone()[0]
-            if not same and count >= MAX_REVISIONS_PER_COIN:
+            # A full archive keeps its latest replay, unless that replay no longer
+            # verifies: then it cannot be served, and one rebuilt revision replaces it.
+            if not same and count >= MAX_REVISIONS_PER_COIN and previous_id is not None:
                 raise ValueError("archive_capacity")
             gif = None if same else renderer(payload, indicator=_indicator(coin, current))
             if not verify_replay(payload):
