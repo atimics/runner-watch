@@ -52,7 +52,9 @@ def wallet_id_for_person(person_id: str, ticker: str | None = None) -> str | Non
         return wallet_id_for(kind="sec", value=person_id.removeprefix("sec:"))
     if NAME_PERSON.fullmatch(person_id):
         # A reported name only means anything within the ticker it was read from.
-        return wallet_id_for(kind="name", value=person_id.removeprefix("name:"), scope=ticker or "")
+        return wallet_id_for(
+            kind="name", value=person_id.removeprefix("name:"), scope=ticker or ""
+        )
     return None
 
 
@@ -140,7 +142,9 @@ def register_people(
         return 0
     moments = datetime.now(UTC).isoformat()
     parts = [
-        part for part in (person_parts(identity, ticker) for identity in seen) if part is not None
+        part
+        for part in (person_parts(identity, ticker) for identity in seen)
+        if part is not None
     ]
     if not parts:
         return 0

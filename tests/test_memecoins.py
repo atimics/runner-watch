@@ -657,12 +657,3 @@ def test_pool_state_names_a_drained_or_thin_pool(liquidity, change, text, closed
 def test_pool_state_is_quiet_for_a_healthy_or_unmeasured_pool():
     assert memecoins.pool_state({"liquidity_usd": 250_000, "change_24h": -40.0}) is None
     assert memecoins.pool_state({"change_24h": 3.0}) is None
-
-
-def test_a_small_bonding_curve_is_early_not_drained():
-    state = memecoins.pool_state(
-        {"liquidity_usd": 3_000.0, "change_24h": 12.0, "venue": "bonding_curve"}
-    )
-
-    assert state["text"].startswith("Early bonding curve: $3.00K in the curve.")
-    assert state["calls_closed"] is True

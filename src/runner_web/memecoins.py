@@ -32,11 +32,6 @@ MIN_CALL_LIQUIDITY_USD = 5000
 COLLAPSE_CHANGE_PCT = -90.0
 REFRESH_SECONDS = 300
 STALE_SECONDS = 900
-# Bonding curves quoted each cycle: those that traded last cycle keep their
-# place, and the newest launches fill the rest.
-CURVE_SLOTS = 90
-ACTIVE_CURVE_SLOTS = 60
-CURVE_HOURS = 24
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 Download = Callable[[str, float], bytes]
 
@@ -249,34 +244,6 @@ def _save_state(key: str, value: Any, at: datetime) -> None:
         )
 
 
-def _curve_watch(
-    launches: list[dict[str, Any]],
-    active: list[dict[str, Any]],
-    graduated: set[str],
-    at: datetime,
-) -> list[dict[str, Any]]:
-    """Which launches' bonding curves to quote this cycle."""
-
-    def open_curve(curve: dict[str, Any]) -> bool:
-        created = _time(curve.get("created_at"))
-        return (
-            created is not None
-            and 0 <= (at - created).total_seconds() <= CURVE_HOURS * 3600
-            and curve.get("token_address") not in graduated
-        )
-
-    chosen: dict[str, dict[str, Any]] = {}
-    for curve in active:
-        if len(chosen) < ACTIVE_CURVE_SLOTS and open_curve(curve):
-            chosen.setdefault(curve["pool_address"], curve)
-    for curve in sorted(launches, key=lambda item: item["created_at"], reverse=True):
-        if len(chosen) >= CURVE_SLOTS:
-            break
-        if open_curve(curve):
-            chosen.setdefault(curve["pool_address"], curve)
-    return list(chosen.values())
-
-
 def _collect_helius(
     *, download: Download, at: datetime, rpc: Rpc | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -326,21 +293,7 @@ def _collect_helius(
         "mode": "resumable",
     }
     _save_state("memecoin_integrity_coverage", coverage, at)
-    with connection() as database:
-        saved_curves = database.execute(
-            "SELECT value FROM worker_state WHERE key='memecoin_curve_watch'"
-        ).fetchone()
-    try:
-        active_curves = json.loads(saved_curves["value"]) if saved_curves else []
-    except (ValueError, TypeError):
-        active_curves = []
-    curves = _curve_watch(
-        discovery.get("curves", []),
-        active_curves,
-        {item["token_address"] for item in selected},
-        at,
-    )
-    allowed = {item["pool_address"]: item for item in selected + curves}
+    allowed = {item["pool_address"]: item for item in selected}
     payload = []
     addresses = list(allowed)
     for offset in range(0, len(addresses), 30):
@@ -376,7 +329,6 @@ def _collect_helius(
     for row in rows:
         row["discovery"] = allowed[row["pool_address"]]
         row["discovery_source"] = "Helius"
-        row["venue"] = row["discovery"].get("venue", "pool")
         launch = claims.get(row["token_address"]) or {}
         row["claimed_symbol"] = launch.get("claimed_symbol") or None
         row["claimed_name"] = launch.get("claimed_name") or None
@@ -390,21 +342,14 @@ def _collect_helius(
             )
         )
         row["early"] = early_signal(row)
-    # A curve that traded keeps its slot next cycle, busiest first.
-    traded = sorted(
-        (row for row in rows if row["venue"] == "bonding_curve"),
-        key=lambda row: -(row.get("volume_h1") or 0),
-    )
-    _save_state("memecoin_curve_watch", [row["discovery"] for row in traded], at)
     metadata = {
         key: value
         for key, value in discovery.items()
-        if key not in {"pools", "curves", "transactions", "events"}
+        if key not in {"pools", "transactions", "events"}
     }
     metadata.update(
         discovered_pools=len(discovery["pools"]),
         tracked_pools=len(selected),
-        tracked_curves=len(curves),
         quoted_pools=len(rows),
         selection="helius_pumpswap_create_pool",
     )
@@ -489,12 +434,6 @@ def pool_state(coin: dict[str, Any]) -> dict[str, Any] | None:
     left = f"{_amount_label(liquidity)} left in the pool"
     if change is not None and change <= COLLAPSE_CHANGE_PCT:
         text = f"Collapsed: down {abs(change):.2f}% in 24h" + (f", {left}." if thin else ".")
-    elif thin and coin.get("venue") == "bonding_curve":
-        # Nothing was drained: a curve starts small and fills as people buy.
-        text = (
-            f"Early bonding curve: {_amount_label(liquidity)} in the curve. "
-            "One trade can move the price a long way."
-        )
     elif thin:
         text = f"Thin pool: {left}. One trade can move the price a long way."
     else:
