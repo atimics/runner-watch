@@ -2,7 +2,7 @@
   <p class="map-status" role="status" data-replay-status>Loading…</p>
   <div data-replay-content>
     <div class="map-workspace">
-      <div class="map-canvas"><svg viewBox="0 0 760 440" data-replay-graph role="group" aria-label="Token and connected wallets"></svg><div class="map-paging" data-replay-paging hidden><button type="button" data-replay-previous aria-label="Previous wallets">←</button><span data-replay-page></span><button type="button" data-replay-next aria-label="Next wallets">→</button></div></div>
+      <div class="map-canvas"><svg viewBox="0 0 760 440" data-replay-graph role="group" aria-label="Token and connected wallets"></svg></div>
       <aside class="map-source" aria-label="Score or selected chain evidence"><button class="map-score-return" type="button" data-replay-score-return hidden>← Return to score overview</button><div data-replay-selection aria-live="polite" aria-atomic="true"></div>
       {% if screen.item.contract_address %}<div class="token-contract"><button type="button" data-copy-contract data-contract="{{ screen.item.contract_address }}" title="{{ screen.item.contract_address }}">Copy CA</button><span class="sr-only" role="status" data-copy-status></span><code data-contract-fallback hidden>{{ screen.item.contract_address }}</code></div>{% endif %}</aside>
     </div>

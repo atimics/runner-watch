@@ -98,6 +98,21 @@ def test_coin_map_uses_stock_layout_and_ticker_center(page: Page, width: int):
     assert not errors
 
 
+@pytest.mark.parametrize("width", [390, 1440])
+def test_wallets_orbit_one_ring_without_paging(page: Page, width: int):
+    data = open_replay(page, width=width)
+    graph = page.locator("[data-replay-graph]")
+    wallets = len([n for n in data["frames"][-1]["nodes"] if n["id"] != "launch"])
+    expect(page.locator("[data-replay-graph] [data-node]:not([data-node=launch])")).to_have_count(
+        wallets
+    )
+    expect(page.locator("[data-replay-paging], [data-replay-next]")).to_have_count(0)
+    expect(graph).to_have_attribute("data-layout", "spiral" if wallets > 8 else "ring")
+    expect(graph).to_have_attribute("data-orbit-track", "150,150" if width < 500 else "270,150")
+    anchors = page.locator("[data-replay-graph] [data-orbit-anchor]")
+    expect(anchors).to_have_count(wallets)
+
+
 def test_keyboard_bubble_opens_evidence_and_returns_to_score(page: Page):
     open_replay(page, width=1440)
     wallet = page.get_by_role("button", name=re.compile(r"^wallet:"))
