@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from runner_web.market_screens import listing, state_tag
-from runner_web.memecoin_early import early_signal
+from runner_web.memecoin_early import VERSION, early_signal
 from runner_web.memecoins import normalize_chain_pools
 
 AT = datetime(2026, 9, 26, 18, 0, tzinfo=UTC)
@@ -188,6 +188,33 @@ def test_each_saved_quote_keeps_its_early_features(tmp_path, monkeypatch):
             "SELECT features_json FROM memecoin_quote_history WHERE coin_id='setup'"
         ).fetchone()
     features = json.loads(saved["features_json"])
-    assert features["version"] == "memecoin-early-v0"
+    assert features["version"] == VERSION
     assert features["state"] == "setup"
     assert features["volume_h1"] == 20_000.0 and features["organic_buyers"] == 7
+
+
+def test_a_curve_coin_under_an_hour_old_sets_up_on_its_five_minute_pace():
+    young = quiet_coin(
+        venue="bonding_curve",
+        liquidity_usd=3_000.0,
+        volume_m5=900.0,
+        volume_h1=1_200.0,
+        volume_h6=1_200.0,
+        buyers_m5=25.0,
+        buyers_h1=30.0,
+        buyers_h6=30.0,
+        sellers_h1=5.0,
+    )
+
+    signal = early_signal(young)
+
+    # No earlier hours to compare, so the last five minutes against the hour count.
+    assert signal["state"] == "setup"
+    assert "Volume 33.0× its 1h pace" in signal["reasons"]
+    assert "Buyers 55.0× their 1h pace" in signal["reasons"]
+    # A curve always quotes, so its small reserve is not a thin pool.
+    assert signal["features"]["on_curve"] is True
+
+
+def test_a_thin_graduated_pool_is_still_avoid():
+    assert early_signal(waking_coin(liquidity_usd=3_000.0))["state"] == "avoid"

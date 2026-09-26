@@ -7,7 +7,7 @@ from typing import Any
 
 from runner_web import memecoin_evidence as evidence
 from runner_web.helius_discovery import Rpc, rpc_request
-from runner_web.memecoin_chain_parser import PROGRAMS, parse_events, valid_transactions
+from runner_web.memecoin_chain_parser import PROGRAMS, SOL, parse_events, valid_transactions
 
 PAGE_SIZE = 100
 
@@ -169,8 +169,32 @@ def collect_chain(*, at: datetime, rpc: Rpc | None = None) -> dict[str, Any]:
                     "commitment": "finalized",
                 }
             )
+    # A launch trades on its bonding curve until it graduates to a pool.
+    graduated = {pool["token_address"] for pool in pools}
+    curves = [
+        {
+            "pool_address": event["bonding_curve"],
+            "token_address": event["token_address"],
+            "quote_address": SOL,
+            "pool_creator": event["wallet"],
+            "declared_creator": event.get("declared_creator"),
+            "network": "solana",
+            "created_at": event["observed_at"],
+            "signature": event["signature"],
+            "slot": event["slot"],
+            "program": event["program"],
+            "source_url": event["source_url"],
+            "commitment": "finalized",
+            "venue": "bonding_curve",
+        }
+        for event in events
+        if event["kind"] == "token_launch"
+        and event.get("bonding_curve")
+        and event["token_address"] not in graduated
+    ]
     return {
         "pools": pools,
+        "curves": curves,
         "transactions": transactions,
         "events": events,
         "received_transactions": len(transactions),
