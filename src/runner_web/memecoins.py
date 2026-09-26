@@ -625,7 +625,12 @@ def _with_chain_prices(
         if row is None:
             by_pool[address] = _chain_row(receipt, quote, at)
         else:
-            row.update(price=quote["price"], liquidity_usd=quote["liquidity_usd"])
+            row.update(
+                price=quote["price"],
+                liquidity_usd=quote["liquidity_usd"],
+                source="Solana (Helius)",
+                activity_source=row["source"],
+            )
     merged = list(by_pool.values())
     history = _history_changes([row["id"] for row in merged if row.get("change_h1") is None], at)
     for row in merged:
@@ -793,7 +798,16 @@ def _collect_helius(
     for row in rows:
         row["early"] = early_signal(row)
     # A pool or curve that traded keeps its slot next cycle, busiest first.
-    traded = sorted(rows, key=lambda row: -(row.get("volume_h1") or 0))
+    # Without GeckoTerminal's windows, a chain price that moved since last
+    # cycle is the sign of trading.
+    previous = _previous_prices()
+
+    def activity(row: dict[str, Any]) -> tuple[float, float]:
+        before = previous.get(row["pool_address"])
+        move = abs(row["price"] / before - 1) if before else 0.0
+        return (row.get("volume_h1") or 0.0, move)
+
+    traded = sorted(rows, key=activity, reverse=True)
     for key, venue in (("memecoin_curve_watch", "bonding_curve"), ("memecoin_pool_watch", "pool")):
         _save_state(
             key,
@@ -802,7 +816,7 @@ def _collect_helius(
                 for row in traded
                 if row["venue"] == venue
                 and not row["discovery"].get("found_by")
-                and (row.get("volume_h1") or 0) > 0
+                and (activity(row)[0] > 0 or activity(row)[1] > 0.001)
             ],
             at,
         )
