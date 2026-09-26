@@ -35,6 +35,9 @@ STALE_SECONDS = 900
 # Bonding curves quoted each cycle: those that traded last cycle keep their
 # place, and the newest launches fill the rest.
 CURVE_SLOTS = 90
+POOL_SLOTS = 100
+# Graduated pools and bonding curves are quoted in one pass.
+MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS
 ACTIVE_CURVE_SLOTS = 60
 CURVE_HOURS = 24
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -138,8 +141,8 @@ def normalize_chain_pools(payload: Any, *, at: datetime) -> list[dict[str, Any]]
     """Discover from pool records. Token identity and selection use chain fields only."""
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         raise ValueError("Expected DEX pool records")
-    if len(payload["data"]) > 100:
-        raise ValueError("Expected up to 100 pool records")
+    if len(payload["data"]) > MAX_QUOTED_POOLS:
+        raise ValueError(f"Expected up to {MAX_QUOTED_POOLS} pool records")
     rows: dict[str, dict[str, Any]] = {}
     for pool in payload["data"]:
         try:
@@ -294,7 +297,9 @@ def _collect_helius(
         created = _time(candidate.get("created_at"))
         if created and 0 <= (at - created).total_seconds() <= 30 * 86400:
             candidates.setdefault(candidate["pool_address"], candidate)
-    selected = sorted(candidates.values(), key=lambda item: item["created_at"], reverse=True)[:100]
+    selected = sorted(candidates.values(), key=lambda item: item["created_at"], reverse=True)[
+        :POOL_SLOTS
+    ]
     # Keep chain discoveries while USD quotes become available in the pool index.
     _save_state("helius_discovered_pools", selected, at)
     analytics = analyze_events(discovery.get("events", []))
