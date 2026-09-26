@@ -173,7 +173,7 @@ def test_memecoin_screen_shows_quote_and_saved_chain_evidence_without_score():
     assert '<body class="theme-memecoins">' in board
     assert ">Market quote</small>" not in board
     assert ">Pending</small>" not in board
-    assert "Token ranking pending" in board
+    assert "No SETUP right now" in board
 
     finding = {
         "token_address": "token-a",
@@ -269,7 +269,7 @@ def test_memecoin_board_waits_for_a_directional_call():
     coin = {**sample("memecoins"), "volume_24h": 1_000_000, "change_24h": 80}
     board = listing("memecoins", [coin])
 
-    assert "Token ranking pending" in board["ranking_status"]
+    assert "No SETUP right now" in board["ranking_status"]
 
 
 def test_memecoin_board_ranks_saved_active_scores():

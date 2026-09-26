@@ -17,6 +17,7 @@ from runner_web.helius_discovery import RPC_URL, Rpc
 from runner_web.ingestion import record_source_fetch
 from runner_web.memecoin_chain_ingestion import collect_chain as discover_pools
 from runner_web.memecoin_chain_parser import coin_search_rank, short_address
+from runner_web.memecoin_early import early_signal
 from runner_web.memecoin_forensics import analyze_events
 from runner_web.memecoin_integrity import creator_trades
 from runner_web.memecoin_model import assess_memecoin, display_assessment
@@ -112,6 +113,22 @@ def normalize_memecoins(payload: Any) -> list[dict[str, Any]]:
     return list(rows.values())
 
 
+def _short_windows(attrs: dict[str, Any]) -> dict[str, float | None]:
+    """The pool's recent windows: the pace of a move shows here before the 24h totals."""
+
+    changes = attrs.get("price_change_percentage") or {}
+    volumes = attrs.get("volume_usd") or {}
+    trades = attrs.get("transactions") or {}
+    fields: dict[str, float | None] = {}
+    for window in ("m5", "h1", "h6"):
+        activity = trades.get(window) or {}
+        fields[f"change_{window}"] = _number(changes.get(window), minimum=-100)
+        fields[f"volume_{window}"] = _number(volumes.get(window), minimum=0)
+        fields[f"buyers_{window}"] = _number(activity.get("buyers"), minimum=0)
+        fields[f"sellers_{window}"] = _number(activity.get("sellers"), minimum=0)
+    return fields
+
+
 def normalize_chain_pools(payload: Any, *, at: datetime) -> list[dict[str, Any]]:
     """Discover from pool records. Token identity and selection use chain fields only."""
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
@@ -185,6 +202,7 @@ def normalize_chain_pools(payload: Any, *, at: datetime) -> list[dict[str, Any]]
                 "source_url": f"https://www.geckoterminal.com/{network}/pools/{address}",
                 "detail_url": f"/memecoins/coin/{coin_id}",
                 "fully_diluted_valuation": _number(attrs.get("fdv_usd"), minimum=0),
+                **_short_windows(attrs),
                 "high_24h": None,
                 "low_24h": None,
                 "circulating_supply": None,
@@ -323,6 +341,7 @@ def _collect_helius(
                 at=at,
             )
         )
+        row["early"] = early_signal(row)
     metadata = {
         key: value
         for key, value in discovery.items()

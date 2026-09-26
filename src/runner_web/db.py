@@ -2774,6 +2774,7 @@ def _migration_055_memecoin_quote_history(db: DatabaseConnection) -> None:
             collected_at TEXT NOT NULL,
             price DOUBLE PRECISION NOT NULL CHECK(price>0),
             run_id TEXT NOT NULL,
+            features_json TEXT,
             PRIMARY KEY(coin_id,observed_at)
         );
         CREATE INDEX IF NOT EXISTS memecoin_quote_history_time
@@ -3807,6 +3808,16 @@ def _migration_091_memecoin_call_orders(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_092_memecoin_early_features(db: DatabaseConnection) -> None:
+    """Each saved quote keeps the features its early reading used.
+
+    Tested later against what the coin did next, they show which signals come
+    before a run and which before a rug.
+    """
+
+    _ensure_column(db, "memecoin_quote_history", "features_json TEXT")
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3905,6 +3916,7 @@ MIGRATIONS = (
     Migration(89, "prediction_tickers", _migration_089_prediction_tickers),
     Migration(90, "sports_market_activity", _migration_090_sports_market_activity),
     Migration(91, "memecoin_call_orders", _migration_091_memecoin_call_orders),
+    Migration(92, "memecoin_early_features", _migration_092_memecoin_early_features),
 )
 
 

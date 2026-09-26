@@ -93,7 +93,7 @@
     {% if screen.ranking_status %}<p class="ranking-status" role="status">{{ screen.ranking_status }}</p>{% endif %}
     {% if screen.market == 'stocks' and screen.stale_assessments %}<p class="stock-freshness-note" role="status">{{ screen.stale_assessments }} stock assessment{{ '' if screen.stale_assessments == 1 else 's' }} {{ 'uses an older price' if screen.stale_assessments == 1 else 'use older prices' }}. The prices shown may be newer than those checks.</p>{% endif %}
     {% if screen.rows %}
-      {% if screen.market == 'memecoins' %}<p class="board-scope">Prices and observed chain findings appear here. Action tags require a saved Runner assessment.</p>{% endif %}
+      {% if screen.market == 'memecoins' %}<p class="board-scope">Tags compare the last hour's trading with the six before it. SETUP means trading is speeding up before the price has run; AVOID means the pool is thin, collapsing or showing staged or creator selling.</p>{% endif %}
       <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if screen.market == 'sports' %} sports-matchup{% endif %}{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}"{% if screen.market in ['stocks', 'memecoins'] %} data-chart-offset="{{ item.chart_offset }}"{% endif %}{% if item.eligibility_note %} title="{{ item.eligibility_note }}"{% endif %}>
         {% if screen.market == 'sports' and item.ticker is defined and item.matchup is not defined %}
         {% include '_sports_golf_row.html' %}
