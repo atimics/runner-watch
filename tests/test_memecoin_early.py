@@ -218,3 +218,15 @@ def test_a_curve_coin_under_an_hour_old_sets_up_on_its_five_minute_pace():
 
 def test_a_thin_graduated_pool_is_still_avoid():
     assert early_signal(waking_coin(liquidity_usd=3_000.0))["state"] == "avoid"
+
+
+def test_a_copy_names_the_original_by_address_on_its_page():
+    from runner_web.market_screens import _pool_facts
+
+    original = "DG1Sos2qOriginaL111111111111111111111111111"
+    facts = {
+        fact["label"]: fact["value"]
+        for fact in _pool_facts({"copies": {"token_address": original}})
+    }
+
+    assert facts["Original coin"] == original

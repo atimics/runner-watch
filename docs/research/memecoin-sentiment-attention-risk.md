@@ -75,7 +75,7 @@ Stock scoring and paper Call policy retain their existing contracts.
 
 ## Early reading and tags
 
-Policy: `memecoin-early-v1` (`src/runner_web/memecoin_early.py`). Attention reads
+Policy: `memecoin-early-v2` (`src/runner_web/memecoin_early.py`). Attention reads
 the last 24 hours, so it peaks after a move in either direction. The early
 reading compares the pool's last hour with its own pace over the five hours
 before it, from GeckoTerminal's 1h and 6h windows, while the price has not yet
@@ -96,6 +96,26 @@ five before it and the last five minutes against the hour (which needs $500 and
 A score of 30 with at least one stated reason is a SETUP. An hour under $1,000
 or 10 buyers is too small to read. A bonding curve is never AVOID for thinness:
 it always quotes and has no pool to drain until it graduates.
+
+### Copied names
+
+Scammers copy the name of a coin that already has attention, as with
+"trolloween" copies each Halloween, so a burst of copies points at the original
+(`src/runner_web/memecoin_copycats.py`). Names fold case, spacing and look-alike
+characters ("Tr0lloween", "TRO11OWEEN"). Three distinct launches taking one
+name within 24 hours are a burst. Each launch counts under its name, or its
+symbol only when it has no usable name.
+
+The name only finds candidates. For up to three bursts a cycle (cached six
+hours), a GeckoTerminal pool search returns coins by that name; the original is
+the contract address whose pools are at least seven days older than the burst
+and hold the most liquidity in total, at least $5,000. An older copy that died
+loses to the funded original. The original is quoted like any pool and earns up
+to 30 copycat points, enough for SETUP on a burst of three even while its own
+trading is quiet. Every launch in the burst that is not the original is AVOID
+("Copies an older coin's name") and its page names the original by address.
+Without a verified original, nothing is marked. A failed search skips that name
+for the cycle and never fails the refresh.
 
 These weights are a starting heuristic. Every saved quote keeps the features,
 score and state in `memecoin_quote_history.features_json`. The test is: for
