@@ -26,6 +26,10 @@ MIN_COPIES = 3
 BURST_HOURS = 24
 MIN_ORIGINAL_AGE = timedelta(days=7)
 MIN_ORIGINAL_LIQUIDITY_USD = 5_000.0
+# Still traded: an unrelated dead coin must not answer for a generic word.
+MIN_ORIGINAL_VOLUME_USD = 1_000.0
+# Bump when the rules change, so cached answers under old rules are dropped.
+RULES_VERSION = 2
 SEARCH_TTL = timedelta(hours=6)
 MAX_SEARCHES = 3
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -115,18 +119,19 @@ def _original(
             mint = pool["relationships"]["base_token"]["data"]["id"][len("solana_") :]
             created = datetime.fromisoformat(attrs["pool_created_at"].replace("Z", "+00:00"))
             liquidity = float(attrs.get("reserve_in_usd") or 0)
+            volume = float((attrs.get("volume_usd") or {}).get("h24") or 0)
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
-        token = names.get(mint, {})
-        if mint in copies or key not in {
-            name_key(token.get("name")),
-            name_key(token.get("symbol")),
-        }:
+        # The copies share a name, so the original must carry that name: a
+        # matching symbol alone ("Hold My Glasses", GLASSES) is not enough.
+        if mint in copies or name_key(names.get(mint, {}).get("name")) != key:
             continue
         coin = coins.setdefault(
-            mint, {"token_address": mint, "liquidity_usd": 0.0, "created_at": created}
+            mint,
+            {"token_address": mint, "liquidity_usd": 0.0, "volume_24h": 0.0, "created_at": created},
         )
         coin["liquidity_usd"] += max(liquidity, 0.0)
+        coin["volume_24h"] += max(volume, 0.0)
         coin["created_at"] = min(coin["created_at"], created)
         if liquidity >= coin.get("pool_liquidity_usd", -1.0):
             coin.update(pool_address=attrs["address"], pool_liquidity_usd=liquidity)
@@ -135,6 +140,7 @@ def _original(
         for coin in coins.values()
         if at - coin["created_at"] >= MIN_ORIGINAL_AGE
         and coin["liquidity_usd"] >= MIN_ORIGINAL_LIQUIDITY_USD
+        and coin["volume_24h"] >= MIN_ORIGINAL_VOLUME_USD
     ]
     if not eligible:
         return None
@@ -164,7 +170,7 @@ def find_originals(
             checked = datetime.fromisoformat(str(entry["checked_at"]))
         except (KeyError, TypeError, ValueError):
             continue
-        if at - checked <= SEARCH_TTL:
+        if entry.get("rules") == RULES_VERSION and at - checked <= SEARCH_TTL:
             fresh[key] = entry
     searches = 0
     for key, burst in sorted(bursts.items(), key=lambda item: (-item[1]["h24"], item[0])):
@@ -184,6 +190,7 @@ def find_originals(
             LOG.warning("Copycat original search failed for %r", key, exc_info=True)
             continue
         fresh[key] = {
+            "rules": RULES_VERSION,
             "checked_at": at.isoformat(),
             "original": _original(key, body, at, set(burst["launches"])),
         }

@@ -109,9 +109,12 @@ symbol only when it has no usable name.
 The name only finds candidates. For up to three bursts a cycle (cached six
 hours, searched after the pools are quoted, so a new original joins the next
 cycle), a GeckoTerminal pool search returns coins by that name; the original is
-the contract address whose pools are at least seven days older than the burst
-and hold the most liquidity in total, at least $5,000. An older copy that died
-loses to the funded original. The original is quoted like any pool and earns up
+the contract address named the same (a matching symbol alone is not enough)
+whose pools are at least seven days older than the burst, hold the most
+liquidity in total, at least $5,000, and still trade at least $1,000 a day. An
+older copy that died loses to the funded original, and a generic word does not
+pull in an unrelated dead coin (live case: "Hold My Glasses", symbol GLASSES,
+no volume, once answered a "Glasses" burst). The original is quoted like any pool and earns up
 to 30 copycat points, enough for SETUP on a burst of three even while its own
 trading is quiet. Every launch in the burst that is not the original is AVOID
 ("Copies an older coin's name") and its page names the original by address.
