@@ -240,6 +240,7 @@ def test_worker_refresh_runs_in_a_thread_and_cancels(monkeypatch):
 
     async def run_refresh(function):
         calls.append(function)
+        return []
 
     async def sleep(seconds):
         assert seconds == memecoins.REFRESH_SECONDS
@@ -249,7 +250,8 @@ def test_worker_refresh_runs_in_a_thread_and_cancels(monkeypatch):
     monkeypatch.setattr(main.asyncio, "sleep", sleep)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(main.memecoin_worker())
-    assert calls == [main.refresh_memecoins]
+    # Pending Call orders fill right after each refresh brings a new quote.
+    assert calls == [main.refresh_memecoins, main.fill_memecoin_call_orders]
 
 
 def test_download_uses_public_pool_quote_request(monkeypatch):

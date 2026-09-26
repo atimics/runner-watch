@@ -19,6 +19,7 @@ PORTABLE_CONTENT_GROUPS = {
         "sports_comments",
         "community_calls",
         "memecoin_calls",
+        "memecoin_call_orders",
         "sports_picks",
         "signals",
         "reports_submitted",
@@ -214,6 +215,14 @@ def export_user_data(user_id: str) -> dict[str, Any]:
                 database,
                 tables,
                 "memecoin_calls",
+                "user_id=?",
+                (user_id,),
+                order_by="created_at",
+            ),
+            "memecoin_call_orders": _rows(
+                database,
+                tables,
+                "memecoin_call_orders",
                 "user_id=?",
                 (user_id,),
                 order_by="created_at",
@@ -469,6 +478,7 @@ def _delete_user_content_rows(
     delete("ticker_comments", "user_id=?", (user_id,))
     delete("sports_comments", "user_id=?", (user_id,))
     delete("community_calls", "user_id=?", (user_id,))
+    delete("memecoin_call_orders", "user_id=?", (user_id,))
     delete("memecoin_calls", "user_id=?", (user_id,))
     delete("sports_picks", "user_id=?", (user_id,))
     delete("user_positions", "user_id=?", (user_id,))

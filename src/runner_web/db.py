@@ -3773,6 +3773,40 @@ def _migration_090_sports_market_activity(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_091_memecoin_call_orders(db: DatabaseConnection) -> None:
+    """Staked memecoin Calls that fill at the next quote.
+
+    A request becomes an order; the first quote observed after it fills the
+    order. Entry and exit can no longer use a quote the caller has already
+    seen move.
+    """
+
+    _ensure_column(db, "memecoin_calls", "stake INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(db, "memecoin_calls", "settled_flash INTEGER")
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS memecoin_call_orders (
+            order_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            caller_identity_id TEXT NOT NULL REFERENCES caller_identities(id),
+            coin_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('open','close')),
+            call_public_id TEXT,
+            stake INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL CHECK(status IN ('pending','filled','cancelled')),
+            requested_at TEXT NOT NULL,
+            resolved_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS memecoin_call_orders_one_pending
+            ON memecoin_call_orders(user_id,coin_id) WHERE status='pending';
+        CREATE INDEX IF NOT EXISTS memecoin_call_orders_pending
+            ON memecoin_call_orders(status,requested_at);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3870,6 +3904,7 @@ MIGRATIONS = (
     Migration(88, "golf_match_results", _migration_088_golf_match_results),
     Migration(89, "prediction_tickers", _migration_089_prediction_tickers),
     Migration(90, "sports_market_activity", _migration_090_sports_market_activity),
+    Migration(91, "memecoin_call_orders", _migration_091_memecoin_call_orders),
 )
 
 

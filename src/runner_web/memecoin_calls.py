@@ -1,3 +1,16 @@
+"""Paper memecoin Calls: staked, and filled at the next quote.
+
+Opening a Call escrows MEMECOIN_CALL_STAKE Flash and records an order. The
+first quote observed after the request fills it, so a caller cannot enter or
+exit at a quote they have already watched move on the live market. Closing
+works the same way. Settlement returns the stake with the return clamped to
+[-stake, CALL_WIN_FLASH_CAP], so losses cost Flash and a spread of Calls
+closed only when they win no longer pays.
+
+Calls opened before staking (stake 0) keep their original reward: a winning
+return pays, a losing one costs nothing.
+"""
+
 from __future__ import annotations
 
 import json
@@ -9,14 +22,27 @@ from typing import Any
 from runner_web import memecoins
 from runner_web.caller_ids import ensure_caller_identity_with_database
 from runner_web.db import connection
-from runner_web.flash_wallet import credit_flash, memecoin_call_reward
+from runner_web.flash_wallet import (
+    MEMECOIN_CALL_STAKE,
+    credit_flash,
+    memecoin_call_reward,
+    memecoin_call_settlement,
+    spend_flash,
+)
+
+# An order with no quote after this long is cancelled; an open order's stake
+# is refunded. A coin that left the board may never be quoted again.
+MEMECOIN_CALL_ORDER_TIMEOUT = timedelta(hours=1)
+MEMECOIN_CALL_MAX_AGE_DAYS = 7
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _fresh_mark(coin_id: str) -> dict[str, Any]:
+def _require_quoted(coin_id: str) -> dict[str, Any]:
+    """The coin exists and has a current quote. The Call fills at a later one."""
+
     detail = memecoins.memecoin_detail(coin_id)
     if detail is None:
         raise LookupError("Coin not found")
@@ -24,20 +50,15 @@ def _fresh_mark(coin_id: str) -> dict[str, Any]:
     if detail["status"] != "ok" or coin["stale"]:
         raise ValueError("A source quote from the last 15 minutes is required for a paper Call.")
     price = float(coin["price"])
-    observed = datetime.fromisoformat(str(coin["observed_at"]))
-    age = (datetime.now(UTC) - observed).total_seconds()
-    if not math.isfinite(price) or price <= 0 or not -60 <= age <= memecoins.STALE_SECONDS:
+    if not math.isfinite(price) or price <= 0:
         raise ValueError("A current source quote is required for a paper Call.")
-    return {
-        "coin_id": coin_id,
-        "symbol": coin["symbol"],
-        "name": coin["name"],
-        "price": price,
-        "observed_at": observed.astimezone(UTC).isoformat(),
-        "collected_at": detail["collected_at"],
-        "source_url": coin["source_url"],
-        "run_id": detail["evidence"].get("run_id"),
-    }
+    return coin
+
+
+def _settlement(stake: int, return_pct: float | None, legacy_reward: int) -> int:
+    if stake > 0:
+        return memecoin_call_settlement(return_pct, stake)
+    return legacy_reward
 
 
 def _call(row: Any, mark: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -59,6 +80,8 @@ def _call(row: Any, mark: dict[str, Any] | None = None) -> dict[str, Any]:
             "updated_at",
         )
     }
+    stake = int(saved.get("stake") or 0)
+    item["stake"] = stake
     price = (
         item["exit_price"]
         if item["status"] == "closed"
@@ -79,21 +102,35 @@ def _call(row: Any, mark: dict[str, Any] | None = None) -> dict[str, Any]:
     item["detail_url"] = f"/memecoins/coin/{item['coin_id']}"
     item["entry_evidence"] = json.loads(saved["entry_evidence"])
     item["exit_evidence"] = json.loads(saved["exit_evidence"]) if saved["exit_evidence"] else None
-    flash_reward = int(saved.get("flash_reward") or 0)
-    item["flash_reward"] = flash_reward
+    if stake > 0:
+        flash = int(saved.get("settled_flash") or 0)
+    else:
+        flash = int(saved.get("flash_reward") or 0)
+    item["flash_reward"] = flash
     item["projected_flash_reward"] = (
-        memecoin_call_reward(item["return_pct"]) if item["status"] == "active" else flash_reward
+        _settlement(stake, item["return_pct"], memecoin_call_reward(item["return_pct"]))
+        if item["status"] == "active"
+        else flash
     )
-    item["reward_label"] = (
-        f"+{flash_reward} Flash" if item["status"] == "closed" and flash_reward > 0 else None
-    )
+    if item["status"] != "closed":
+        item["reward_label"] = None
+    elif flash > 0:
+        item["reward_label"] = f"+{flash} Flash"
+    elif flash < 0:
+        item["reward_label"] = f"−{-flash} Flash"
+    else:
+        item["reward_label"] = None
+    item["closing"] = bool(saved.get("closing"))
     return item
 
 
 _SELECT = """
     SELECT c.*,ci.handle AS caller_handle,
            COALESCE(ft.amount,0) AS flash_reward,
-           q.quote_json AS current_quote_json,q.collected_at AS current_collected_at
+           q.quote_json AS current_quote_json,q.collected_at AS current_collected_at,
+           EXISTS(SELECT 1 FROM memecoin_call_orders o
+                  WHERE o.call_public_id=c.public_id AND o.kind='close'
+                    AND o.status='pending') AS closing
     FROM memecoin_calls c
     JOIN caller_identities ci ON ci.id=c.caller_identity_id AND ci.status='active'
     LEFT JOIN flash_transactions ft
@@ -102,91 +139,298 @@ _SELECT = """
 """
 
 
+def _order(row: Any, handle: str) -> dict[str, Any]:
+    saved = dict(row)
+    return {
+        "order_id": saved["order_id"],
+        "coin_id": saved["coin_id"],
+        "kind": saved["kind"],
+        "status": saved["status"],
+        "stake": int(saved["stake"] or 0),
+        "requested_at": saved["requested_at"],
+        "call_public_id": saved.get("call_public_id"),
+        "caller_handle": handle,
+        "detail_url": f"/memecoins/coin/{saved['coin_id']}",
+    }
+
+
 def create_memecoin_call(
     user_id: str, coin_id: str, *, expected_price: float | None = None
 ) -> dict[str, Any]:
-    mark = _fresh_mark(coin_id)
-    if expected_price is not None and expected_price != mark["price"]:
-        raise ValueError("The price changed. Please review the current Call terms.")
+    """Escrow the stake and queue an open order. `expected_price` is accepted
+    for compatibility and ignored: the Call fills at the next quote."""
+
+    del expected_price
+    _require_quoted(coin_id)
+    order_id = secrets.token_urlsafe(12)
     timestamp = _now()
     with connection() as database:
         identity = ensure_caller_identity_with_database(database, user_id)
-        database.execute(
+        if database.execute(
+            "SELECT 1 FROM memecoin_calls WHERE user_id=? AND coin_id=? AND status='active'",
+            (user_id, coin_id),
+        ).fetchone():
+            raise ValueError("You already have an open Call on this coin.")
+        inserted = database.execute(
             """
-            INSERT INTO memecoin_calls(
-                public_id,user_id,caller_identity_id,coin_id,symbol,name,status,
-                entry_price,entry_at,entry_evidence,created_at,updated_at
-            ) VALUES(?,?,?,?,?,?,'active',?,?,?,?,?) ON CONFLICT DO NOTHING
+            INSERT INTO memecoin_call_orders(
+                order_id,user_id,caller_identity_id,coin_id,kind,stake,status,
+                requested_at,created_at,updated_at
+            ) VALUES(?,?,?,?,'open',?,'pending',?,?,?) ON CONFLICT DO NOTHING
             """,
             (
-                secrets.token_urlsafe(12),
+                order_id,
                 user_id,
                 identity["id"],
                 coin_id,
-                mark["symbol"],
-                mark["name"],
-                mark["price"],
-                mark["observed_at"],
-                json.dumps(mark, allow_nan=False),
+                MEMECOIN_CALL_STAKE,
+                timestamp,
                 timestamp,
                 timestamp,
             ),
         )
+        if inserted.rowcount != 1:
+            raise ValueError("A Call on this coin is already waiting for the next quote.")
+        # Raises InsufficientFlashError (a ValueError) and rolls the order back.
+        spend_flash(
+            database,
+            user_id,
+            MEMECOIN_CALL_STAKE,
+            kind="memecoin_call_stake",
+            reference_id=order_id,
+        )
         row = database.execute(
-            _SELECT + " WHERE c.user_id=? AND c.coin_id=? AND c.status='active'",
-            (user_id, coin_id),
+            "SELECT * FROM memecoin_call_orders WHERE order_id=?", (order_id,)
         ).fetchone()
-    return _call(row, {**mark, "stale": False})
+    return _order(row, str(identity["handle"]))
 
 
 def close_memecoin_call(
     user_id: str, public_id: str, *, expected_price: float | None = None
 ) -> dict[str, Any] | None:
+    """Queue a close order for an open Call; it settles at the next quote.
+    `expected_price` is accepted for compatibility and ignored."""
+
+    del expected_price
     with connection() as database:
         existing = database.execute(
             _SELECT + " WHERE c.user_id=? AND c.public_id=?", (user_id, public_id)
         ).fetchone()
-    if existing is None:
-        return None
-    if existing["status"] == "closed":
-        return _call(existing)
-    mark = _fresh_mark(str(existing["coin_id"]))
-    if expected_price is not None and expected_price != mark["price"]:
-        raise ValueError("The price changed. Please review the current Call terms.")
-    if datetime.fromisoformat(mark["observed_at"]) < datetime.fromisoformat(existing["entry_at"]):
-        raise ValueError(
-            "A source quote at or after the entry time is required to close this Call."
-        )
-    with connection() as database:
-        changed = database.execute(
-            """
-            UPDATE memecoin_calls SET status='closed',exit_price=?,exit_at=?,exit_evidence=?,
-                updated_at=? WHERE public_id=? AND user_id=? AND status='active'
-            """,
-            (
-                mark["price"],
-                mark["observed_at"],
-                json.dumps(mark, allow_nan=False),
-                _now(),
-                public_id,
-                user_id,
-            ),
-        )
-        if changed.rowcount == 1:
-            return_pct = (float(mark["price"]) / float(existing["entry_price"]) - 1) * 100
-            reward = memecoin_call_reward(return_pct)
-            if reward:
-                credit_flash(
-                    database,
+        if existing is None:
+            return None
+        if existing["status"] == "active" and not existing["closing"]:
+            timestamp = _now()
+            database.execute(
+                """
+                INSERT INTO memecoin_call_orders(
+                    order_id,user_id,caller_identity_id,coin_id,kind,call_public_id,
+                    stake,status,requested_at,created_at,updated_at
+                ) VALUES(?,?,?,?,'close',?,0,'pending',?,?,?) ON CONFLICT DO NOTHING
+                """,
+                (
+                    secrets.token_urlsafe(12),
                     user_id,
-                    reward,
-                    kind="memecoin_call_win",
-                    reference_id=str(existing["public_id"]),
+                    existing["caller_identity_id"],
+                    existing["coin_id"],
+                    public_id,
+                    timestamp,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            existing = database.execute(
+                _SELECT + " WHERE c.user_id=? AND c.public_id=?", (user_id, public_id)
+            ).fetchone()
+    return _call(existing)
+
+
+def _next_quote(database: Any, coin_id: str, after: str) -> Any:
+    return database.execute(
+        """
+        SELECT observed_at,price,collected_at,run_id FROM memecoin_quote_history
+        WHERE coin_id=? AND observed_at>? AND price>0
+        ORDER BY observed_at ASC LIMIT 1
+        """,
+        (coin_id, after),
+    ).fetchone()
+
+
+def _evidence(coin_id: str, quote: Any, **extra: Any) -> str:
+    return json.dumps(
+        {
+            "coin_id": coin_id,
+            "price": float(quote["price"]),
+            "observed_at": str(quote["observed_at"]),
+            "collected_at": str(quote["collected_at"]),
+            "run_id": str(quote["run_id"]),
+            **extra,
+        },
+        allow_nan=False,
+    )
+
+
+def _settle(database: Any, call: Any, quote: Any, *, at: str, **evidence: Any) -> bool:
+    """Close an active Call at `quote` and pay its settlement. Returns whether
+    this call closed it (a concurrent settle loses the race harmlessly)."""
+
+    stake = int(call["stake"] or 0)
+    return_pct = (float(quote["price"]) / float(call["entry_price"]) - 1) * 100
+    net = _settlement(stake, return_pct, memecoin_call_reward(return_pct))
+    changed = database.execute(
+        """
+        UPDATE memecoin_calls
+        SET status='closed',exit_price=?,exit_at=?,exit_evidence=?,settled_flash=?,updated_at=?
+        WHERE public_id=? AND status='active'
+        """,
+        (
+            float(quote["price"]),
+            str(quote["observed_at"]),
+            _evidence(str(call["coin_id"]), quote, **evidence),
+            net,
+            at,
+            str(call["public_id"]),
+        ),
+    )
+    if changed.rowcount != 1:
+        return False
+    if stake > 0:
+        payout = stake + net
+        kind = "memecoin_call_settle"
+    else:
+        payout = net
+        kind = "memecoin_call_win"
+    if payout > 0:
+        credit_flash(
+            database,
+            str(call["user_id"]),
+            payout,
+            kind=kind,
+            reference_id=str(call["public_id"]),
+        )
+    database.execute(
+        """
+        UPDATE memecoin_call_orders SET status='cancelled',resolved_at=?,updated_at=?
+        WHERE call_public_id=? AND status='pending'
+        """,
+        (at, at, str(call["public_id"])),
+    )
+    return True
+
+
+def fill_memecoin_call_orders(at: datetime | None = None) -> list[str]:
+    """Fill pending orders at the first quote observed after each request.
+
+    Returns the caller handles whose public records changed.
+    """
+
+    current = at or datetime.now(UTC)
+    stamp = current.isoformat()
+    timeout = (current - MEMECOIN_CALL_ORDER_TIMEOUT).isoformat()
+    handles: list[str] = []
+    with connection() as database:
+        orders = database.execute(
+            """
+            SELECT o.*,ci.handle AS caller_handle FROM memecoin_call_orders o
+            JOIN caller_identities ci ON ci.id=o.caller_identity_id
+            WHERE o.status='pending' ORDER BY o.requested_at,o.order_id
+            """
+        ).fetchall()
+        for order in orders:
+            quote = _next_quote(database, str(order["coin_id"]), str(order["requested_at"]))
+            resolved = False
+            if quote is None:
+                if str(order["requested_at"]) >= timeout:
+                    continue
+                if order["kind"] == "open" and int(order["stake"] or 0) > 0:
+                    credit_flash(
+                        database,
+                        str(order["user_id"]),
+                        int(order["stake"]),
+                        kind="memecoin_call_refund",
+                        reference_id=str(order["order_id"]),
+                    )
+                status = "cancelled"
+            elif order["kind"] == "open":
+                asset = database.execute(
+                    "SELECT quote_json FROM memecoin_assets WHERE coin_id=?",
+                    (str(order["coin_id"]),),
+                ).fetchone()
+                shown = json.loads(asset["quote_json"]) if asset else {}
+                opened = database.execute(
+                    """
+                    INSERT INTO memecoin_calls(
+                        public_id,user_id,caller_identity_id,coin_id,symbol,name,status,
+                        entry_price,entry_at,entry_evidence,stake,created_at,updated_at
+                    ) VALUES(?,?,?,?,?,?,'active',?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                    """,
+                    (
+                        secrets.token_urlsafe(12),
+                        str(order["user_id"]),
+                        str(order["caller_identity_id"]),
+                        str(order["coin_id"]),
+                        str(shown.get("symbol") or order["coin_id"])[:64],
+                        str(shown.get("name") or order["coin_id"])[:160],
+                        float(quote["price"]),
+                        str(quote["observed_at"]),
+                        _evidence(
+                            str(order["coin_id"]),
+                            quote,
+                            order_id=str(order["order_id"]),
+                            requested_at=str(order["requested_at"]),
+                        ),
+                        int(order["stake"] or 0),
+                        stamp,
+                        stamp,
+                    ),
                 )
+                if opened.rowcount == 1:
+                    status, resolved = "filled", True
+                else:
+                    credit_flash(
+                        database,
+                        str(order["user_id"]),
+                        int(order["stake"] or 0),
+                        kind="memecoin_call_refund",
+                        reference_id=str(order["order_id"]),
+                    )
+                    status = "cancelled"
+            else:
+                call = database.execute(
+                    "SELECT * FROM memecoin_calls WHERE public_id=? AND status='active'",
+                    (str(order["call_public_id"]),),
+                ).fetchone()
+                if call is not None and str(quote["observed_at"]) >= str(call["entry_at"]):
+                    resolved = _settle(
+                        database,
+                        call,
+                        quote,
+                        at=stamp,
+                        order_id=str(order["order_id"]),
+                        requested_at=str(order["requested_at"]),
+                    )
+                status = "filled" if resolved else "cancelled"
+            database.execute(
+                """
+                UPDATE memecoin_call_orders SET status=?,resolved_at=?,updated_at=?
+                WHERE order_id=? AND status='pending'
+                """,
+                (status, stamp, stamp, str(order["order_id"])),
+            )
+            handles.append(str(order["caller_handle"]))
+    return handles
+
+
+def pending_memecoin_order(user_id: str, coin_id: str) -> dict[str, Any] | None:
+    with connection() as database:
         row = database.execute(
-            _SELECT + " WHERE c.user_id=? AND c.public_id=?", (user_id, public_id)
+            """
+            SELECT o.*,ci.handle AS caller_handle FROM memecoin_call_orders o
+            JOIN caller_identities ci ON ci.id=o.caller_identity_id
+            WHERE o.user_id=? AND o.coin_id=? AND o.status='pending'
+            """,
+            (user_id, coin_id),
         ).fetchone()
-    return _call(row) if row else None
+    return _order(row, str(row["caller_handle"])) if row else None
 
 
 def memecoin_calls(
@@ -237,9 +481,6 @@ def active_memecoin_call(user_id: str, coin_id: str) -> dict[str, Any] | None:
     )
 
 
-MEMECOIN_CALL_MAX_AGE_DAYS = 7
-
-
 def expire_memecoin_calls(
     at: datetime | None = None,
     *,
@@ -264,50 +505,16 @@ def expire_memecoin_calls(
             (cutoff,),
         ).fetchall()
         for row in rows:
-            mark = database.execute(
+            quote = database.execute(
                 """
                 SELECT observed_at,price,collected_at,run_id FROM memecoin_quote_history
-                WHERE coin_id=? AND observed_at>=?
+                WHERE coin_id=? AND observed_at>=? AND price>0
                 ORDER BY observed_at DESC LIMIT 1
                 """,
                 (str(row["coin_id"]), str(row["entry_at"])),
             ).fetchone()
-            if not mark or mark["price"] is None:
+            if quote is None:
                 continue
-            exit_evidence = {
-                "coin_id": str(row["coin_id"]),
-                "price": float(mark["price"]),
-                "observed_at": str(mark["observed_at"]),
-                "collected_at": str(mark["collected_at"]),
-                "run_id": str(mark["run_id"]),
-                "auto_expired": True,
-            }
-            changed = database.execute(
-                """
-                UPDATE memecoin_calls
-                SET status='closed',exit_price=?,exit_at=?,exit_evidence=?,updated_at=?
-                WHERE public_id=? AND status='active'
-                """,
-                (
-                    float(mark["price"]),
-                    str(mark["observed_at"]),
-                    json.dumps(exit_evidence, allow_nan=False),
-                    current.isoformat(),
-                    str(row["public_id"]),
-                ),
-            )
-            if changed.rowcount != 1:
-                continue
-            handles.append(str(row["caller_handle"]))
-            return_pct = (float(mark["price"]) / float(row["entry_price"]) - 1) * 100
-            reward = memecoin_call_reward(return_pct)
-            if reward:
-                credit_flash(
-                    database,
-                    str(row["user_id"]),
-                    reward,
-                    kind="memecoin_call_win",
-                    reference_id=str(row["public_id"]),
-                    at=current,
-                )
+            if _settle(database, row, quote, at=current.isoformat(), auto_expired=True):
+                handles.append(str(row["caller_handle"]))
     return handles

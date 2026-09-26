@@ -538,11 +538,13 @@ def test_actual_detail_refresh_keeps_call_confirmation_and_focus(
     expect(page.locator("[data-value]")).to_have_text("$6.00")
     expect(page.locator(".call-confirm")).to_be_visible()
     expect(confirm).to_be_focused()
-    expect(page.locator("[data-confirm-terms]")).to_contain_text("$4.5")
+    # Memecoin Calls close at the next quote, so their terms name no price.
+    terms = page.locator("[data-confirm-terms]")
+    expect(terms).to_contain_text("next quote" if market == "memecoins" else "$4.5")
     confirm.click()
     expect(page.locator("[data-confirm-status]")).to_contain_text("confirm again")
     assert submissions == []
-    expect(page.locator("[data-confirm-terms]")).to_contain_text("$6")
+    expect(terms).to_contain_text("next quote" if market == "memecoins" else "$6")
     confirm.click()
     expect(page.get_by_role("button", name="Make Call", exact=True)).to_be_visible()
     assert submissions == [{"expected_price": 6}]
