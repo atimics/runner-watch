@@ -476,3 +476,70 @@ def test_copied_launch_names_bring_the_original_onto_the_board(database, monkeyp
     copies = [row for row in rows if row["token_address"] != original]
     assert len(copies) == 3
     assert all(row["early"]["state"] == "avoid" for row in copies)
+
+
+def test_a_searched_address_is_quoted_on_its_busiest_pool(database, monkeypatch):
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    searched = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
+    busy, quiet = (
+        "AKKjxxmVZyrBusyPool11111111111111111111111",
+        "7BNQn5JaJcQuietPool1111111111111111111111",
+    )
+    memecoins.request_memecoin(searched, at=AT - timedelta(minutes=1))
+    requests = []
+
+    def download(url, timeout):
+        requests.append(url)
+        if "/tokens/multi/" in url:
+            return json.dumps(
+                {
+                    "data": [
+                        {
+                            "id": "solana_" + searched,
+                            "relationships": {
+                                "top_pools": {
+                                    "data": [{"id": "solana_" + quiet}, {"id": "solana_" + busy}]
+                                }
+                            },
+                        }
+                    ],
+                    "included": [
+                        {
+                            "type": "pool",
+                            "id": "solana_" + busy,
+                            "attributes": {"reserve_in_usd": "21930"},
+                        },
+                        {
+                            "type": "pool",
+                            "id": "solana_" + quiet,
+                            "attributes": {"reserve_in_usd": "545"},
+                        },
+                    ],
+                }
+            ).encode()
+        quote = curve_quote()
+        quote["attributes"]["address"] = busy
+        quote["relationships"]["base_token"]["data"]["id"] = "solana_" + searched
+        return json.dumps({"data": [quote] if busy in url else []}).encode()
+
+    rows, _ = memecoins._collect_helius(at=AT, rpc=lambda _: reply([]), download=download)
+
+    assert [row["token_address"] for row in rows] == [searched]
+    assert rows[0]["pool_address"] == busy
+    assert rows[0]["discovery_source"] == "Searched by address"
+
+
+def test_a_failed_search_lookup_keeps_the_refresh(database, monkeypatch):
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    memecoins.request_memecoin("ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem", at=AT)
+
+    def download(url, timeout):
+        if "/tokens/multi/" in url:
+            raise HTTPError(url, 429, "Too Many Requests", {}, io.BytesIO(b""))
+        return b'{"data":[]}'
+
+    result = memecoins.refresh_memecoins(
+        at=AT, rpc=lambda _: reply([creation()]), download=download
+    )
+
+    assert result["status"] == "ok"

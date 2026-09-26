@@ -112,7 +112,8 @@
         {% endif %}
         <span class="row-arrow" aria-hidden="true">↗</span>
       </a>{% endfor %}</div>
-    {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ 'Search by name or symbol.' if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}
+    {% elif screen.requested %}<div class="empty" role="status"><span aria-hidden="true">◌</span><h2>Added to the watch</h2><p>We weren't tracking <code>{{ screen.requested }}</code> yet. Its first quote appears here within about 5 minutes, if it trades in a pool. Search again then.</p></div>
+    {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ ('Search by name, symbol or contract address.' if screen.market == 'memecoins' else 'Search by name or symbol.') if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}
     </div>
   {% else %}
     <a class="back" href="{{ base }}">← {{ screen.label }}</a>
