@@ -212,6 +212,7 @@ from runner_web.memecoins import (
     refresh_memecoins,
     snapshot_version,
 )
+from runner_web.memecoins import pool_state as memecoin_pool_state
 from runner_web.operations import (
     require_operations_access,
     required_worker_names,
@@ -7632,6 +7633,7 @@ def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
     return {
         **detail,
         "calls": memecoin_calls(coin_id=coin_id),
+        "pool_state": memecoin_pool_state(detail["coin"]),
         "can_call": detail["status"] == "ok" and not detail["coin"]["stale"],
     }
 

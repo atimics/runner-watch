@@ -52,6 +52,11 @@ def _require_quoted(coin_id: str) -> dict[str, Any]:
     price = float(coin["price"])
     if not math.isfinite(price) or price <= 0:
         raise ValueError("A current source quote is required for a paper Call.")
+    if (memecoins.pool_state(coin) or {}).get("calls_closed"):
+        raise ValueError(
+            "This pool holds under "
+            f"${memecoins.MIN_CALL_LIQUIDITY_USD:,}, too thin to fill a Call fairly."
+        )
     return coin
 
 

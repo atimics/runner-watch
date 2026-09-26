@@ -124,9 +124,11 @@ def test_long_market_details_fit(page, width, kind):
     page.set_viewport_size(dict(width=width, height=844))
     open_html(page, screens.render(screen), screen)
     expect(page.locator(".asset-heading h1")).to_have_text(screen["item"]["name"])
-    expect(
-        page.get_by_role("region", name="Token evidence" if kind == "coin" else "Outcome market")
-    ).to_be_visible()
+    if kind == "coin":
+        # No chain finding is saved for the sample, so the evidence block stays hidden.
+        expect(page.locator("[data-market-assessment]")).to_be_hidden()
+    else:
+        expect(page.get_by_role("region", name="Outcome market")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     for team in page.locator(".teams > div").all():
         no_overlap(team.locator("h2"), team.locator("strong"))

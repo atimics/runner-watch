@@ -33,6 +33,7 @@
   function render(next) {
     const assessment = next.item?.assessment || {};
     const findings = assessment.drivers || [], checks = assessment.missing_checks || [], watch = assessment.risks || [];
+    panel.hidden = !findings.length && !watch.length;
     const details = panel.querySelector('details');
     const focus = document.activeElement && panel.contains(document.activeElement) ? document.activeElement.href || 'summary' : null;
     details.querySelector('summary').textContent = 'Token evidence · ' + (findings.length ? plural(findings.length, 'finding') : checks.length ? 'checks awaiting data' : watch.length ? 'what to watch' : 'no chain findings saved');

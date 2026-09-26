@@ -154,9 +154,13 @@ def assess_memecoin(
     counts = {"bullish": buying, "bearish": selling} if buying + selling else None
     tone = "positive" if buying > selling else "negative" if selling > buying else "mixed"
     sentiment_basis = (
-        f"15-minute swap sample: {buying} net buying wallets, {selling} net selling wallets, "
-        f"{flat} balanced wallets; {len(filtered)} linked or pattern wallets excluded. "
-        "Wallets are on-chain addresses. Collection covers part of the market."
+        (
+            f"15-minute swap sample: {buying} net buying wallets, {selling} net selling "
+            f"wallets, {flat} balanced wallets; {len(filtered)} linked or pattern wallets "
+            "excluded. Wallets are on-chain addresses. Collection covers part of the market."
+        )
+        if balances
+        else "No swaps were sampled in the last 15 minutes."
     )
     change = finite_number(row.get("change_24h")) if quote_fresh else None
     volume = finite_number(row.get("volume_24h")) if quote_fresh else None
