@@ -186,7 +186,7 @@ def test_memecoin_screen_shows_quote_and_saved_chain_evidence_without_score():
     board = render(listing("memecoins", [coin]))
     opened = render(detail("memecoins", {"coin": coin}))
     assert 'aria-label="Token evidence"' in opened
-    assert 'class="stock-assessment-note"' in opened
+    assert "data-assessment-state" in opened
     assert "Pool liquidity withdrawal" in opened
     assert 'href="https://example.test/tx/1"' in opened
 
@@ -601,6 +601,9 @@ def test_stock_detail_shows_the_robinhood_chain_token_and_disclosure():
     assert token["contract_address"] in html
     assert "Chain" in html and "4663" in html
     assert "213.45 / 213.47" in html
+    assert "<dd>1</dd>" in html and "1.000000000000000000" not in html
+    assert "48,293,710" in html
+    assert "<dd>active</dd>" not in html
     assert "Forward split (2026-06-15)" in html
     assert "not the underlying stock" in html
     assert token["docs_url"] in html

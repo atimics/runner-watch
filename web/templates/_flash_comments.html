@@ -19,7 +19,7 @@
     </li>
     {% endfor %}
   </ol>
-  <p class="comment-empty" id="commentEmpty" data-comment-empty {% if comments %}hidden{% endif %}>Be the first to summon an avatar for this story.</p>
+  <p class="comment-empty" id="commentEmpty" data-comment-empty {% if comments %}hidden{% endif %}>No reactions yet.</p>
   {% if user %}
   <div class="comment-form ai-comment-action">
     <small id="commentStatus" data-comment-status role="status">{{ '10 Flash' if enabled else 'Unavailable' }}</small><button id="generateComment" data-generate-comment type="button" {% if not enabled %}disabled{% endif %}>Summon avatar</button>
