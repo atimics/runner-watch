@@ -27,7 +27,6 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -234,6 +233,7 @@ from runner_web.privacy import (
     export_user_data,
     user_data_summary,
 )
+from runner_web.process_memory import peak_rss_mb, rss_mb, run_in_threadpool
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import BASE_RATES, EVIDENCE_GATE, OPERATIONS
 from runner_web.pseudonyms import (
@@ -1011,6 +1011,11 @@ async def worker_process_heartbeat(
 ) -> None:
     while True:
         detail = _worker_heartbeat_detail(workers)
+        current_mb = rss_mb()
+        detail["memory"] = {
+            "rss_mb": round(current_mb) if current_mb is not None else None,
+            "peak_mb": round(peak_rss_mb()),
+        }
         try:
             detail["stale_workers"] = await asyncio.to_thread(_stale_workers)
         except Exception:
