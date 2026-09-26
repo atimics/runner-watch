@@ -16,10 +16,6 @@
     }
   });
   if (!node || !panel) return;
-  const put = (name, value) => {
-    const target = panel.querySelector(`[data-assessment-${name}]`);
-    if (target) target.textContent = value ?? '';
-  };
   const sourceLink = (href, text) => {
     if (!href) return null;
     try {
@@ -31,109 +27,36 @@
       return link;
     } catch (_) { return null; }
   };
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  // Token evidence sits under the stock-style note line; the note itself is
+  // refreshed by market-screen.js like a stock's.
   function render(next) {
     const assessment = next.item?.assessment || {};
-    put('label', assessment.label || 'Assessment pending');
-    put('value', Number.isFinite(assessment.value) ? `${Math.round(assessment.value * 10) / 10}${assessment.unit || ''}` : '—');
-    put('reason', assessment.reason);
-    put('time', assessment.as_of ? `Saved ${assessment.as_of}` : '');
-    const tag = panel.querySelector('[data-assessment-tag]');
-    const tones = ['setup', 'running', 'extended', 'avoid', 'watch', 'paused', 'lean', 'pass', 'model-only'];
-    tag.hidden = !assessment.tag;
-    tag.textContent = assessment.tag || '';
-    tag.className = 'tag tag-' + (tones.includes(assessment.tag_tone) ? assessment.tag_tone : 'watch');
-    panel.querySelector('[data-assessment-contributions]').replaceChildren(...(assessment.contributions || []).map(part => {
-      const row = document.createElement('li'), label = document.createElement('span');
-      const meter = document.createElement('meter'), value = document.createElement('strong');
-      label.textContent = part.label;
-      const points = Number(part.value);
-      value.textContent = `${points >= 0 ? '+' : ''}${points}`;
-      meter.min = 0; meter.max = 100; meter.value = Math.abs(points);
-      meter.setAttribute('aria-label', `${part.label} ${value.textContent} points`);
-      if (points < 0) row.className = 'is-penalty';
-      row.append(label, meter, value); return row;
-    }));
-    const active = document.activeElement;
-    const focusedFinding = active?.closest('[data-finding-id]');
-    const focus = focusedFinding && panel.contains(focusedFinding) ? {
-      findingId: focusedFinding.dataset.findingId,
-      receiptId: active.closest('[data-receipt-id]')?.dataset.receiptId,
-      href: active.tagName === 'A' ? active.href : null,
-    } : null;
-    const expanded = new Set([...panel.querySelectorAll('[data-finding-id][open]')].map(item => item.dataset.findingId));
-    panel.querySelector('[data-assessment-drivers]').replaceChildren(...(assessment.drivers || []).map(driver => {
-      const row = document.createElement('li');
-      const heading = document.createElement('div');
-      heading.className = 'assessment-driver-summary';
-      const label = document.createElement('span');
-      label.textContent = driver.label;
-      heading.append(label);
-      row.append(heading);
-      if (driver.value !== null && driver.value !== undefined) {
-        if (driver.unit === '%') {
-          const meter = document.createElement('meter');
-          meter.min = 0; meter.max = 100; meter.value = driver.value;
-          meter.setAttribute('aria-label', `${driver.label} ${driver.value}%`);
-          heading.append(meter);
-        }
-        const value = document.createElement('strong');
-        value.textContent = `${driver.value}${driver.unit || ''}`;
-        heading.append(value);
-      }
-      const receipts = driver.evidence || [];
-      if (!receipts.length) {
-        const source = sourceLink(driver.source_url, 'Source ↗');
-        if (source) heading.append(source);
-      }
-      if (receipts.length || driver.explanation) {
-        const details = document.createElement('details'), summary = document.createElement('summary');
-        details.className = 'assessment-finding';
-        details.dataset.findingId = driver.id || driver.key || '';
-        details.open = expanded.has(details.dataset.findingId);
-        const basis = {pattern: 'Pattern', relationship: 'Relationship'}[driver.basis] || 'Observation';
-        summary.textContent = `${basis} · ${receipts.length ? `${receipts.length} ${receipts.length === 1 ? 'receipt' : 'receipts'}` : 'Context'}`;
-        details.append(summary);
-        if (driver.explanation) {
-          const explanation = document.createElement('p');
-          explanation.textContent = driver.explanation;
-          details.append(explanation);
-        }
-        if (receipts.length) {
-          const list = document.createElement('ol');
-          receipts.forEach((receipt, index) => {
-            const entry = document.createElement('li');
-            entry.dataset.receiptId = receipt.event_id || receipt.receipt_url || receipt.source_url;
-            const saved = sourceLink(receipt.receipt_url || receipt.source_url, `${receipt.kind} ${index + 1} ↗`);
-            if (saved) entry.append(saved);
-            if (receipt.receipt_url && receipt.source_url && receipt.receipt_url !== receipt.source_url) {
-              const explorer = sourceLink(receipt.source_url, 'Explorer ↗');
-              if (explorer) entry.append(explorer);
-            }
-            list.append(entry);
-          });
-          details.append(list);
-        }
-        row.append(details);
-      }
-      return row;
-    }));
-    if (focus) {
-      const finding = [...panel.querySelectorAll('[data-finding-id]')]
-        .find(item => item.dataset.findingId === focus.findingId);
-      const receipt = finding && [...finding.querySelectorAll('[data-receipt-id]')]
-        .find(item => item.dataset.receiptId === focus.receiptId);
-      const link = receipt && [...receipt.querySelectorAll('a')].find(item => item.href === focus.href);
-      const target = link || finding?.querySelector('summary') || panel.querySelector('[data-assessment-label]');
-      if (target) {
-        if (target.tagName === 'H2') target.tabIndex = -1;
-        target.focus({preventScroll: true});
-      }
+    const findings = assessment.drivers || [], checks = assessment.missing_checks || [], watch = assessment.risks || [];
+    const details = panel.querySelector('details');
+    const focus = document.activeElement && panel.contains(document.activeElement) ? document.activeElement.href || 'summary' : null;
+    details.querySelector('summary').textContent = 'Token evidence · ' + (findings.length ? plural(findings.length, 'finding') : checks.length ? 'checks awaiting data' : watch.length ? 'what to watch' : 'no chain findings saved');
+    [...details.children].forEach(child => { if (child.tagName !== 'SUMMARY') child.remove(); });
+    if (assessment.coverage_note) {
+      const note = document.createElement('p'); note.textContent = assessment.coverage_note; details.append(note);
     }
-    const risks = assessment.risks || [];
-    panel.querySelector('[data-assessment-evidence]').hidden = !risks.length;
-    panel.querySelector('[data-assessment-risks]').replaceChildren(...risks.map(text => {
-      const item = document.createElement('li'); item.textContent = text; return item;
-    }));
+    const list = document.createElement('ul');
+    findings.forEach(driver => {
+      const row = document.createElement('li');
+      row.dataset.findingId = driver.id || driver.key || '';
+      row.append(driver.label + (driver.value !== null && driver.value !== undefined ? ` · ${driver.value}${driver.unit || ''}` : ''));
+      const receipts = driver.evidence || [];
+      const links = receipts.length ? receipts.map((receipt, index) => sourceLink(receipt.receipt_url || receipt.source_url, `${receipt.kind} ${index + 1} ↗`)) : [sourceLink(driver.source_url, 'Source ↗')];
+      links.filter(Boolean).forEach(link => row.append(' ', link));
+      list.append(row);
+    });
+    checks.forEach(text => { const row = document.createElement('li'); row.textContent = `Awaiting data: ${text}`; list.append(row); });
+    watch.forEach(text => { const row = document.createElement('li'); row.textContent = `Watch: ${text}`; list.append(row); });
+    details.append(list);
+    if (focus) {
+      const target = focus === 'summary' ? details.querySelector('summary') : [...details.querySelectorAll('a')].find(link => link.href === focus);
+      (target || details.querySelector('summary')).focus({preventScroll: true});
+    }
   }
   node.addEventListener('rati:screen-detail', event => render(event.detail));
   if (node.ratiScreenDetail) render(node.ratiScreenDetail);

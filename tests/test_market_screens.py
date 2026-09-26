@@ -167,7 +167,11 @@ def render(screen, user=None):
 def test_memecoin_screen_shows_quote_and_saved_chain_evidence_without_score():
     coin = {**sample("memecoins"), "token_address": "token-a"}
     board = render(listing("memecoins", [coin]))
-    assert ">Market quote</small>" in board
+    # Coin rows use the stock row: a sparkline keyed by coin id and a bare glyph.
+    assert f'class="mini-chart" data-ticker="{coin["id"]}"' in board
+    assert 'loadCharts("/api/memecoins/charts")' in board
+    assert '<body class="theme-memecoins">' in board
+    assert ">Market quote</small>" not in board
     assert ">Pending</small>" not in board
     assert "Token ranking pending" in board
 
@@ -181,8 +185,8 @@ def test_memecoin_screen_shows_quote_and_saved_chain_evidence_without_score():
     coin["findings"] = [finding]
     board = render(listing("memecoins", [coin]))
     opened = render(detail("memecoins", {"coin": coin}))
-    assert ">Chain evidence</small>" in board
     assert 'aria-label="Token evidence"' in opened
+    assert 'class="stock-assessment-note"' in opened
     assert "Pool liquidity withdrawal" in opened
     assert 'href="https://example.test/tx/1"' in opened
 
@@ -210,13 +214,14 @@ def test_board_leads_with_a_current_eligible_flash_stock_call():
     assert [row["name"] for row in board["rows"]] == ["READY", "WEAKER", "RISK"]
     assert board["rows"][0]["rank_detail"] == "DOWN · 72% confidence · next close"
     assert not board["ranking_status"]
-    assert "Stock ranking pending" in listing("stocks", [blocked], stock_calls=calls)[
-        "ranking_status"
-    ]
+    assert (
+        "Stock ranking pending" in listing("stocks", [blocked], stock_calls=calls)["ranking_status"]
+    )
     expired = [{**calls[2], "target_session_date": "2020-01-01"}]
-    assert "Stock ranking pending" in listing("stocks", [eligible], stock_calls=expired)[
-        "ranking_status"
-    ]
+    assert (
+        "Stock ranking pending"
+        in listing("stocks", [eligible], stock_calls=expired)["ranking_status"]
+    )
 
 
 def test_board_sports_pick_prioritizes_saved_market_edge():

@@ -7529,6 +7529,32 @@ def memecoin_transaction_evidence(request: Request, signature: str):
     return receipt
 
 
+MEMECOIN_CHART_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+@app.get("/api/memecoins/charts")
+async def memecoin_charts_api(request: Request, ids: str = "", offset: int = 0) -> Response:
+    """Board sparklines, one bounded batch like the stock board's."""
+    from runner_web.memecoin_store import memecoin_sparklines
+
+    _ = offset  # The row ids already name the page.
+    enforce_rate(request, "memecoin-charts", limit=20, seconds=60)
+    requested = sorted(
+        {coin for coin in ids.split(",") if re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin)}
+    )[:50]
+    key = ",".join(requested)
+    cached = MEMECOIN_CHART_CACHE.get(key)
+    if cached and time.monotonic() - cached[0] < 60:
+        payload = cached[1]
+    else:
+        charts = await run_in_threadpool(memecoin_sparklines, requested, at=now())
+        payload = {"charts": charts, "annotations": {}}
+        if len(MEMECOIN_CHART_CACHE) > 200:
+            MEMECOIN_CHART_CACHE.clear()
+        MEMECOIN_CHART_CACHE[key] = (time.monotonic(), payload)
+    return _conditional_json_response(request, payload)
+
+
 @app.get("/api/memecoins")
 def memecoins_api(request: Request, q: str = "", sort: str = "volume", view: str = "radar"):
     enforce_rate(request, "memecoins", limit=120, seconds=60)

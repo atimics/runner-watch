@@ -1026,7 +1026,9 @@ def test_memecoin_list_uses_shared_glyph_with_readable_unknowns(page: Page, widt
     )
     expect(glyphs.nth(3)).to_have_attribute("data-mix", "unknown")
     expect(glyphs.nth(3)).to_have_accessible_name(re.compile("Attention unavailable"))
-    expect(page.get_by_text("Market quote", exact=True)).to_be_visible()
+    # The stock row: a sparkline cell for every coin, no caption under the glyph.
+    expect(page.locator(".ticker .mini-chart")).to_have_count(4)
+    expect(page.get_by_text("Market quote", exact=True)).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 

@@ -71,7 +71,9 @@ def test_late_assessment_script_consumes_completed_detail_refresh(page):
     screen = detail("memecoins", {"coin": screens.sample("memecoins")})
     fresh = copy.deepcopy(screen)
     fresh["item"]["value"] = "$123.00"
-    fresh["item"]["assessment"].update(label="Runner score", value=72, unit="pts")
+    fresh["item"]["assessment"].update(
+        label="Runner score", value=72, unit="pts", drivers=[{"label": "Saved liquidity"}]
+    )
     held = []
     assets(page, held)
     page.route("https://app.test/api/**", lambda route: route.fulfill(json=fresh))
@@ -81,7 +83,8 @@ def test_late_assessment_script_consumes_completed_detail_refresh(page):
     )
     page.goto("https://app.test/", wait_until="commit")
     expect(page.locator("[data-value]")).to_have_text("$123.00")
-    expect(page.locator("[data-assessment-value]")).to_have_text("—")
+    summary = page.get_by_role("region", name="Token evidence").locator("summary")
+    expect(summary).to_have_text("Token evidence · no chain findings saved")
     assert (
         page.evaluate(
             "document.getElementById('screenData').ratiScreenDetail.item.assessment.value"
@@ -91,8 +94,7 @@ def test_late_assessment_script_consumes_completed_detail_refresh(page):
     assert len(held) == 1
     held[0].fulfill(path=str(ROOT / "web/static/market-anchor.js"))
     page.wait_for_load_state("load")
-    expect(page.locator("[data-assessment-value]")).to_have_text("72pts")
-    expect(page.locator("[data-assessment-label]")).to_have_text("Runner score")
+    expect(summary).to_have_text("Token evidence · 1 finding")
 
 
 def test_state_change_refreshes_counts_and_all_recovers_the_list(page):

@@ -16,17 +16,17 @@
 .prediction-heading .eyebrow { letter-spacing:.08em; }
 .prediction-contracts { display:flex; flex-wrap:wrap; gap:16px; margin:18px 0; }
 .prediction-contracts a { color:var(--muted); font-size:12px; text-decoration:none; padding-bottom:6px; border-bottom:2px solid transparent; }
-.prediction-contracts a[aria-current] { color:var(--text); border-color:var(--green); }
+.prediction-contracts a[aria-current] { color:var(--text); border-color:var(--accent); }
 .prediction-outcomes { display:flex; gap:8px; margin:20px 0; flex-wrap:wrap; }
 .prediction-outcomes a { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 9px; padding:9px 13px; border:1px solid var(--line); border-radius:8px; color:var(--soft); text-decoration:none; }
-.prediction-outcomes a[aria-current] { color:var(--green); border-color:var(--green); background:color-mix(in srgb,var(--green) 5%,transparent); }
+.prediction-outcomes a[aria-current] { color:var(--accent); border-color:var(--accent); background:color-mix(in srgb,var(--accent) 5%,transparent); }
 .prediction-outcomes strong { font-variant-numeric:tabular-nums; }
 .prediction-outcomes small { font-size:10px; }
 .prediction-quote { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; padding:15px 0; }
 .prediction-quote > div { display:flex; flex-direction:column; gap:6px; min-width:0; }
 .prediction-quote span { font-size:12px; color:var(--soft); }
 .prediction-quote strong { font-size:clamp(25px,4vw,42px); font-weight:650; line-height:1.2; font-variant-numeric:tabular-nums; letter-spacing:-.04em; }
-.prediction-quote > div:first-child strong { color:var(--green); }
+.prediction-quote > div:first-child strong { color:var(--accent); }
 .prediction-quote > div:nth-child(2) strong { color:var(--blue); }
 .prediction-quote .is-above strong { color:var(--green); }
 .prediction-quote .is-below strong { color:var(--amber); }
@@ -41,7 +41,7 @@
 .prediction-legend { display:flex; flex-wrap:wrap; gap:8px 20px; margin:15px 0; font-size:12px; }
 .prediction-legend span { display:flex; gap:6px; align-items:center; }
 .prediction-legend i { width:8px; height:8px; background:var(--series); border-radius:50%; }
-.series-rati { --series:var(--green); }
+.series-rati { --series:var(--accent); }
 .series-kalshi { --series:var(--blue); }
 .series-polymarket { --series:var(--purple); }
 .series-sportsbook { --series:var(--amber); }

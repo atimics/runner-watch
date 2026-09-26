@@ -545,3 +545,26 @@ def test_empty_pulse_keeps_source_status(market_db, monkeypatch):
     monkeypatch.setenv("MEMECOINS_ENABLED", "false")
     disabled = memecoins.memecoin_market(view="pulse", at=collected)
     assert disabled["status"] == "disabled" and disabled["visible_count"] == 0
+
+
+def test_board_sparklines_cover_one_day_and_stay_sparkline_sized(market_db, monkeypatch):
+    for index in range(60):
+        collected = AT + timedelta(minutes=index * 5)
+        seed([coin(current_price=1 + index, last_updated=collected.isoformat())], at=collected)
+    old = AT - timedelta(days=2)
+    seed([coin("pepe", current_price=2, last_updated=old.isoformat())], at=old)
+
+    charts = memecoin_store.memecoin_sparklines(["dogecoin", "pepe", "absent"], at=collected)
+
+    points = charts["dogecoin"]
+    assert len(points) == memecoin_store.SPARKLINE_POINTS
+    assert points[0]["price"] == 1 and points[-1]["price"] == 60
+    assert charts["pepe"] == [] and charts["absent"] == []
+
+    from runner_web import main
+
+    monkeypatch.setattr(main, "now", lambda: collected)
+    main.MEMECOIN_CHART_CACHE.clear()
+    response = TestClient(main.app).get("/api/memecoins/charts?ids=dogecoin,BAD%20ID,pepe")
+    assert response.status_code == 200
+    assert set(response.json()["charts"]) == {"dogecoin", "pepe"}
