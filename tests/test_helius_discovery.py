@@ -357,8 +357,13 @@ def test_a_rate_limit_on_curves_keeps_the_pools_and_the_refresh(database, monkey
     assert set(sleeps) == {memecoins.QUOTE_PAUSE_SECONDS}
 
 
-def test_a_rate_limit_on_pools_fails_the_refresh_and_is_logged(database, caplog):
+def test_a_rate_limit_on_pools_retries_once_then_fails_and_is_logged(database, caplog, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(memecoins.time, "sleep", sleeps.append)
+    requests = []
+
     def download(url, timeout):
+        requests.append(url)
         raise _rate_limited(url)
 
     result = memecoins.refresh_memecoins(
@@ -367,6 +372,24 @@ def test_a_rate_limit_on_pools_fails_the_refresh_and_is_logged(database, caplog)
 
     assert result["status"] == "error"
     assert "Memecoin refresh failed" in caplog.text
+    assert len(requests) == 2 and sleeps == [memecoins.RATE_LIMIT_RETRY_SECONDS]
+
+
+def test_a_rate_limited_pool_batch_that_clears_keeps_the_refresh(database, monkeypatch):
+    monkeypatch.setattr(memecoins.time, "sleep", lambda _: None)
+    requests = []
+
+    def download(url, timeout):
+        requests.append(url)
+        if len(requests) == 1:
+            raise _rate_limited(url)
+        return b'{"data":[]}'
+
+    result = memecoins.refresh_memecoins(
+        at=AT, rpc=lambda _: reply([creation()]), download=download
+    )
+
+    assert result["status"] == "ok" and len(requests) == 2
 
 
 def test_a_full_curve_watch_still_refreshes(database, monkeypatch):
@@ -440,7 +463,12 @@ def test_copied_launch_names_bring_the_original_onto_the_board(database, monkeyp
 
     rows, _ = memecoins._collect_helius(at=AT, rpc=lambda _: reply(launches), download=download)
 
+    # The search runs after the pools are quoted; the original joins next cycle.
     assert len(searches) == 1 and "query=Trolloween&" in searches[0]
+    assert original not in {row["token_address"] for row in rows}
+    later = AT + timedelta(minutes=5)
+    rows, _ = memecoins._collect_helius(at=later, rpc=lambda _: reply([]), download=download)
+    assert len(searches) == 1
     by_token = {row["token_address"]: row for row in rows}
     assert by_token[original]["discovery_source"] == "GeckoTerminal name search"
     assert by_token[original]["early"]["state"] == "setup"

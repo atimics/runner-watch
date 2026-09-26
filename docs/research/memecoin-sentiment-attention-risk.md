@@ -107,7 +107,8 @@ name within 24 hours are a burst. Each launch counts under its name, or its
 symbol only when it has no usable name.
 
 The name only finds candidates. For up to three bursts a cycle (cached six
-hours), a GeckoTerminal pool search returns coins by that name; the original is
+hours, searched after the pools are quoted, so a new original joins the next
+cycle), a GeckoTerminal pool search returns coins by that name; the original is
 the contract address whose pools are at least seven days older than the burst
 and hold the most liquidity in total, at least $5,000. An older copy that died
 loses to the funded original. The original is quoted like any pool and earns up
