@@ -43,8 +43,12 @@ CURVE_SLOTS = 90
 POOL_SLOTS = 100
 # Originals of copied launch names, found by name search and checked by address.
 ORIGINAL_SLOTS = 10
-# Graduated pools, bonding curves and originals are quoted in one pass.
-MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS + ORIGINAL_SLOTS
+# Coins people searched for by address that we were not tracking.
+SEARCHED_SLOTS = 20
+SEARCHED_DAYS = 7
+# Graduated pools, bonding curves, originals and searched coins are quoted in one pass.
+MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS + ORIGINAL_SLOTS + SEARCHED_SLOTS
+SOLANA_ADDRESS = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
 # GeckoTerminal answers a burst of batch requests with 429, so space them out.
 # Two seconds still drew a 429 on the fourth of seven batches in production.
 QUOTE_PAUSE_SECONDS = 5.0
@@ -264,6 +268,100 @@ def _save_state(key: str, value: Any, at: datetime) -> None:
         )
 
 
+def request_memecoin(address: str, *, at: datetime | None = None) -> bool:
+    """Queue an address someone searched for; the worker quotes it next cycle.
+
+    Only the address is kept, so the web request makes no outside call. The
+    newest requests keep their place when the queue is full.
+    """
+
+    address = address.strip()
+    if not SOLANA_ADDRESS.fullmatch(address):
+        return False
+    current = at or datetime.now(UTC)
+    with connection() as database:
+        saved = database.execute(
+            "SELECT value FROM worker_state WHERE key='memecoin_searched'"
+        ).fetchone()
+    try:
+        queue = json.loads(saved["value"]) if saved else {}
+    except (ValueError, TypeError):
+        queue = {}
+    queue = queue if isinstance(queue, dict) else {}
+    queue[address] = current.isoformat()
+    newest = sorted(queue.items(), key=lambda item: item[1], reverse=True)[:SEARCHED_SLOTS]
+    _save_state("memecoin_searched", dict(newest), current)
+    return True
+
+
+def _searched_pools(
+    tracked: set[str], *, download: Download, at: datetime
+) -> tuple[list[dict[str, Any]], bool]:
+    """The busiest pool of each searched address, in one lookup; empty on failure."""
+
+    with connection() as database:
+        saved = database.execute(
+            "SELECT value FROM worker_state WHERE key='memecoin_searched'"
+        ).fetchone()
+    try:
+        queue = json.loads(saved["value"]) if saved else {}
+    except (ValueError, TypeError):
+        queue = {}
+    wanted = {}
+    for address, requested in (queue if isinstance(queue, dict) else {}).items():
+        when = _time(requested)
+        if (
+            when is not None
+            and 0 <= (at - when).total_seconds() <= SEARCHED_DAYS * 86400
+            and SOLANA_ADDRESS.fullmatch(address)
+            and address not in tracked
+        ):
+            wanted[address] = when
+    if not wanted:
+        return [], False
+    addresses = list(wanted)[:SEARCHED_SLOTS]
+    url = (
+        "https://api.geckoterminal.com/api/v2/networks/solana/tokens/multi/"
+        + ",".join(addresses)
+        + "?include=top_pools"
+    )
+    try:
+        body = json.loads(download(url, 10.0))
+        pools = {
+            item["id"]: float(item["attributes"].get("reserve_in_usd") or 0)
+            for item in body.get("included") or []
+            if item.get("type") == "pool"
+        }
+        found = []
+        for token in body.get("data") or []:
+            mint = token["id"][len("solana_") :]
+            if mint not in wanted:
+                continue
+            choices = [
+                pool["id"]
+                for pool in token["relationships"]["top_pools"]["data"]
+                if pool["id"] in pools
+            ]
+            if not choices:
+                continue
+            best = max(choices, key=lambda pool_id: (pools[pool_id], pool_id))
+            found.append(
+                {
+                    "pool_address": best[len("solana_") :],
+                    "token_address": mint,
+                    "network": "solana",
+                    "created_at": wanted[mint].isoformat(),
+                    "source_url": f"https://www.geckoterminal.com/solana/pools/{best[7:]}",
+                    "venue": "pool",
+                    "found_by": "address_search",
+                }
+            )
+    except Exception:
+        LOG.warning("Searched coin lookup failed", exc_info=True)
+        return [], True
+    return found, True
+
+
 def _curve_watch(
     launches: list[dict[str, Any]],
     active: list[dict[str, Any]],
@@ -372,6 +470,8 @@ def _collect_helius(
         bursts, original_cache, download=download, at=at, pause=0, max_searches=0
     )
     tracked = {item["token_address"] for item in selected + curves}
+    searched, looked_up = _searched_pools(tracked, download=download, at=at)
+    tracked |= {item["token_address"] for item in searched}
     found = [
         {
             "pool_address": original["pool_address"],
@@ -387,13 +487,13 @@ def _collect_helius(
     ]
     # Graduated pools first, then the few originals, then curves, busiest first:
     # a rate limit cuts the end of the list.
-    allowed = {item["pool_address"]: item for item in selected + found + curves}
+    allowed = {item["pool_address"]: item for item in selected + found + searched + curves}
     payload = []
-    extra = {item["pool_address"] for item in curves + found}
+    extra = {item["pool_address"] for item in curves + found + searched}
     addresses = list(allowed)
     for offset in range(0, len(addresses), 30):
         chunk = addresses[offset : offset + 30]
-        if offset:
+        if offset or looked_up:
             time.sleep(QUOTE_PAUSE_SECONDS)
         url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(chunk)
         try:
@@ -441,11 +541,10 @@ def _collect_helius(
     }
     for row in rows:
         row["discovery"] = allowed[row["pool_address"]]
-        row["discovery_source"] = (
-            "GeckoTerminal name search"
-            if row["discovery"].get("found_by") == "copycat_name_search"
-            else "Helius"
-        )
+        row["discovery_source"] = {
+            "copycat_name_search": "GeckoTerminal name search",
+            "address_search": "Searched by address",
+        }.get(row["discovery"].get("found_by"), "Helius")
         row["venue"] = row["discovery"].get("venue", "pool")
         launch = claims.get(row["token_address"]) or {}
         row["claimed_symbol"] = launch.get("claimed_symbol") or None

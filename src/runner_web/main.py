@@ -210,6 +210,7 @@ from runner_web.memecoins import (
     memecoin_detail,
     memecoin_market,
     refresh_memecoins,
+    request_memecoin,
     snapshot_version,
 )
 from runner_web.memecoins import pool_state as memecoin_pool_state
@@ -7515,6 +7516,8 @@ def memecoins_board_response(
     enforce_rate(request, "memecoins", limit=120, seconds=60)
     market = memecoin_market(query=q, sort=sort, view="radar")
     coins = [str(item.get("id") or "") for item in market["rows"] if item.get("id")]
+    # An address we do not track yet is queued; the next quote cycle adds it.
+    requested = not market["rows"] and request_memecoin(q)
     return _simple_board(
         request,
         runner_session,
@@ -7524,6 +7527,7 @@ def memecoins_board_response(
         q,
         updated_at=str(market.get("collected_at") or ""),
         stories=stories_by_subject("memecoins", coins),
+        requested=q.strip() if requested else "",
     )
 
 
@@ -7579,7 +7583,8 @@ async def memecoin_charts_api(request: Request, ids: str = "", offset: int = 0) 
 @app.get("/api/memecoins")
 def memecoins_api(request: Request, q: str = "", sort: str = "volume", view: str = "radar"):
     enforce_rate(request, "memecoins", limit=120, seconds=60)
-    return memecoin_market(query=q, sort=sort, view=view)
+    market = memecoin_market(query=q, sort=sort, view=view)
+    return {**market, "requested": bool(not market["rows"] and request_memecoin(q))}
 
 
 @app.get("/memecoins/alpha", response_class=HTMLResponse)
@@ -8247,6 +8252,7 @@ def _simple_board(
     query: str = "",
     updated_at: str = "",
     stories: dict[str, dict[str, Any]] | None = None,
+    requested: str = "",
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
@@ -8259,6 +8265,7 @@ def _simple_board(
         stories=stories,
         stock_calls=flash_open_calls(limit=500)["calls"] if market == "stocks" else None,
     )
+    screen["requested"] = requested
     return _simple_board_response(request, session, market, screen)
 
 

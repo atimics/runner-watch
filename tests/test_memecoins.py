@@ -666,3 +666,48 @@ def test_a_small_bonding_curve_is_early_not_drained():
 
     assert state["text"].startswith("Early bonding curve: $3.00K in the curve.")
     assert state["calls_closed"] is True
+
+
+P_DOOM = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
+
+
+def test_a_searched_address_we_do_not_track_is_queued(market_db, monkeypatch):
+    from runner_web import main
+
+    current = datetime.now(UTC)
+    seed([coin(last_updated=current.isoformat())], at=current)
+    monkeypatch.setattr(main, "enforce_rate", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main, "current_user", lambda *_: None)
+    client = TestClient(main.app)
+
+    page = client.get("/memecoins", params={"q": P_DOOM})
+    api = client.get("/api/memecoins", params={"q": "no such name"})
+
+    assert page.status_code == 200
+    assert "Added to the watch" in page.text and P_DOOM in page.text
+    # A name that matches nothing is not an address, so nothing is queued.
+    assert api.json()["requested"] is False
+    with connection() as database:
+        saved = database.execute(
+            "SELECT value FROM worker_state WHERE key='memecoin_searched'"
+        ).fetchone()
+    assert list(json.loads(saved["value"])) == [P_DOOM]
+
+
+def test_the_search_queue_keeps_the_newest_addresses(market_db):
+    start = datetime(2026, 9, 26, 12, tzinfo=UTC)
+    addresses = [
+        "A" + "abcdefghijkmnopqrstuvwxyz"[number] + "1" * 42
+        for number in range(memecoins.SEARCHED_SLOTS + 2)
+    ]
+    for minute, address in enumerate(addresses):
+        assert memecoins.request_memecoin(address, at=start + timedelta(minutes=minute))
+    assert not memecoins.request_memecoin("not an address")
+
+    with connection() as database:
+        saved = json.loads(
+            database.execute(
+                "SELECT value FROM worker_state WHERE key='memecoin_searched'"
+            ).fetchone()["value"]
+        )
+    assert set(saved) == set(addresses[2:])

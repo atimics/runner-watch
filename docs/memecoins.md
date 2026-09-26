@@ -63,6 +63,12 @@ carry `venue: bonding_curve`. Bonding-curve buys and sells are decoded as swaps
 (official Pump IDL: account 2 mint, 3 bonding curve, 6 user), so staged buying
 and creator selling are found before graduation too.
 
+A contract address someone searches for that we do not track is queued (up
+to 20, newest first, kept 7 days). The web request stores only the address.
+Each cycle one GeckoTerminal token lookup finds the busiest pool of every
+queued address, and those pools are quoted with the other extras. Such rows
+carry `discovery_source: "Searched by address"`.
+
 Quote rows require positive price and volume, recorded trades and at least $1,000
 pool liquidity. Price and volume come from the same representative pool. Quote
 time records the indexer fetch; creation and trade receipts use Solana block time.
