@@ -75,7 +75,7 @@ Stock scoring and paper Call policy retain their existing contracts.
 
 ## Early reading and tags
 
-Policy: `memecoin-early-v1` (`src/runner_web/memecoin_early.py`). Attention reads
+Policy: `memecoin-early-v0` (`src/runner_web/memecoin_early.py`). Attention reads
 the last 24 hours, so it peaks after a move in either direction. The early
 reading compares the pool's last hour with its own pace over the five hours
 before it, from GeckoTerminal's 1h and 6h windows, while the price has not yet
@@ -90,12 +90,9 @@ moved. It uses the stock tags and colours:
 
 SETUP points: volume pace and buyer pace (up to 35 each; twice the usual pace
 earns a third), buyer share above half (up to 20) and unlinked net buyers in the
-chain sample (up to 10). Each pace is the stronger of the last hour against the
-five before it and the last five minutes against the hour (which needs $500 and
-5 buyers in those five minutes), so a coin under an hour old can still show one.
-A score of 30 with at least one stated reason is a SETUP. An hour under $1,000
-or 10 buyers is too small to read. A bonding curve is never AVOID for thinness:
-it always quotes and has no pool to drain until it graduates.
+chain sample (up to 10). A score of 30 with at least one stated reason is a
+SETUP. An hour under $1,000 or 10 buyers is too small to read. Pools under an
+hour old have no earlier pace, so only buyer share and unlinked buyers count.
 
 These weights are a starting heuristic. Every saved quote keeps the features,
 score and state in `memecoin_quote_history.features_json`. The test is: for

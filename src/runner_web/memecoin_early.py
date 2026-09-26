@@ -8,7 +8,7 @@ yet run and nothing on the chain says the launch is being drained.
 States use the stock tags: setup (speeding up, price not yet moved),
 running, extended, avoid (drained or staged) and quiet (no tag).
 
-The weights are a starting heuristic (`memecoin-early-v1`). Each quote saves
+The weights are a starting heuristic (`memecoin-early-v0`). Each quote saves
 its features so they can be tested against what the coin did next.
 """
 
@@ -17,13 +17,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
-VERSION = "memecoin-early-v1"
+VERSION = "memecoin-early-v0"
 # Below this the hour's trading is too small to read a pace from.
 MIN_HOUR_VOLUME_USD = 1_000.0
 MIN_HOUR_BUYERS = 10
-# The last five minutes against the hour: how a coin under an hour old shows pace.
-MIN_M5_VOLUME_USD = 500.0
-MIN_M5_BUYERS = 5
 # A price already this far up has run; the reading is for before that.
 RUN_H1_PCT = 50.0
 RUN_H6_PCT = 150.0
@@ -64,12 +61,12 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _pace(recent: float | None, earlier: float | None, periods: float) -> float | None:
-    """How many times faster the latest period ran than the earlier periods' average."""
+def _pace(recent: float | None, earlier: float | None, hours: float) -> float | None:
+    """How many times faster the last hour ran than the earlier hours' average."""
 
     if recent is None or earlier is None or recent <= 0:
         return None
-    before = max(earlier - recent, 0.0) / (periods - 1)
+    before = max(earlier - recent, 0.0) / (hours - 1)
     return recent / before if before > 0 else None
 
 
@@ -78,22 +75,12 @@ def _points(pace: float | None, cap: float) -> float:
     return min(cap, cap / 3 * math.log2(pace)) if pace and pace > 1 else 0.0
 
 
-def _faster(hourly: float | None, recent: float | None) -> tuple[float | None, str]:
-    """The stronger of the hour-vs-6h and 5m-vs-hour paces, and its window."""
-
-    if recent is not None and (hourly is None or recent > hourly):
-        return recent, "1h"
-    return hourly, "6h"
-
-
 def early_signal(row: dict[str, Any]) -> dict[str, Any]:
     """Score one quoted coin for activity picking up before a run."""
 
     features = {key: _finite(row.get(key)) for key in FEATURE_KEYS}
     counts = row.get("chain_sentiment_counts") or {}
     features["organic_buyers"] = _finite(counts.get("bullish"))
-    on_curve = row.get("venue") == "bonding_curve"
-    features["on_curve"] = on_curve
     factors = ((row.get("memecoin_assessment") or {}).get("risk") or {}).get("factors") or []
     blocked = list(
         dict.fromkeys(
@@ -103,8 +90,7 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
         )
     )
     liquidity = features["liquidity_usd"]
-    # A bonding curve always quotes; there is no pool to drain until it graduates.
-    if not on_curve and liquidity is not None and liquidity < MIN_LIQUIDITY_USD:
+    if liquidity is not None and liquidity < MIN_LIQUIDITY_USD:
         blocked.append("Pool is too thin")
     change_24h, change_h1 = features["change_24h"], features["change_h1"]
     if change_24h is not None and change_24h <= -90:
@@ -122,18 +108,8 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
         or buyers_h1 < MIN_HOUR_BUYERS
     ):
         return {**result, "state": "quiet", "reasons": []}
-    volume_pace, volume_window = _faster(
-        _pace(volume_h1, features["volume_h6"], 6),
-        _pace(features["volume_m5"], volume_h1, 12)
-        if (features["volume_m5"] or 0) >= MIN_M5_VOLUME_USD
-        else None,
-    )
-    buyer_pace, buyer_window = _faster(
-        _pace(buyers_h1, features["buyers_h6"], 6),
-        _pace(features["buyers_m5"], buyers_h1, 12)
-        if (features["buyers_m5"] or 0) >= MIN_M5_BUYERS
-        else None,
-    )
+    volume_pace = _pace(volume_h1, features["volume_h6"], 6)
+    buyer_pace = _pace(buyers_h1, features["buyers_h6"], 6)
     sellers_h1 = features["sellers_h1"] or 0.0
     buyer_share = buyers_h1 / (buyers_h1 + sellers_h1)
     organic = features["organic_buyers"] or 0.0
@@ -146,9 +122,9 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
     score = round(sum(parts.values()), 1)
     reasons = []
     if volume_pace and volume_pace >= 1.5:
-        reasons.append(f"Volume {volume_pace:.1f}× its {volume_window} pace")
+        reasons.append(f"Volume {volume_pace:.1f}× its 6h pace")
     if buyer_pace and buyer_pace >= 1.5:
-        reasons.append(f"Buyers {buyer_pace:.1f}× their {buyer_window} pace")
+        reasons.append(f"Buyers {buyer_pace:.1f}× their 6h pace")
     if buyer_share >= 0.55:
         reasons.append(f"{buyer_share:.0%} of traders buying")
     if organic >= 3:

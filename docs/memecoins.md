@@ -54,15 +54,6 @@ Helius supplies candidate pool addresses. The worker requests GeckoTerminal USD
 quotes for up to 100 of those pools in batches of 30. A returned pool must match
 a discovered address and base mint. The quote feed can enrich existing candidates.
 
-Launches are also quoted before they graduate. A Pump launch trades on its
-bonding curve, which GeckoTerminal indexes as a `pump-fun` pool at the curve's
-address. Each cycle quotes up to 90 curves from launches seen in the last 24
-hours: up to 60 that traded last cycle, busiest first, then the newest. A
-launch's curve stops being quoted once its PumpSwap pool is seen. Curve rows
-carry `venue: bonding_curve`. Bonding-curve buys and sells are decoded as swaps
-(official Pump IDL: account 2 mint, 3 bonding curve, 6 user), so staged buying
-and creator selling are found before graduation too.
-
 Quote rows require positive price and volume, recorded trades and at least $1,000
 pool liquidity. Price and volume come from the same representative pool. Quote
 time records the indexer fetch; creation and trade receipts use Solana block time.

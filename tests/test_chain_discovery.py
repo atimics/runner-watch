@@ -104,12 +104,7 @@ def test_invalid_and_inactive_pools_are_filtered(attrs):
 
 def test_malformed_records_and_payloads():
     assert normalize(None, {}, {"attributes": []}) == []
-    for payload in (
-        [],
-        {"error": "rate limited"},
-        {"data": None},
-        {"data": [pool()] * (memecoins.MAX_QUOTED_POOLS + 1)},
-    ):
+    for payload in ([], {"error": "rate limited"}, {"data": None}, {"data": [pool()] * 101}):
         with pytest.raises(ValueError):
             memecoins.normalize_chain_pools(payload, at=AT)
     broken = copy.deepcopy(pool())

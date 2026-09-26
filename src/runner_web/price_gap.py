@@ -271,7 +271,9 @@ def forecast_gap(
     volatility = step_volatility(returns)
     horizon_minutes = min(MAX_HORIZON_MINUTES, max(STEP_MINUTES, math.ceil(latency_seconds / 60)))
     direction, model_id = model_direction(bars, clock)
-    path = forecast_path(anchor["price"], volatility, horizon_minutes, direction=direction)
+    path = forecast_path(
+        anchor["price"], volatility, horizon_minutes, direction=direction
+    )
     if not path:
         return None
     quote = database.execute(
@@ -299,7 +301,8 @@ def forecast_gap(
         "horizon_minutes": horizon_minutes,
         "predicted_path": [{"step": point["step"], "price": point["price"]} for point in path],
         "band": [
-            {"step": point["step"], "low": point["low"], "high": point["high"]} for point in path
+            {"step": point["step"], "low": point["low"], "high": point["high"]}
+            for point in path
         ],
         "features": _features(
             bars,
@@ -378,7 +381,8 @@ def gap_projection(
     )
     if market_open:
         label = (
-            f"No bars for {_duration(gap_minutes)} · dashed line is our projection (±{band_pct}%)"
+            f"No bars for {_duration(gap_minutes)} · "
+            f"dashed line is our projection (±{band_pct}%)"
         )
     else:
         label = f"Market closed · dashed line is our flat projection (±{band_pct}%)"
@@ -416,7 +420,9 @@ def session_position(clock: dict[str, Any]) -> float:
     return max(0.0, min(1.0, position))
 
 
-def model_direction(bars: list[dict[str, Any]], clock: dict[str, Any]) -> tuple[float, str | None]:
+def model_direction(
+    bars: list[dict[str, Any]], clock: dict[str, Any]
+) -> tuple[float, str | None]:
     """The ranker's lean for the next bar, or nothing when it has no active model."""
 
     model = gap_ranker.active_model()
