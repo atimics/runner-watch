@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import re
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -23,6 +26,7 @@ from runner_web.memecoin_integrity import creator_trades
 from runner_web.memecoin_model import assess_memecoin, display_assessment
 from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
 
+LOG = logging.getLogger(__name__)
 POOL_QUOTES_URL = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/"
 SOURCE = "GeckoTerminal"
 MIN_POOL_LIQUIDITY_USD = 1000
@@ -38,6 +42,8 @@ CURVE_SLOTS = 90
 POOL_SLOTS = 100
 # Graduated pools and bonding curves are quoted in one pass.
 MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS
+# GeckoTerminal answers a burst of batch requests with 429, so space them out.
+QUOTE_PAUSE_SECONDS = 2.0
 ACTIVE_CURVE_SLOTS = 60
 CURVE_HOURS = 24
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -347,12 +353,22 @@ def _collect_helius(
     )
     allowed = {item["pool_address"]: item for item in selected + curves}
     payload = []
-    addresses = list(allowed)
+    curve_addresses = {item["pool_address"] for item in curves}
+    # Graduated pools first: the curves are extra and may be cut short.
+    addresses = [address for address in allowed if address not in curve_addresses]
+    addresses += [address for address in allowed if address in curve_addresses]
     for offset in range(0, len(addresses), 30):
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(
-            addresses[offset : offset + 30]
-        )
-        body = download(url, 10.0)
+        chunk = addresses[offset : offset + 30]
+        if offset:
+            time.sleep(QUOTE_PAUSE_SECONDS)
+        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/" + ",".join(chunk)
+        try:
+            body = download(url, 10.0)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and curve_addresses.issuperset(chunk):
+                LOG.warning("Pool quotes rate limited; skipped %d curves", len(addresses) - offset)
+                break
+            raise
         if len(body) > MAX_RESPONSE_BYTES:
             raise ValueError("Pool quote response exceeds the size limit")
         batch = json.loads(body)
@@ -435,6 +451,7 @@ def refresh_memecoins(
     try:
         rows, metadata = _collect_helius(download=download or _download, at=started, rpc=rpc)
     except Exception as exc:
+        LOG.exception("Memecoin refresh failed")
         run_id = record_source_fetch(
             SourceFetch.failure(
                 source="helius",

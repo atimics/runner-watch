@@ -313,11 +313,9 @@ def test_a_full_pool_list_and_curve_list_are_quoted_in_one_pass(database):
     assert normalize_chain_pools({"data": [{}] * MAX_QUOTED_POOLS}, at=AT) == []
 
 
-def test_a_full_curve_watch_still_refreshes(database):
-    from runner_web.memecoins import CURVE_SLOTS
-
+def _many_launches(count):
     launches, mints = [], {}
-    for number in range(CURVE_SLOTS + 5):
+    for number in range(count):
         tx = launch()
         tx["slot"] = 50 + number
         tx["transaction"]["signatures"] = [helius._encode(number.to_bytes(2, "big") * 32)]
@@ -327,6 +325,54 @@ def test_a_full_curve_watch_still_refreshes(database):
         ix = tx["transaction"]["message"]["instructions"][0]
         ix["accounts"] = [mint, OTHER, curve, OTHER, OTHER, CREATOR]
         launches.append(tx)
+    return launches, mints
+
+
+def _rate_limited(url):
+    return HTTPError(url, 429, "Too Many Requests", {}, io.BytesIO(b""))
+
+
+def test_a_rate_limit_on_curves_keeps_the_pools_and_the_refresh(database, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(memecoins.time, "sleep", sleeps.append)
+    launches, _ = _many_launches(40)
+    requests = []
+
+    def download(url, timeout):
+        requests.append(url)
+        if len(requests) > 1:
+            raise _rate_limited(url)
+        return b'{"data":[]}'
+
+    result = memecoins.refresh_memecoins(
+        at=AT, rpc=lambda _: reply(launches + [creation()]), download=download
+    )
+
+    assert result["status"] == "ok"
+    # The graduated pool is asked for first; the curves come after it.
+    assert requests[0].rsplit("/", 1)[1].split(",")[0] == POOL
+    # Batches are spaced so GeckoTerminal does not see a burst.
+    assert sleeps == [memecoins.QUOTE_PAUSE_SECONDS]
+
+
+def test_a_rate_limit_on_pools_fails_the_refresh_and_is_logged(database, caplog):
+    def download(url, timeout):
+        raise _rate_limited(url)
+
+    result = memecoins.refresh_memecoins(
+        at=AT, rpc=lambda _: reply([creation()]), download=download
+    )
+
+    assert result["status"] == "error"
+    assert "Memecoin refresh failed" in caplog.text
+
+
+def test_a_full_curve_watch_still_refreshes(database, monkeypatch):
+    from runner_web.memecoins import CURVE_SLOTS
+
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+
+    launches, mints = _many_launches(CURVE_SLOTS + 5)
     requests = []
 
     def download(url, timeout):
