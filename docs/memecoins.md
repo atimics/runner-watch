@@ -39,6 +39,36 @@ window. Gap records are committed with the new page and remain available for
 30 days. Wallet streams keep their existing cursor. Coverage begins at the
 recorded windows and includes these explicit gap records.
 
+### Launches, creator selling and launch bundles
+
+Every third full-sampling cycle a page reads the newest 100 launches from
+Pump's mint authority (`TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM`, the
+PDA of "mint-authority"), which takes part in every launch and nothing else:
+about 38,000 a day. It replaces a program sample page, so the credits are the
+same, and each read covers the last four minutes instead of a backlog.
+
+`src/runner_web/memecoin_watch.py` watches two risks with one-credit reads,
+every cycle including quiet ones:
+
+- **Creator selling.** The creator's token account for each board coin
+  (derived locally from the creator and the mint, Token-2022 or the original
+  token program) is read in batches of 100. A drop of 1% or more of their
+  holding since last cycle is "Creator sold or moved X% of their tokens",
+  with the account's newest signature as the receipt. About 2 credits a cycle
+  for 200 coins.
+- **Launch bundles.** Once per board coin, tagged coins first, up to ten a
+  cycle: list the bonding curve's signatures back to the launch (a credit per
+  1,000, at most five pages), and when three or more transactions landed in
+  the launch slot or the next, read them (a credit each, at most eight). Three
+  or more wallets taking 10% or more of supply there is "Launch bundle". Each
+  coin is checked once and remembered for a week.
+
+Both are findings the assessment already reads (`creator_sell`,
+`synchronized_buys`), so they set AVOID for 24 hours and show their receipts.
+A finding on a coin that was SETUP, RUNNING or EXTENDED just before, or that
+has an open Call, is posted once to the Telegram channel within its usual
+pacing (`TELEGRAM_MEMECOIN_ALERTS`).
+
 ### Quiet when unread
 
 Paid reads follow readers. A GET of a memecoin page, `/api/memecoins` or a

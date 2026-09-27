@@ -15,10 +15,19 @@ PAGE_SIZE = 100
 # is a stream of graduations: about a thousand a day, where sampling the
 # programs caught about eleven.
 MIGRATION_AUTHORITY = "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
+# Pump's mint authority (the PDA of "mint-authority"): every launch and nothing
+# else, about 38,000 a day, where the program samples caught about 680.
+MINT_AUTHORITY = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
+# The launch stream reads the newest launches only: about 100 land in 4 minutes.
+LAUNCH_WINDOW_SECONDS = 240
 
 
 def ingest_stream(stream: str, address: str, *, at: datetime, rpc: Rpc) -> dict[str, Any]:
     state = evidence.stream_state(stream)
+    if stream == "launches":
+        # A sample of the newest, not a backlog to catch up on.
+        newest = int(at.timestamp()) - 60
+        state = {"window_start": newest - LAUNCH_WINDOW_SECONDS, "window_end": newest}
     end = state.get("window_end") or int(at.timestamp()) - 60
     start = state.get(
         "window_start",
@@ -116,6 +125,8 @@ def collect_chain(*, at: datetime, rpc: Rpc | None = None, quiet: bool = False) 
     pages = [pages[offset % len(pages)], pages[(offset + 1) % len(pages)]]
     if offset == 0:
         pages[1] = ("graduations", MIGRATION_AUTHORITY)
+    elif offset == 1:
+        pages[1] = ("launches", MINT_AUTHORITY)
     if quiet:
         pages = [page for page in pages if page[0] == "graduations"]
     for stream, address in pages:

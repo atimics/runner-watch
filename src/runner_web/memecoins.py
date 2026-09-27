@@ -27,6 +27,7 @@ from runner_web.memecoin_forensics import analyze_events
 from runner_web.memecoin_integrity import creator_trades
 from runner_web.memecoin_model import assess_memecoin, display_assessment
 from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
+from runner_web.memecoin_watch import creator_sells, launch_bundles, recent_findings
 
 LOG = logging.getLogger(__name__)
 POOL_QUOTES_URL = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/"
@@ -472,6 +473,51 @@ def memecoins_quiet(at: datetime) -> bool:
     return seen is not None and (at - seen).total_seconds() > QUIET_AFTER_SECONDS
 
 
+def _watch_findings(rows: list[dict[str, Any]], *, rpc: Rpc, at: datetime) -> list[dict[str, Any]]:
+    """This cycle's creator-sell and launch-bundle findings plus a day of earlier ones.
+
+    Each new finding records the coin's tag just before it, so alerts go to
+    coins people were watching. A failed check skips; it never fails the refresh.
+    """
+
+    saved = _market_states(
+        keys=(
+            "memecoins_snapshot",
+            "memecoin_creator_balances",
+            "memecoin_launch_checks",
+            "memecoin_watch_findings",
+        )
+    )
+    before = {
+        row.get("token_address"): (row.get("early") or {}).get("state")
+        for row in (saved.get("memecoins_snapshot") or {}).get("rows") or []
+        if isinstance(row, dict)
+    }
+    new: list[dict[str, Any]] = []
+    try:
+        sells, balances = creator_sells(
+            rows, saved.get("memecoin_creator_balances") or {}, rpc=rpc, at=at
+        )
+        _save_state("memecoin_creator_balances", balances, at)
+        new += sells
+    except Exception:
+        LOG.warning("Creator balance check failed", exc_info=True)
+    try:
+        ranked = [{**row, "early": {"state": before.get(row["token_address"])}} for row in rows]
+        bundles, checked = launch_bundles(
+            ranked, saved.get("memecoin_launch_checks") or {}, rpc=rpc, at=at
+        )
+        _save_state("memecoin_launch_checks", checked, at)
+        new += bundles
+    except Exception:
+        LOG.warning("Launch bundle checks failed", exc_info=True)
+    for finding in new:
+        finding["state_before"] = before.get(finding["token_address"])
+    findings = recent_findings(new + list(saved.get("memecoin_watch_findings") or []), at)
+    _save_state("memecoin_watch_findings", findings, at)
+    return findings
+
+
 def price_source() -> str:
     """Where board prices come from: gecko, shadow (gecko, with chain compared) or chain."""
 
@@ -820,6 +866,12 @@ def _collect_helius(
         bursts, original_cache, download=download, at=at, pause=QUOTE_PAUSE_SECONDS
     )
     _save_state("memecoin_copycat_originals", original_cache, at)
+    # Creator selling and bundled launches, from one-credit reads; they join the
+    # forensic findings so the assessment sets AVOID and shows their receipts.
+    analytics["findings"] = analytics["findings"] + _watch_findings(
+        rows, rpc=rpc or rpc_request, at=at
+    )
+    _save_state("memecoin_forensics", analytics, at)
     claims = {
         event["token_address"]: event
         for event in sorted(discovery.get("events", []), key=lambda event: event["observed_at"])
