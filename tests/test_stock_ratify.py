@@ -11,6 +11,7 @@ from runner_web.stock_ratify import standards, stock_ratifications
 TODAY = date(2026, 9, 27)
 AT = datetime(2026, 9, 27, 12, tzinfo=UTC)
 HEALTHY = {
+    "issuer_data_available": True,
     "periodic_filed_at": "2026-08-12",
     "periodic_form": "10-Q",
     "cash_runway_months": 20.0,
@@ -53,7 +54,7 @@ def test_a_stock_meeting_all_six_standards_is_ratified():
         (
             {"issuer": {**HEALTHY, "periodic_filed_at": None}},
             "filings",
-            "no quarterly or annual report on file",
+            "no quarterly or annual report in its filings",
         ),
         ({"issuer": {**HEALTHY, "cash_runway_months": 5.0}}, "cash", "5 months of cash"),
         ({"issuer": {**HEALTHY, "shares_growth_pct": 140.0}}, "dilution", "shares up 140%"),
@@ -83,7 +84,8 @@ def test_missing_financials_are_not_known_rather_than_met():
 
     unknown = {item["key"] for item in result["standards"] if item["met"] is None}
     assert result["ratified"] is False
-    assert unknown == {"cash", "dilution"}
+    # Live case: JBI files 10-Qs, but we hold none of its financial facts.
+    assert unknown == {"filings", "cash", "dilution"}
 
 
 @pytest.fixture

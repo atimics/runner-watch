@@ -62,7 +62,11 @@ def standards(
     not_burning = operating is not None and operating >= 0
     results = {
         "exchange": None if not listed else listed in MAJOR_EXCHANGES,
-        "filings": report_day is not None and (today - report_day).days <= REPORT_DAYS,
+        # No financial facts at all means we have not read its filings, not that
+        # it has none: unknown rather than not met.
+        "filings": None
+        if not issuer.get("issuer_data_available")
+        else report_day is not None and (today - report_day).days <= REPORT_DAYS,
         "cash": True if not_burning else None if runway is None else runway >= MIN_RUNWAY_MONTHS,
         "dilution": None if growth is None else growth <= MAX_SHARE_GROWTH_PCT,
         "trading": halted_on is None and delisting_on is None,
@@ -77,7 +81,9 @@ def standards(
         "filings": (
             f"latest {issuer.get('periodic_form')} filed {_label(report_day)}"
             if report_day
-            else "no quarterly or annual report on file"
+            else "no quarterly or annual report in its filings"
+            if issuer.get("issuer_data_available")
+            else ""
         ),
         "cash": "not burning cash"
         if not_burning
