@@ -146,7 +146,7 @@ def test_a_replay_ignores_a_model_that_did_not_exist_yet(database):
             INSERT INTO ranker_models(
                 id,feature_schema_version,horizon,model_kind,weights_json,metrics_json,
                 training_start,training_end,training_groups,training_rows,status,created_at
-            ) VALUES('late-model','stonks.ranker_features.v4','60m','test','{}','{}',?,?,1,1,
+            ) VALUES('late-model','stonks.ranker_features.v5','60m','test','{}','{}',?,?,1,1,
                      'active',?)
             """,
             (
