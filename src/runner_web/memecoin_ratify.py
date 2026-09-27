@@ -11,13 +11,38 @@ read only for coins that pass everything else, every six hours.
 
 from __future__ import annotations
 
+import json
+import logging
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import quote
 
-from runner_web.memecoin_chain_prices import Rpc, read_accounts
+from runner_web.helius_discovery import _encode
+from runner_web.memecoin_chain_prices import (
+    POOL_DISCRIMINATOR,
+    PUMP_SWAP,
+    Rpc,
+    _raw,
+    read_accounts,
+)
 from runner_web.solana_keys import is_program_address
 
+LOG = logging.getLogger(__name__)
 MIN_LIQUIDITY_USD = 10_000.0
+MIN_HOLDERS = 100
+# The pool's liquidity tokens still in existence; the rest were burned.
+MAX_LP_LEFT_PCT = 10.0
+MAX_COUNT_LOOKUPS = 5
+RAYDIUM_CPMM = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
+CPMM_DISCRIMINATOR = bytes([247, 237, 227, 245, 215, 195, 222, 70])
+# (program, discriminator, lp mint offset, lp supply offset, name): Pump's and
+# Raydium's official IDLs. Pump burns a graduated pool's liquidity tokens.
+LP_LAYOUTS = (
+    (PUMP_SWAP, POOL_DISCRIMINATOR, 107, 203, "PumpSwap"),
+    (RAYDIUM_CPMM, CPMM_DISCRIMINATOR, 136, 333, "Raydium CPMM"),
+)
 MIN_AGE = timedelta(hours=24)
 MAX_TOP10_PCT = 30.0
 HOLDERS_TTL = timedelta(hours=6)
@@ -70,9 +95,11 @@ LABELS = {
     "age": "24 hours since its pool opened",
     "record": "No launch bundle, creator selling or liquidity pull",
     "holders": "Top 10 holders own 30% or less",
+    "holder_count": "At least 100 holders",
+    "liquidity_lock": "Pool liquidity burned or locked",
 }
 NOTE = (
-    "Ratified: meets RATi's seven basic standards for a memecoin. "
+    "Ratified: meets RATi's nine basic standards for a memecoin. "
     "Not an endorsement, a guarantee or advice."
 )
 
@@ -203,12 +230,82 @@ def _passes_free_standards(row: dict[str, Any], bundled: bool, at: datetime) -> 
     )
 
 
+def liquidity_locks(pools: list[str], *, rpc: Rpc) -> dict[str, dict[str, Any]]:
+    """How much of each pool's liquidity-token supply is still out, by pool.
+
+    A pool keeps its own count of liquidity tokens issued; the mint's supply is
+    what has not been burned. Pools on other DEXes come back with no answer.
+    """
+
+    results: dict[str, dict[str, Any]] = {}
+    layouts = {}
+    for pool, account in read_accounts(pools, rpc).items():
+        raw = _raw(account)
+        for program, discriminator, mint_at, supply_at, name in LP_LAYOUTS:
+            if (
+                raw is not None
+                and (account or {}).get("owner") == program
+                and raw[:8] == discriminator
+                and len(raw) >= supply_at + 8
+            ):
+                issued = int.from_bytes(raw[supply_at : supply_at + 8], "little")
+                layouts[pool] = (_encode(raw[mint_at : mint_at + 32]), issued, name)
+                break
+        else:
+            results[pool] = {"left_pct": None, "dex": None}
+    mints = read_accounts([mint for mint, _, _ in layouts.values()], rpc) if layouts else {}
+    for pool, (lp_mint, issued, name) in layouts.items():
+        try:
+            outstanding = int(mints[lp_mint]["data"]["parsed"]["info"]["supply"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            results[pool] = {"left_pct": None, "dex": name}
+            continue
+        left = min(100.0, outstanding / issued * 100) if issued > 0 else None
+        results[pool] = {"left_pct": left, "dex": name}
+    return results
+
+
+def holder_counts(
+    mints: list[str],
+    cached: dict[str, Any],
+    *,
+    download: Callable[[str, float], bytes],
+    pause: float,
+    at: datetime,
+) -> dict[str, Any]:
+    """Holder counts from GeckoTerminal's token info (free), a few a cycle, kept six hours."""
+
+    counts = {
+        mint: entry
+        for mint, entry in cached.items()
+        if at - datetime.fromisoformat(entry["checked_at"]) <= HOLDERS_TTL
+    }
+    looked = 0
+    for mint in mints:
+        if mint in counts or looked >= MAX_COUNT_LOOKUPS:
+            continue
+        time.sleep(pause)
+        looked += 1
+        url = f"https://api.geckoterminal.com/api/v2/networks/solana/tokens/{quote(mint)}/info"
+        try:
+            holders = json.loads(download(url, 10.0))["data"]["attributes"]["holders"]
+            count = int(holders["count"])
+        except Exception:
+            LOG.warning("Holder count unavailable for %s", mint, exc_info=True)
+            continue
+        counts[mint] = {"checked_at": at.isoformat(), "count": count}
+    return counts
+
+
 def standards(
     row: dict[str, Any],
     controls: dict[str, Any] | None,
     top10_pct: float | None,
     bundled: bool,
     at: datetime,
+    *,
+    holder_count: int | None = None,
+    lock: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Each standard as met, not met or not yet known, and whether all are met."""
 
@@ -223,6 +320,10 @@ def standards(
         "age": None if age is None else age >= MIN_AGE,
         "record": not flagged,
         "holders": None if top10_pct is None else top10_pct <= MAX_TOP10_PCT,
+        "holder_count": None if holder_count is None else holder_count >= MIN_HOLDERS,
+        "liquidity_lock": None
+        if not lock or lock.get("left_pct") is None
+        else lock["left_pct"] <= MAX_LP_LEFT_PCT,
     }
     details = {
         "mint_authority": "still active" if controls and controls["mint_authority"] else "",
@@ -234,6 +335,8 @@ def standards(
         "age": f"{age.total_seconds() / 3600:.0f} hours" if age is not None else "",
         "record": ", ".join(flagged),
         "holders": f"top 10 hold {top10_pct:.0f}%" if top10_pct is not None else "",
+        "holder_count": f"{holder_count:,} holders" if holder_count is not None else "",
+        "liquidity_lock": _lock_detail(lock),
     }
     met = sum(result is True for result in results.values())
     return {
@@ -249,6 +352,20 @@ def standards(
     }
 
 
+def _lock_detail(lock: dict[str, Any] | None) -> str:
+    if not lock:
+        return ""
+    if lock.get("left_pct") is None:
+        return (
+            f"{lock['dex']} pool not readable"
+            if lock.get("dex")
+            else "this DEX is not supported yet"
+        )
+    if lock["left_pct"] <= 0:
+        return f"all {lock['dex']} liquidity tokens burned"
+    return f"{lock['left_pct']:.0f}% of {lock['dex']} liquidity tokens still held"
+
+
 def ratify_rows(
     rows: list[dict[str, Any]],
     saved: dict[str, Any],
@@ -257,6 +374,8 @@ def ratify_rows(
     bundled: set[str],
     rpc: Rpc,
     at: datetime,
+    download: Callable[[str, float], bytes] | None = None,
+    pause: float = 0.0,
 ) -> dict[str, Any]:
     """Attach `ratification` to every row; read the chain only for close candidates.
 
@@ -280,6 +399,11 @@ def ratify_rows(
     ]
     controls = mint_controls([row["token_address"] for row in candidates], known_controls, rpc=rpc)
     known_controls.update(controls)
+    try:
+        locks = liquidity_locks([row["pool_address"] for row in candidates], rpc=rpc)
+    except Exception:
+        LOG.warning("Liquidity lock reads failed", exc_info=True)
+        locks = {}
     reads = 0
     for row in candidates:
         mint = row["token_address"]
@@ -297,6 +421,21 @@ def ratify_rows(
         except ValueError:
             continue  # this coin's holders stay unknown; the others still count
         holders[mint] = {"checked_at": at.isoformat(), "top10_pct": share, "rules": HOLDER_RULES}
+    # The holder count is the last and a free lookup: only coins passing the rest.
+    finalists = [
+        row["token_address"]
+        for row in candidates
+        if (controls.get(row["token_address"]) or {}).get("clean")
+        and (holders.get(row["token_address"]) or {}).get("top10_pct") is not None
+        and holders[row["token_address"]]["top10_pct"] <= MAX_TOP10_PCT
+        and (locks.get(row["pool_address"]) or {}).get("left_pct") is not None
+        and locks[row["pool_address"]]["left_pct"] <= MAX_LP_LEFT_PCT
+    ]
+    counts = (
+        holder_counts(finalists, saved.get("counts") or {}, download=download, pause=pause, at=at)
+        if download
+        else dict(saved.get("counts") or {})
+    )
     for row in rows:
         mint = row.get("token_address")
         row["ratification"] = standards(
@@ -305,5 +444,7 @@ def ratify_rows(
             (holders.get(mint) or {}).get("top10_pct"),
             mint in bundled,
             at,
+            holder_count=(counts.get(mint) or {}).get("count"),
+            lock=locks.get(row.get("pool_address", "")),
         )
-    return {"controls": known_controls, "holders": holders}
+    return {"controls": known_controls, "holders": holders, "counts": counts}

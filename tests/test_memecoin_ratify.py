@@ -31,11 +31,50 @@ def row(**extra):
     }
 
 
-def test_a_coin_meeting_all_seven_standards_is_ratified():
-    result = standards(row(), CLEAN, 22.0, False, AT)
+BURNED = {"left_pct": 0.0, "dex": "PumpSwap"}
+
+
+def full(row_, controls=CLEAN, top10=22.0, bundled=False, **extra):
+    facts = {"holder_count": 624, "lock": BURNED, **extra}
+    return standards(row_, controls, top10, bundled, AT, **facts)
+
+
+def test_a_coin_meeting_all_nine_standards_is_ratified():
+    result = full(row())
 
     assert result["ratified"] is True
-    assert result["met"] == result["total"] == 7
+    assert result["met"] == result["total"] == 9
+    details = {item["key"]: item["detail"] for item in result["standards"]}
+    assert details["liquidity_lock"] == "all PumpSwap liquidity tokens burned"
+    assert details["holder_count"] == "624 holders"
+
+
+@pytest.mark.parametrize(
+    ("facts", "failing", "detail"),
+    [
+        # Live case: "NPC", 22 holders and $19M of liquidity from one party.
+        ({"holder_count": 22}, "holder_count", "22 holders"),
+        (
+            {"lock": {"left_pct": 100.0, "dex": "Raydium CPMM"}},
+            "liquidity_lock",
+            "100% of Raydium CPMM liquidity tokens still held",
+        ),
+    ],
+)
+def test_the_new_standards_withhold_it(facts, failing, detail):
+    result = full(row(), **facts)
+
+    assert result["ratified"] is False
+    standard = next(item for item in result["standards"] if item["key"] == failing)
+    assert standard["met"] is False and standard["detail"] == detail
+
+
+def test_a_pool_on_an_unsupported_dex_is_not_checked_yet():
+    result = full(row(), lock={"left_pct": None, "dex": None})
+
+    standard = next(item for item in result["standards"] if item["key"] == "liquidity_lock")
+    assert result["ratified"] is False
+    assert standard["met"] is None and standard["detail"] == "this DEX is not supported yet"
 
 
 @pytest.mark.parametrize(
@@ -90,7 +129,7 @@ def test_a_coin_meeting_all_seven_standards_is_ratified():
 def test_one_failing_standard_is_enough_to_withhold_it(
     changes, controls, top10, bundled, failing, detail
 ):
-    result = standards(row(**changes), controls, top10, bundled, AT)
+    result = full(row(**changes), controls, top10, bundled)
 
     assert result["ratified"] is False
     standard = next(item for item in result["standards"] if item["key"] == failing)
@@ -102,7 +141,14 @@ def test_an_unchecked_standard_is_not_counted_as_met():
 
     assert result["ratified"] is False
     unknown = {item["key"] for item in result["standards"] if item["met"] is None}
-    assert unknown == {"mint_authority", "freeze_authority", "token_features", "holders"}
+    assert unknown == {
+        "mint_authority",
+        "freeze_authority",
+        "token_features",
+        "holders",
+        "holder_count",
+        "liquidity_lock",
+    }
 
 
 class FakeRpc:
@@ -224,47 +270,101 @@ def test_supply_held_under_an_unknown_program_still_counts():
     assert top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc) == pytest.approx(90.0)
 
 
+def pump_pool(lp_mint, issued):
+    import base64
+
+    from runner_web.helius_discovery import _decode
+    from runner_web.memecoin_chain_prices import POOL_DISCRIMINATOR, PUMP_SWAP
+
+    raw = bytearray(260)
+    raw[:8] = POOL_DISCRIMINATOR
+    raw[107:139] = _decode(lp_mint)
+    raw[203:211] = issued.to_bytes(8, "little")
+    return {"owner": PUMP_SWAP, "data": [base64.b64encode(bytes(raw)).decode(), "base64"]}
+
+
+def lp_mint_account(supply):
+    return {"data": {"parsed": {"info": {"supply": str(supply)}}}}
+
+
+def test_a_graduated_pools_burned_liquidity_is_read_from_its_lp_mint():
+    from runner_web.helius_discovery import _encode
+    from runner_web.memecoin_ratify import liquidity_locks
+
+    lp = _encode(bytes([33]) * 32)
+    # Live shape: P(DOOM)'s pool issued 4,193,388,296,987 and the mint holds 0.
+    rpc = FakeRpc(mints={POOL: pump_pool(lp, 4_193_388_296_987), lp: lp_mint_account(0)})
+
+    assert liquidity_locks([POOL], rpc=rpc) == {POOL: {"left_pct": 0.0, "dex": "PumpSwap"}}
+
+
 def test_only_coins_passing_the_free_standards_cost_a_read():
+    from runner_web.helius_discovery import _encode
+
+    lp = _encode(bytes([33]) * 32)
     rpc = FakeRpc(
-        mints={MINT: mint_account(), **{f"holder{n}": owned_by(WALLET) for n in range(10)}},
+        mints={
+            MINT: mint_account(),
+            POOL: pump_pool(lp, 10**12),
+            lp: lp_mint_account(0),
+            **{f"holder{n}": owned_by(WALLET) for n in range(10)},
+        },
         largest=[
-            {
-                "address": f"holder{n}",
-                "amount": str(10_000_000 * 10**6),
-                "decimals": 6,
-                "uiAmount": None,
-            }
+            {"address": f"holder{n}", "amount": str(10_000_000 * 10**6), "decimals": 6}
             for n in range(10)
         ],
     )
+    lookups = []
+
+    def download(url, timeout):
+        lookups.append(url)
+        return b'{"data": {"attributes": {"holders": {"count": 624}}}}'
+
     young = row(
         token_address="Young1111111111111111111111111111111111111", pool_created_at=AT.isoformat()
     )
     rows = [row(), young]
 
-    state = ratify_rows(rows, {}, vaults={POOL: VAULT}, bundled=set(), rpc=rpc, at=AT)
+    state = ratify_rows(
+        rows, {}, vaults={POOL: VAULT}, bundled=set(), rpc=rpc, at=AT, download=download
+    )
 
     assert rows[0]["ratification"]["ratified"] is True
     assert rows[1]["ratification"]["ratified"] is False
-    assert rpc.calls == ["getMultipleAccounts", "getTokenLargestAccounts", "getMultipleAccounts"]
-    # Holders are remembered for six hours.
+    assert len(lookups) == 1 and MINT in lookups[0]
+    # Holders and counts are remembered for six hours.
     ratify_rows(
-        [row()], state, vaults={POOL: VAULT}, bundled=set(), rpc=rpc, at=AT + timedelta(hours=5)
+        [row()],
+        state,
+        vaults={POOL: VAULT},
+        bundled=set(),
+        rpc=rpc,
+        at=AT + timedelta(hours=5),
+        download=download,
     )
-    assert rpc.calls.count("getTokenLargestAccounts") == 1
+    assert rpc.calls.count("getTokenLargestAccounts") == 1 and len(lookups) == 1
+
+
+def test_a_failed_holder_count_leaves_it_unknown():
+    from runner_web.memecoin_ratify import holder_counts
+
+    def download(url, timeout):
+        raise OSError("rate limited")
+
+    assert holder_counts([MINT], {}, download=download, pause=0, at=AT) == {}
 
 
 def test_the_board_and_page_show_the_mark_and_the_standards():
     from runner_web.market_screens import detail, listing
     from tests.test_market_screens import render, sample
 
-    coin = {**sample("memecoins"), "ratification": standards(row(), CLEAN, 22.0, False, AT)}
+    coin = {**sample("memecoins"), "ratification": full(row())}
 
     board = render(listing("memecoins", [coin]))
     page = render(detail("memecoins", {"coin": coin, "can_call": True}))
 
     assert 'class="ratified-mark"' in board
-    assert "Ratified · 7 of 7 met" in page
+    assert "Ratified · 9 of 9 met" in page
     assert "Top 10 holders own 30% or less · top 10 hold 22%" in page
 
 
@@ -275,7 +375,7 @@ def test_a_stale_quote_hides_the_mark():
     coin = {
         **sample("memecoins"),
         "stale": True,
-        "ratification": standards(row(), CLEAN, 22.0, False, AT),
+        "ratification": full(row()),
     }
 
     assert 'class="ratified-mark"' not in render(listing("memecoins", [coin]))

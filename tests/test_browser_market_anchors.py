@@ -261,7 +261,15 @@ def test_a_ratified_coin_row_fits_on_a_phone(page, width):
 
     raw = screens.sample("memecoins")
     raw.update(symbol=ADDRESS, name=ADDRESS, token_address=ADDRESS)
-    raw["ratification"] = standards(ratify_row(), CLEAN, 22.0, False, AT)
+    raw["ratification"] = standards(
+        ratify_row(),
+        CLEAN,
+        22.0,
+        False,
+        AT,
+        holder_count=624,
+        lock={"left_pct": 0.0, "dex": "PumpSwap"},
+    )
     page.set_viewport_size(dict(width=width, height=844))
     open_html(page, screens.render(listing("memecoins", [raw])))
     row = page.locator(".ticker").first
