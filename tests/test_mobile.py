@@ -3537,7 +3537,7 @@ def test_the_detail_page_names_the_barrier_forecast(
             INSERT INTO ranker_models(
                 id,feature_schema_version,horizon,model_kind,weights_json,metrics_json,
                 training_start,training_end,training_groups,training_rows,status,created_at
-            ) VALUES('chance-model','stonks.ranker_features.v4','60m','test','{}','{}',?,?,1,1,
+            ) VALUES('chance-model','stonks.ranker_features.v5','60m','test','{}','{}',?,?,1,1,
                      'active',?)
             """,
             (captured_at.isoformat(), captured_at.isoformat(), captured_at.isoformat()),
