@@ -22,7 +22,7 @@ MIN_AGE = timedelta(hours=24)
 MAX_TOP10_PCT = 30.0
 HOLDERS_TTL = timedelta(hours=6)
 # Bump when the holder count changes, so answers under older rules are redone.
-HOLDER_RULES = 4
+HOLDER_RULES = 5
 MAX_HOLDER_READS = 20
 # getTokenLargestAccounts lists this many accounts.
 LARGEST_LISTED = 20
@@ -35,6 +35,27 @@ RISKY_EXTENSIONS = {
     "defaultAccountState",
     "nonTransferable",
     "confidentialTransferMint",
+}
+# Pools and curves hold supply for everyone, so their accounts are left out of
+# the top holders. An account owned by a program address is left out only when
+# that address belongs to one of these programs: anyone can hold supply under a
+# program of their own, and that must count.
+POOL_PROGRAMS = {
+    "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",  # PumpSwap
+    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",  # Pump bonding curves
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium AMM v4
+    "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",  # Raydium CPMM
+    "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",  # Raydium CLMM
+    "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj",  # Raydium LaunchLab
+    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",  # Orca Whirlpools
+    "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",  # Meteora DLMM
+    "Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB",  # Meteora DAMM v1
+    "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",  # Meteora DAMM v2
+}
+# Pool authorities with no account of their own to show a program.
+POOL_AUTHORITIES = {
+    "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",  # Raydium AMM v4
+    "GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL",  # Raydium CPMM
 }
 RISK_KINDS = {
     "synchronized_buys": "launch bundle",
@@ -99,9 +120,10 @@ def _amount(item: dict[str, Any]) -> float:
 def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> float | None:
     """Percent of supply held by the ten largest wallets.
 
-    Accounts owned by a program address (any DEX pool, bonding curve or lock)
-    are left out: a program-derived owner is never a person's key. That needs
-    one more read of the top 20 accounts (a credit).
+    Accounts held by a known pool or bonding curve are left out, found from the
+    owner of each of the top 20 accounts and the program behind that owner (two
+    more one-credit reads). Anything else counts, including supply held under
+    a program nobody here knows.
     """
 
     payload = rpc(
@@ -120,14 +142,25 @@ def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> flo
     ]
     if not accounts or supply <= 0:
         return None
-    owners = read_accounts([item["address"] for item in accounts], rpc)
-    held = []
+    token_accounts = read_accounts([item["address"] for item in accounts], rpc)
+    owners: dict[str, str | None] = {}
     for item in accounts:
         try:
-            owner = owners[item["address"]]["data"]["parsed"]["info"]["owner"]  # type: ignore[index]
+            owners[item["address"]] = token_accounts[item["address"]]["data"]["parsed"]["info"][
+                "owner"
+            ]  # type: ignore[index]
         except (KeyError, TypeError):
-            owner = None  # unknown owners count: the standard must not pass on a gap
-        if owner and is_program_address(owner):
+            owners[item["address"]] = None  # unknown owners count as holders
+    # Which program each program-address owner belongs to: one more read.
+    derived = sorted({o for o in owners.values() if o and is_program_address(o)} - POOL_AUTHORITIES)
+    programs = {
+        address: (account or {}).get("owner")
+        for address, account in (read_accounts(derived, rpc) if derived else {}).items()
+    }
+    held = []
+    for item in accounts:
+        owner = owners[item["address"]]
+        if owner in POOL_AUTHORITIES or programs.get(owner or "") in POOL_PROGRAMS:
             continue
         held.append(_amount(item))
     held.sort(reverse=True)

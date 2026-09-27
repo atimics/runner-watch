@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from runner_web.memecoin_ratify import mint_controls, ratify_rows, standards, top10_share
+from runner_web.solana_keys import PUMP
 
 AT = datetime(2026, 9, 27, 12, tzinfo=UTC)
 MINT = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
@@ -189,6 +190,8 @@ def test_accounts_owned_by_a_program_are_not_counted_among_the_top_holders():
     rpc = FakeRpc(
         mints={
             other_pool: owned_by(bonding_curve(MINT)),
+            # The curve account itself belongs to the Pump program.
+            bonding_curve(MINT): {"owner": PUMP},
             **{f"holder{n}": owned_by(WALLET) for n in range(12)},
         },
         largest=largest,
@@ -197,7 +200,28 @@ def test_accounts_owned_by_a_program_are_not_counted_among_the_top_holders():
     share = top10_share(MINT, supply=1_000_000_000, exclude={VAULT}, rpc=rpc)
 
     assert share == pytest.approx(20.0)
-    assert rpc.calls == ["getTokenLargestAccounts", "getMultipleAccounts"]
+    assert rpc.calls == ["getTokenLargestAccounts", "getMultipleAccounts", "getMultipleAccounts"]
+
+
+def test_supply_held_under_an_unknown_program_still_counts():
+    from runner_web.solana_keys import find_program_address
+
+    # Live case: "NPC", 22 holders, nearly all supply under program addresses.
+    # A program nobody here knows could be the creator's own.
+    hidden = find_program_address([b"vault"], WALLET)
+    largest = [
+        {"address": f"locker{n}", "amount": str(90_000_000 * 10**6), "decimals": 6}
+        for n in range(10)
+    ]
+    rpc = FakeRpc(
+        mints={
+            **{f"locker{n}": owned_by(hidden) for n in range(10)},
+            hidden: {"owner": "UnknownProgram1111111111111111111111111111"},
+        },
+        largest=largest,
+    )
+
+    assert top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc) == pytest.approx(90.0)
 
 
 def test_only_coins_passing_the_free_standards_cost_a_read():
@@ -309,7 +333,11 @@ def test_when_the_listed_accounts_are_all_pools_the_hidden_wallets_are_bounded()
         for n in range(20)
     ]
     rpc = FakeRpc(
-        mints={f"pool{n}": owned_by(bonding_curve(MINT)) for n in range(20)}, largest=largest
+        mints={
+            **{f"pool{n}": owned_by(bonding_curve(MINT)) for n in range(20)},
+            bonding_curve(MINT): {"owner": PUMP},
+        },
+        largest=largest,
     )
 
     share = top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc)
