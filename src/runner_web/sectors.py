@@ -12,6 +12,7 @@ source, and the description SEC supplies is kept alongside for display.
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -20,6 +21,10 @@ from runner_web.db import connection
 
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 SECTOR_REFRESH_DAYS = max(1, int(os.getenv("SECTOR_REFRESH_DAYS", "90")))
+# Stocks a reader sees (ratification notes any without a code) go first, a few
+# a pass, and a missing code is tried again after six hours rather than days.
+PRIORITY_BATCH = 5
+PRIORITY_RETRY = timedelta(hours=6)
 SECTOR_BACKFILL_BATCH = max(1, int(os.getenv("SECTOR_BACKFILL_BATCH", "25")))
 
 # SIC divisions, from the leading digits of the code.
@@ -103,6 +108,26 @@ def save_sector(
     )
 
 
+def priority_companies(database: Any, now: datetime, tickers: list[str]) -> list[dict[str, Any]]:
+    """Stocks readers see that still have no SIC code, least recently tried first."""
+
+    wanted = sorted({str(ticker).upper() for ticker in tickers if ticker})[:200]
+    if not wanted:
+        return []
+    marks = ",".join("?" for _ in wanted)
+    rows = database.execute(
+        f"""
+        SELECT cik,MIN(ticker) AS ticker FROM sec_companies
+        WHERE cik IS NOT NULL AND (sic IS NULL OR sic='') AND UPPER(ticker) IN ({marks})
+          AND (sector_refreshed_at IS NULL OR sector_refreshed_at<?)
+        GROUP BY cik ORDER BY MIN(sector_refreshed_at) IS NOT NULL,MIN(sector_refreshed_at)
+        LIMIT ?
+        """,
+        (*wanted, (now - PRIORITY_RETRY).isoformat(), PRIORITY_BATCH),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def defer_sector_lookup(database: Any, cik: int, now: datetime) -> None:
     """Put a failed lookup back in the queue for tomorrow, not for now.
 
@@ -138,7 +163,23 @@ def refresh_company_sectors(
 
         client = EdgarClient()
     with connection() as database:
-        pending = companies_missing_sectors(database, now, batch)
+        saved = database.execute(
+            "SELECT value FROM worker_state WHERE key='sector_priority_tickers'"
+        ).fetchone()
+        try:
+            wanted = json.loads(saved["value"]) if saved else []
+        except (TypeError, ValueError):
+            wanted = []
+        first = priority_companies(database, now, wanted if isinstance(wanted, list) else [])
+        pending = (
+            first
+            + [
+                row
+                for row in companies_missing_sectors(database, now, batch)
+                if row["cik"] not in {item["cik"] for item in first}
+            ][: max(0, batch - len(first))]
+        )
+    priority = {item["cik"] for item in first}
     counts = {"checked": 0, "stored": 0, "missing": 0, "failed": 0}
     for row in pending:
         try:
@@ -150,7 +191,11 @@ def refresh_company_sectors(
             payload = client.get_json(SUBMISSIONS_URL.format(cik=cik))
         except Exception:
             with connection() as database:
-                defer_sector_lookup(database, cik, now)
+                if cik in priority:
+                    # Stamp it now: the priority pass retries it in six hours.
+                    save_sector(database, cik, None, None, now)
+                else:
+                    defer_sector_lookup(database, cik, now)
             counts["failed"] += 1
             continue
         sic = str(payload.get("sic") or "").strip() or None

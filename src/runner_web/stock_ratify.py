@@ -120,6 +120,33 @@ def standards(
     }
 
 
+def _note_missing_sectors(database: Any, companies: dict[str, Any], at: datetime) -> None:
+    """Ask the sector lookup to fill these first: readers see them without a code.
+
+    Merged into the saved list, so one stock page does not replace the board's.
+    """
+
+    import json
+
+    missing = {ticker for ticker, row in companies.items() if not row["sic"]}
+    found = set(companies) - missing
+    saved = database.execute(
+        "SELECT value FROM worker_state WHERE key='sector_priority_tickers'"
+    ).fetchone()
+    try:
+        earlier = set(json.loads(saved["value"])) if saved else set()
+    except (TypeError, ValueError):
+        earlier = set()
+    wanted = sorted((earlier | missing) - found)[:200]
+    if saved and sorted(earlier) == wanted:
+        return
+    database.execute(
+        "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+        ("sector_priority_tickers", json.dumps(wanted), at.isoformat()),
+    )
+
+
 def stock_ratifications(
     database: Any, items: list[dict[str, Any]], *, at: datetime
 ) -> dict[str, dict[str, Any]]:
@@ -156,6 +183,7 @@ def stock_ratifications(
         if (day := _day(row["latest"])) is not None:
             delistings[row["ticker"]] = day
     issuers = issuer_risk_contexts(database, tickers)
+    _note_missing_sectors(database, companies, at)
     return {
         ticker: standards(
             exchange=companies[ticker]["exchange"] if ticker in companies else None,

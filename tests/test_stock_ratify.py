@@ -108,6 +108,7 @@ def database(monkeypatch):
         CREATE TABLE sec_companies (cik INTEGER, ticker TEXT, name TEXT, exchange TEXT, sic TEXT);
         CREATE TABLE public_market_events (ticker TEXT, event_type TEXT, event_at TEXT);
         CREATE TABLE sec_filings (ticker TEXT, form TEXT, items TEXT, filed_at TEXT);
+        CREATE TABLE worker_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
         INSERT INTO sec_companies VALUES (1,'GOOD','Good Co','Nasdaq','3585'),
             (2,'HALT','Halted Co','NYSE','2834'), (3,'DLST','Delisting Co','Nasdaq',NULL);
         INSERT INTO public_market_events VALUES ('HALT','trading_halt','2026-09-20T14:00:00+00:00'),
@@ -166,3 +167,93 @@ def test_a_ratified_stock_row_shows_the_mark():
     stock = {**sample("stocks"), "ratification": rated()}
 
     assert 'class="ratified-mark"' in render(listing("stocks", [stock]))
+
+
+def _priority(database):
+    import json
+
+    row = database.execute(
+        "SELECT value FROM worker_state WHERE key='sector_priority_tickers'"
+    ).fetchone()
+    return json.loads(row["value"]) if row else []
+
+
+def test_stocks_seen_without_a_sic_code_are_queued_for_lookup(database):
+    # DLST has no SIC code; GOOD and HALT have one.
+    stock_ratifications(database, [{"ticker": "GOOD"}, {"ticker": "DLST"}], at=AT)
+    assert _priority(database) == ["DLST"]
+
+    # A single stock page adds to the list rather than replacing it...
+    database.execute("INSERT INTO sec_companies VALUES (4,'RWT','Redwood Trust','NYSE',NULL)")
+    stock_ratifications(database, [{"ticker": "RWT"}], at=AT)
+    assert _priority(database) == ["DLST", "RWT"]
+
+    # ...and a stock drops off once its code is in.
+    database.execute("UPDATE sec_companies SET sic='6798' WHERE ticker='RWT'")
+    stock_ratifications(database, [{"ticker": "RWT"}], at=AT)
+    assert _priority(database) == ["DLST"]
+
+
+@pytest.fixture
+def sector_db(tmp_path, monkeypatch):
+    from runner_web import db
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "sectors.db")
+    monkeypatch.setattr(db, "DATABASE_URL", "")
+    monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
+    db.init_db()
+    with db.connection() as database:
+        for cik, ticker in ((1, "AAA"), (2, "BBB"), (930236, "RWT")):
+            database.execute(
+                "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) "
+                "VALUES(?,?,?,?,?)",
+                (cik, ticker, ticker, "NYSE", AT.isoformat()),
+            )
+        # RWT was tried and came back without a code: normally not again for 90 days.
+        database.execute(
+            "UPDATE sec_companies SET sector_refreshed_at=? WHERE ticker='RWT'",
+            (datetime(2026, 9, 1, tzinfo=UTC).isoformat(),),
+        )
+        database.execute(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?)",
+            ("sector_priority_tickers", '["RWT"]', AT.isoformat()),
+        )
+    return db
+
+
+class Sec:
+    def __init__(self, fail=()):
+        self.asked, self.fail = [], set(fail)
+
+    def get_json(self, url):
+        cik = int(url.rsplit("CIK", 1)[1].split(".")[0])
+        self.asked.append(cik)
+        if cik in self.fail:
+            raise OSError("SEC unavailable")
+        return {"sic": "6798", "sicDescription": "Real Estate Investment Trusts"}
+
+
+def test_a_board_stock_without_a_code_is_looked_up_first(sector_db):
+    from runner_web.sectors import refresh_company_sectors
+
+    sec = Sec()
+    refresh_company_sectors(sec, at=AT, limit=2)
+
+    assert sec.asked[0] == 930236
+    with sector_db.connection() as database:
+        row = database.execute("SELECT sic FROM sec_companies WHERE ticker='RWT'").fetchone()
+    assert row["sic"] == "6798"
+
+
+def test_a_failed_priority_lookup_is_retried_after_six_hours(sector_db):
+    from datetime import timedelta
+
+    from runner_web.sectors import refresh_company_sectors
+
+    refresh_company_sectors(Sec(fail={930236}), at=AT, limit=1)
+    soon, later = Sec(), Sec()
+    refresh_company_sectors(soon, at=AT + timedelta(hours=1), limit=1)
+    refresh_company_sectors(later, at=AT + timedelta(hours=7), limit=1)
+
+    assert 930236 not in soon.asked
+    assert later.asked[0] == 930236
