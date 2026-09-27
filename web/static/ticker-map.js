@@ -77,7 +77,7 @@
   function scorePanel(part) {
     const panel = $('selection'); panel.replaceChildren();
     // A compact reading inside the existing map, not another ticker-page card.
-    const reading = `Attention ${score === '—' ? 'unavailable' : score + ' points'} · Filing sentiment: ${glyph.sentimentMix.reading} · ${window.RatiRingGlyph.riskReading(glyph.risk)}`;
+    const reading = `${window.RatiRingGlyph.attentionReading(score, glyph.band)} · Filing sentiment: ${glyph.sentimentMix.reading} · ${window.RatiRingGlyph.riskReading(glyph.risk)}`;
     panel.append(make('p', reading, 'map-glyph-reading'));
     if (part) {
       panel.append(make('h4', part.label));

@@ -732,6 +732,33 @@ def _wilson_interval(successes: int, total: int) -> list[float] | None:
     return [round(max(0.0, center - margin), 4), round(min(1.0, center + margin), 4)]
 
 
+def baseline(settled: int, up_moves: int, down_moves: int) -> dict[str, Any]:
+    """The hit rate of always forecasting one direction, on the same sessions.
+
+    A hit needs a move past MINIMUM_MOVE_PCT the forecast's way, so "always up"
+    hits every session that closed that far up. The better of the two constant
+    forecasts is the rate a forecaster has to beat to show skill.
+    """
+
+    if settled <= 0:
+        return {"baseline_hit_rate": None, "baseline_direction": None}
+    direction = "down" if down_moves > up_moves else "up"
+    best = max(up_moves, down_moves)
+    return {"baseline_hit_rate": round(best / settled, 4), "baseline_direction": direction}
+
+
+def versus_baseline(interval: list[float] | None, rate: float | None) -> str | None:
+    """above or below when the 95% range clears the baseline, else unclear."""
+
+    if interval is None or rate is None:
+        return None
+    if interval[0] > rate:
+        return "above"
+    if interval[1] < rate:
+        return "below"
+    return "unclear"
+
+
 def _version_scorecard(
     version: dict[str, Any],
     summary: dict[str, Any],
@@ -761,6 +788,8 @@ def _version_scorecard(
     failed_attempts = int(attempts.get("failed") or 0)
     finished_attempts = completed_attempts + failed_attempts
     brier = summary.get("brier_score")
+    interval = _wilson_interval(hits, settled)
+    base = baseline(settled, int(summary.get("up_moves") or 0), int(summary.get("down_moves") or 0))
     return {
         "id": version["id"],
         "label": version["public_label"],
@@ -783,7 +812,9 @@ def _version_scorecard(
         "under_review": int(summary.get("under_review") or 0),
         "settled": settled,
         "hit_rate": round(hits / settled, 4) if settled else None,
-        "hit_rate_interval_95": _wilson_interval(hits, settled),
+        "hit_rate_interval_95": interval,
+        **base,
+        "versus_baseline": versus_baseline(interval, base["baseline_hit_rate"]),
         "headline_rate_visible": settled >= HEADLINE_SAMPLE,
         "distinct_tickers": distinct_tickers,
         "distinct_trading_days": distinct_days,
@@ -915,14 +946,18 @@ def flash_record(*, recent_limit: int = 50) -> dict[str, Any]:
                                       CASE WHEN o.return_pct>0 THEN 1.0 ELSE 0.0 END) *
                                      (f.probability_up-
                                       CASE WHEN o.return_pct>0 THEN 1.0 ELSE 0.0 END)
-                           END) AS brier_score
+                           END) AS brier_score,
+                       SUM(CASE WHEN o.status='resolved' AND o.return_pct>? THEN 1 ELSE 0 END)
+                           AS up_moves,
+                       SUM(CASE WHEN o.status='resolved' AND o.return_pct<? THEN 1 ELSE 0 END)
+                           AS down_moves
                 FROM flash_forecasts f
                 JOIN research_commissions r ON r.id=f.report_id
                 JOIN flash_forecast_outcomes o ON o.forecast_id=f.id
                 WHERE r.status='complete'
                 GROUP BY f.version_id
                 """,
-                (MINIMUM_MOVE_PCT, -MINIMUM_MOVE_PCT),
+                (MINIMUM_MOVE_PCT, -MINIMUM_MOVE_PCT, MINIMUM_MOVE_PCT, -MINIMUM_MOVE_PCT),
             ).fetchall()
         }
         medians = {

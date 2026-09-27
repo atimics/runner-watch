@@ -24,6 +24,7 @@ RISK_READINGS = {
     "none": "Detected risk factors: 0 in saved checks",
     "unknown": "Risk factor checks unavailable",
 }
+BAND_RANGES = {1: "low, under 40", 2: "medium, 40–69", 3: "high, 70+"}
 VERIFICATION_NOTE = (
     "Verified evidence — automated: the existing evidence gate is confirmed and "
     "eligibility checks pass. Not human review, identity verification or an investment endorsement."
@@ -127,16 +128,30 @@ def _sentiment_mix(
     available = valid and 0 < total < float("inf")
     share = bullish / total if available else None
     bullish_percent = int(share * 100 + 0.5) if available else None
-    description = (
-        f"{label}: {bullish_percent}% {directions[0]}, {100 - bullish_percent}% {directions[1]}."
+    # Filing counts carry the number of filings read. A split of one or two
+    # flagged filings reads as "100% bearish", so counts are shown instead.
+    filings = finite_number(_mapping(counts).get("filings")) if counts is not None else None
+    counted = available and filings is not None and filings >= total
+    reading = (
+        f"{bearish:g} of {filings:g} filings flagged {directions[1]}, {bullish:g} {directions[0]}"
+        if counted
+        else f"{bullish_percent}% {directions[0]}, {100 - bullish_percent}% {directions[1]}"
         if available
-        else f"{label}: {directions[0]}/{directions[1]} split unavailable."
+        else f"{directions[0]}/{directions[1]} split unavailable"
     )
+    description = f"{label}: {reading}."
     return {
         "state": "available" if available else "unknown",
         "bullish": share,
         "bearish": 1 - share if available else None,
-        "compact": (f"▲{bullish_percent}% / ▼{100 - bullish_percent}%" if available else "▲— / ▼—"),
+        "compact": (
+            f"▲{bullish:g} / ▼{bearish:g}"
+            if counted
+            else f"▲{bullish_percent}% / ▼{100 - bullish_percent}%"
+            if available
+            else "▲— / ▼—"
+        ),
+        "reading": reading,
         "description": description,
         "basis": str(basis or f"Saved {label.lower()} assessments"),
         "gradient": (
@@ -215,7 +230,12 @@ def _indicator(
     }.get(str(tone or "").lower(), "unknown")
     sentiment_mix = _sentiment_mix(tone, sentiment_counts, tone_label, sentiment_basis, directions)
     risk = _risk(item)
-    attention_text = f"Attention {score:g} points" if score is not None else "Attention unavailable"
+    # The index runs 0-100: give the scale and band so a bare number means something.
+    attention_text = (
+        f"Attention {score:g} of 100 points ({BAND_RANGES[band]})"
+        if score is not None
+        else "Attention unavailable"
+    )
     mix_text = (
         "; ".join(
             f"{part['label']} {part['share']:.0%} of contributions ({part['value']:g} points)"

@@ -42,9 +42,11 @@
 {%- endmacro %}
 
 {% macro ratification_standards(item) -%}
+{# Standards are checks on published facts. They sit apart from the Call chip
+   and never borrow its colours, so a pass cannot read as a buy signal. #}
 {% set ratification = item.ratification %}
-{% if ratification %}<section class="ratification-standards" aria-label="Standards"><details{% if ratification.ratified %} open{% endif %}><summary>{{ 'Ratified' if item.ratified else 'Standards' }} · {{ ratification.met }} of {{ ratification.total }} met{% if ratification.not_applied %} · {{ ratification.not_applied }} not applied{% endif %}</summary>
-<ul>{% for standard in ratification.standards %}{% set applies = standard.applies is not defined or standard.applies %}<li class="standard-{{ 'na' if not applies else 'met' if standard.met is sameas true else 'unmet' if standard.met is sameas false else 'unknown' }}"><span aria-hidden="true">{{ '–' if not applies else '✓' if standard.met is sameas true else '✗' if standard.met is sameas false else '·' }}</span> {{ standard.label }}{% if not applies %} · not applied{% if standard.detail %}: {{ standard.detail }}{% endif %}{% elif standard.met is sameas none %} · not checked yet{% elif standard.detail %} · {{ standard.detail }}{% endif %}</li>{% endfor %}</ul>
+{% if ratification %}<section class="ratification-standards" aria-label="Standards: checks on published facts, separate from the Call"><details{% if ratification.ratified %} open{% endif %}><summary>{{ 'Ratified' if item.ratified else 'Standards' }} · {{ ratification.met }} of {{ ratification.total }} met{% if ratification.unchecked %} · {{ ratification.unchecked }} not checked yet{% endif %}{% if ratification.not_applied %} · {{ ratification.not_applied }} not applied{% endif %} <small class="standards-scope">Facts, not a Call</small></summary>
+<ul>{% for standard in ratification.standards %}{% set applies = standard.applies is not defined or standard.applies %}<li class="standard-{{ 'na' if not applies else 'met' if standard.met is sameas true else 'unmet' if standard.met is sameas false else 'unknown' }}"><span aria-hidden="true">{{ '–' if not applies else '✓' if standard.met is sameas true else '✗' if standard.met is sameas false else '?' }}</span> {{ standard.label }}{% if not applies %} · not applied{% if standard.detail %}: {{ standard.detail }}{% endif %}{% elif standard.met is sameas none %} · <em>not checked yet</em>, so not met{% elif standard.detail %} · {{ standard.detail }}{% endif %}</li>{% endfor %}</ul>
 <p>{{ ratification.note }}</p></details></section>{% endif %}
 {%- endmacro %}
 

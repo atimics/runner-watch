@@ -10,6 +10,7 @@ import base64
 import gzip
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -90,15 +91,84 @@ def _source(value: Any) -> str | None:
     return None
 
 
-def _person(raw: dict[str, Any], ticker: str) -> dict[str, Any]:
-    name = str(raw.get("name") or "Reporting person")
+ENTITY_WORDS = {
+    "INC",
+    "INC.",
+    "LLC",
+    "L.L.C.",
+    "LP",
+    "L.P.",
+    "LLP",
+    "LTD",
+    "LTD.",
+    "LIMITED",
+    "CORP",
+    "CORP.",
+    "CORPORATION",
+    "CO",
+    "CO.",
+    "COMPANY",
+    "TRUST",
+    "FUND",
+    "FUNDS",
+    "CAPITAL",
+    "HOLDINGS",
+    "HOLDING",
+    "PARTNERS",
+    "PARTNERSHIP",
+    "GROUP",
+    "BANK",
+    "MANAGEMENT",
+    "ADVISORS",
+    "ADVISERS",
+    "INVESTMENTS",
+    "VENTURES",
+    "FOUNDATION",
+    "ESTATE",
+    "PLC",
+    "N.V.",
+    "B.V.",
+    "S.A.",
+    "AG",
+    "GMBH",
+    "SA",
+    "NV",
+    "BV",
+    "&",
+    "OF",
+    "THE",
+}
+SUFFIXES = {"JR", "JR.", "SR", "SR.", "II", "III", "IV", "V", "MD", "M.D.", "PHD", "PH.D."}
+_NAME_TOKEN = re.compile(r"^[^\W\d_][\w.'’-]*$")
+
+
+def natural_name(filed: str) -> str:
+    """An individual's Form 4 name in reading order: "Thomas Jessica L." -> "Jessica L. Thomas".
+
+    EDGAR records reporting owners surname first. Entities, and anything that
+    does not look like two to four plain name words, are returned unchanged.
+    """
+
+    words = filed.replace(",", " ").split()
+    if not 2 <= len(words) <= 5 or any(w.upper() in ENTITY_WORDS for w in words):
+        return filed
+    suffix = [words.pop()] if words[-1].upper() in SUFFIXES and len(words) > 2 else []
+    if not 2 <= len(words) <= 4 or not all(_NAME_TOKEN.match(w) for w in words):
+        return filed
+    return " ".join([*words[1:], words[0], *suffix])
+
+
+def _person(raw: dict[str, Any], ticker: str, *, individual: bool = False) -> dict[str, Any]:
+    filed_name = str(raw.get("name") or "Reporting person")
+    # Identity and matching stay on the name as filed; readers see reading order.
+    name = filed_name
     cik = raw.get("cik")
     identity = (
         f"sec:{int(cik)}"
         if str(cik).isdigit() and int(cik)
         else (
             "name:"
-            + hashlib.sha256(f"{ticker}:{name.casefold().strip()}".encode()).hexdigest()[:20]
+            + hashlib.sha256(f"{ticker}:{filed_name.casefold().strip()}".encode()).hexdigest()[:20]
         )
     )
     from runner_web.wallet_registry import wallet_id_for_person
@@ -107,7 +177,8 @@ def _person(raw: dict[str, Any], ticker: str) -> dict[str, Any]:
         "id": identity,
         # The wallet id is what a link should use; the identity stays for the API.
         "wallet_id": wallet_id_for_person(identity, ticker),
-        "name": name,
+        "name": natural_name(filed_name) if individual else name,
+        "filed_name": filed_name,
         "cik": cik,
         "role": raw.get("role") or "Reporting person",
         "identity_basis": "SEC CIK" if identity.startswith("sec:") else "Reported name",
@@ -126,7 +197,9 @@ def filing_events(row: dict[str, Any]) -> list[dict[str, Any]]:
         "amendment": row["form"].endswith("/A"),
     }
     payload = json.loads(row.get("evidence_json") or "{}")
-    owners = [_person(p, row["ticker"]) for p in payload.get("owners", [])]
+    # Form 4 owners are people or entities named surname first; 13D/13G filers
+    # keep the name as filed.
+    owners = [_person(p, row["ticker"], individual=True) for p in payload.get("owners", [])]
     events = []
     for line in payload.get("transactions", []):
         code = line.get("code", "")
@@ -183,6 +256,7 @@ def filing_events(row: dict[str, Any]) -> list[dict[str, Any]]:
                     "role": "Reporting group" if is_stake else row.get("actor_title"),
                 },
                 row["ticker"],
+                individual=not is_stake,
             )
         ]
         if name

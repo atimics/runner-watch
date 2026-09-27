@@ -6,6 +6,7 @@
     <div class="map-canvas"><svg viewBox="0 0 760 440" data-map-graph data-phase="settled" role="group" aria-label="Current attention, sentiment, risk and wallets linked to {{ detail.ticker }}"></svg><div class="map-paging" data-map-paging><button type="button" data-map-previous aria-label="Previous wallets">←</button><span data-map-page></span><button type="button" data-map-next aria-label="Next wallets">→</button></div></div>
     <aside class="map-source" aria-label="Score or selected filing"><button class="map-score-return" type="button" data-map-score-return hidden>← Return to score overview</button><div data-map-selection aria-live="polite" aria-atomic="true"></div></aside>
   </div>
+  <p class="map-caption">Insider transactions (Form 4) and ownership filings, as reported to the SEC. Filed facts about the filing, shown apart from the Call; they are not a finding about the people named.</p>
   {{ cluster_worth(detail.ticker) }}
   {{ indicator_legend() }}
   <div class="map-filings" data-map-filings hidden>

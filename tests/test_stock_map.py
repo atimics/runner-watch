@@ -131,7 +131,7 @@ def ownership_xml():
     <rptOwnerName>{name}</rptOwnerName></reportingOwnerId><reportingOwnerRelationship>
     <isDirector>1</isDirector><isOfficer>1</isOfficer><officerTitle>CEO</officerTitle>
     </reportingOwnerRelationship></reportingOwner>"""
-        for cik, name in [(101, "Jane Lee"), (102, "Lee Family, LLC")]
+        for cik, name in [(101, "Lee Jane"), (102, "Lee Family, LLC")]
     )
     lines = "".join(
         f"""<nonDerivativeTransaction><securityTitle><value>Common stock</value>
@@ -178,7 +178,7 @@ def filing_row(accession="0001", ticker="TEST", **changes):
         "filing_url": f"https://www.sec.gov/Archives/edgar/data/22/{accession}/index.htm",
         "created_at": "2026-09-05T18:05:00+00:00",
         "updated_at": "2026-09-05T18:05:00+00:00",
-        "actor": "Jane Lee",
+        "actor": "Lee Jane",
         "actor_cik": 101,
         "actor_title": "Director",
         "transaction_codes": "P,S",
@@ -228,6 +228,9 @@ def test_transaction_lines_preserve_joint_filers_dates_units_and_zero():
     assert events[0]["filed_at"] == "2026-09-05T18:00:00+00:00"
     assert events[0]["joint"] and len(events[0]["people"]) == 2
     assert events[0]["people"][1]["name"] == "Lee Family, LLC"
+    # EDGAR files people surname first; readers see reading order.
+    assert events[0]["people"][0]["name"] == "Jane Lee"
+    assert events[0]["people"][0]["filed_name"] == "Lee Jane"
     assert events[0]["footnotes"] == "Held through the family trust."
     assert events[-1]["security_type"] == "derivative"
 
@@ -466,3 +469,21 @@ def test_wallet_portfolio_uses_shared_stock_rows_and_keeps_event_lines(database,
     assert "sec.gov/Archives" in html
     # An identity we cannot mint a wallet for is simply not found.
     assert TestClient(main.app).get("/wallets/stocks/TEST/invalid").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("filed", "shown"),
+    [
+        ("Thomas Jessica L.", "Jessica L. Thomas"),
+        ("Belizaire John", "John Belizaire"),
+        ("Smith John A Jr.", "John A Smith Jr."),
+        ("Lee Family, LLC", "Lee Family, LLC"),
+        ("Vanguard Group Inc", "Vanguard Group Inc"),
+        ("Fund 7 Partners", "Fund 7 Partners"),
+        ("Madonna", "Madonna"),
+    ],
+)
+def test_form_4_names_read_in_natural_order(filed, shown):
+    from runner_web.stock_map import natural_name
+
+    assert natural_name(filed) == shown
