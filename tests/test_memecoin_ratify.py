@@ -165,9 +165,27 @@ def test_accounts_owned_by_a_program_are_not_counted_among_the_top_holders():
     # A pool on another DEX: its token account is owned by a program address.
     other_pool = "OtherDexVau1t11111111111111111111111111111"
     largest = [
-        {"address": VAULT, "uiAmount": 600_000_000},
-        {"address": other_pool, "uiAmount": 150_000_000},
-    ] + [{"address": f"holder{n}", "uiAmount": 20_000_000} for n in range(12)]
+        {
+            "address": VAULT,
+            "amount": str(600_000_000 * 10**6),
+            "decimals": 6,
+            "uiAmount": None,
+        },
+        {
+            "address": other_pool,
+            "amount": str(150_000_000 * 10**6),
+            "decimals": 6,
+            "uiAmount": None,
+        },
+    ] + [
+        {
+            "address": f"holder{n}",
+            "amount": str(20_000_000 * 10**6),
+            "decimals": 6,
+            "uiAmount": None,
+        }
+        for n in range(12)
+    ]
     rpc = FakeRpc(
         mints={
             other_pool: owned_by(bonding_curve(MINT)),
@@ -185,7 +203,15 @@ def test_accounts_owned_by_a_program_are_not_counted_among_the_top_holders():
 def test_only_coins_passing_the_free_standards_cost_a_read():
     rpc = FakeRpc(
         mints={MINT: mint_account(), **{f"holder{n}": owned_by(WALLET) for n in range(10)}},
-        largest=[{"address": f"holder{n}", "uiAmount": 10_000_000} for n in range(10)],
+        largest=[
+            {
+                "address": f"holder{n}",
+                "amount": str(10_000_000 * 10**6),
+                "decimals": 6,
+                "uiAmount": None,
+            }
+            for n in range(10)
+        ],
     )
     young = row(
         token_address="Young1111111111111111111111111111111111111", pool_created_at=AT.isoformat()
@@ -234,7 +260,15 @@ def test_a_stale_quote_hides_the_mark():
 def test_holder_answers_under_older_rules_are_redone():
     rpc = FakeRpc(
         mints={MINT: mint_account(), **{f"holder{n}": owned_by(WALLET) for n in range(10)}},
-        largest=[{"address": f"holder{n}", "uiAmount": 10_000_000} for n in range(10)],
+        largest=[
+            {
+                "address": f"holder{n}",
+                "amount": str(10_000_000 * 10**6),
+                "decimals": 6,
+                "uiAmount": None,
+            }
+            for n in range(10)
+        ],
     )
     stale = {"holders": {MINT: {"checked_at": AT.isoformat(), "top10_pct": 100.0}}}
 
@@ -244,7 +278,15 @@ def test_holder_answers_under_older_rules_are_redone():
 
 
 def test_an_unreadable_owner_counts_as_a_holder():
-    largest = [{"address": f"holder{n}", "uiAmount": 50_000_000} for n in range(10)]
+    largest = [
+        {
+            "address": f"holder{n}",
+            "amount": str(50_000_000 * 10**6),
+            "decimals": 6,
+            "uiAmount": None,
+        }
+        for n in range(10)
+    ]
     rpc = FakeRpc(mints={}, largest=largest)  # no owner can be read
 
     share = top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc)
@@ -257,7 +299,15 @@ def test_when_the_listed_accounts_are_all_pools_the_hidden_wallets_are_bounded()
 
     # Twenty listed accounts, all program-owned: the wallets are further down,
     # each holding at most the smallest listed balance (2.15%).
-    largest = [{"address": f"pool{n}", "uiAmount": 50_000_000 - n * 1_500_000} for n in range(20)]
+    largest = [
+        {
+            "address": f"pool{n}",
+            "amount": str(int(50_000_000 - n * 1_500_000) * 10**6),
+            "decimals": 6,
+            "uiAmount": None,
+        }
+        for n in range(20)
+    ]
     rpc = FakeRpc(
         mints={f"pool{n}": owned_by(bonding_curve(MINT)) for n in range(20)}, largest=largest
     )
@@ -265,3 +315,19 @@ def test_when_the_listed_accounts_are_all_pools_the_hidden_wallets_are_bounded()
     share = top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc)
 
     assert share == pytest.approx(10 * 2.15)
+
+
+def test_a_null_ui_amount_is_not_read_as_zero():
+    # Live case: a $19M coin read "top 10 hold 0%" because uiAmount was null.
+    largest = [
+        {
+            "address": f"holder{n}",
+            "amount": str(40_000_000 * 10**6),
+            "decimals": 6,
+            "uiAmount": None,
+        }
+        for n in range(10)
+    ]
+    rpc = FakeRpc(mints={f"holder{n}": owned_by(WALLET) for n in range(10)}, largest=largest)
+
+    assert top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc) == pytest.approx(40.0)

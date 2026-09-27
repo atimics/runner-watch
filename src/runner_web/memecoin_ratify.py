@@ -22,7 +22,7 @@ MIN_AGE = timedelta(hours=24)
 MAX_TOP10_PCT = 30.0
 HOLDERS_TTL = timedelta(hours=6)
 # Bump when the holder count changes, so answers under older rules are redone.
-HOLDER_RULES = 3
+HOLDER_RULES = 4
 MAX_HOLDER_READS = 20
 # getTokenLargestAccounts lists this many accounts.
 LARGEST_LISTED = 20
@@ -87,6 +87,15 @@ def mint_controls(
     return controls
 
 
+def _amount(item: dict[str, Any]) -> float:
+    """The raw amount scaled by decimals; uiAmount can be null and read as zero."""
+
+    try:
+        return int(item["amount"]) / 10 ** int(item["decimals"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("Holder amount missing") from None
+
+
 def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> float | None:
     """Percent of supply held by the ten largest wallets.
 
@@ -120,12 +129,12 @@ def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> flo
             owner = None  # unknown owners count: the standard must not pass on a gap
         if owner and is_program_address(owner):
             continue
-        held.append(float(item.get("uiAmount") or 0))
+        held.append(_amount(item))
     held.sort(reverse=True)
     if len(held) < 10 and len(accounts) >= LARGEST_LISTED:
         # The largest wallets sit below the listed accounts, so none holds more
         # than the smallest listed: count that as an upper bound for each.
-        smallest = min(float(item.get("uiAmount") or 0) for item in accounts)
+        smallest = min(_amount(item) for item in accounts)
         held += [smallest] * (10 - len(held))
     return sum(held[:10]) / supply * 100
 
@@ -245,12 +254,15 @@ def ratify_rows(
         if not control or not control["clean"] or mint in holders or reads >= MAX_HOLDER_READS:
             continue
         reads += 1
-        share = top10_share(
-            mint,
-            supply=control["supply"],
-            exclude={vault for vault in (vaults.get(row.get("pool_address", "")),) if vault},
-            rpc=rpc,
-        )
+        try:
+            share = top10_share(
+                mint,
+                supply=control["supply"],
+                exclude={vault for vault in (vaults.get(row.get("pool_address", "")),) if vault},
+                rpc=rpc,
+            )
+        except ValueError:
+            continue  # this coin's holders stay unknown; the others still count
         holders[mint] = {"checked_at": at.isoformat(), "top10_pct": share, "rules": HOLDER_RULES}
     for row in rows:
         mint = row.get("token_address")
