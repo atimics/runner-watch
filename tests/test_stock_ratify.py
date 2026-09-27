@@ -26,17 +26,19 @@ def rated(**changes):
         "issuer": HEALTHY,
         "halted_on": None,
         "delisting_on": None,
-        "verified": True,
         "today": TODAY,
         **changes,
     }
     return standards(**facts)
 
 
-def test_a_stock_meeting_all_six_standards_is_ratified():
+def test_a_stock_meeting_all_five_standards_is_ratified():
     result = rated()
 
-    assert result["ratified"] is True and result["met"] == result["total"] == 6
+    assert result["ratified"] is True and result["met"] == result["total"] == 5
+    # The scanner's evidence gate fails every stock while markets are closed,
+    # so it is not a standard.
+    assert "data" not in {item["key"] for item in result["standards"]}
     details = {item["key"]: item["detail"] for item in result["standards"]}
     assert details["filings"] == "latest 10-Q filed Aug 12"
     assert details["cash"] == "20 months of cash"
@@ -60,7 +62,6 @@ def test_a_stock_meeting_all_six_standards_is_ratified():
         ({"issuer": {**HEALTHY, "shares_growth_pct": 140.0}}, "dilution", "shares up 140%"),
         ({"halted_on": date(2026, 9, 20)}, "trading", "halted Sep 20"),
         ({"delisting_on": date(2026, 8, 1)}, "trading", "delisting notice Aug 1"),
-        ({"verified": False}, "data", "evidence not complete"),
     ],
 )
 def test_one_failing_standard_withholds_it(changes, failing, detail):
@@ -79,6 +80,16 @@ def test_a_company_not_burning_cash_meets_the_cash_standard():
     assert cash["met"] is True and cash["detail"] == "not burning cash"
 
 
+def test_a_lender_is_not_judged_on_cash_runway():
+    # Live case: RWT, a mortgage lender, read "0 months of cash" because its
+    # lending runs through operating cash flow.
+    issuer = {**HEALTHY, "cash_runway_months": 0.2, "operating_cash_flow": -900_000_000.0}
+
+    cash = next(s for s in rated(issuer=issuer, sic="6798")["standards"] if s["key"] == "cash")
+
+    assert cash["met"] is True and cash["detail"] == "not applied: financial company"
+
+
 def test_missing_financials_are_not_known_rather_than_met():
     result = rated(issuer={})
 
@@ -94,11 +105,11 @@ def database(monkeypatch):
     connection.row_factory = sqlite3.Row
     connection.executescript(
         """
-        CREATE TABLE sec_companies (cik INTEGER, ticker TEXT, name TEXT, exchange TEXT);
+        CREATE TABLE sec_companies (cik INTEGER, ticker TEXT, name TEXT, exchange TEXT, sic TEXT);
         CREATE TABLE public_market_events (ticker TEXT, event_type TEXT, event_at TEXT);
         CREATE TABLE sec_filings (ticker TEXT, form TEXT, items TEXT, filed_at TEXT);
-        INSERT INTO sec_companies VALUES (1,'GOOD','Good Co','Nasdaq'),
-            (2,'HALT','Halted Co','NYSE'), (3,'DLST','Delisting Co','Nasdaq');
+        INSERT INTO sec_companies VALUES (1,'GOOD','Good Co','Nasdaq','3585'),
+            (2,'HALT','Halted Co','NYSE','2834'), (3,'DLST','Delisting Co','Nasdaq',NULL);
         INSERT INTO public_market_events VALUES ('HALT','trading_halt','2026-09-20T14:00:00+00:00'),
             ('GOOD','trading_halt','2026-07-01T14:00:00+00:00');
         INSERT INTO sec_filings VALUES ('DLST','8-K','3.01,9.01','2026-08-01T20:00:00+00:00'),
@@ -113,14 +124,7 @@ def database(monkeypatch):
     return connection
 
 
-def test_ratifications_come_from_the_listing_halts_and_filings(database, monkeypatch):
-    from runner_web import stock_indicator
-
-    monkeypatch.setattr(
-        stock_indicator,
-        "stock_indicator",
-        lambda item: {"verification": {"verified": True}},
-    )
+def test_ratifications_come_from_the_listing_halts_and_filings(database):
     items = [{"ticker": ticker} for ticker in ("GOOD", "HALT", "DLST")]
 
     found = stock_ratifications(database, items, at=AT)
