@@ -152,19 +152,39 @@ def test_a_risky_extension_is_named():
     assert mint_controls([MINT], {}, rpc=rpc)[MINT]["risky_extensions"] == ["transferFeeConfig"]
 
 
-def test_the_pool_is_not_counted_among_the_top_holders():
-    largest = [{"address": VAULT, "uiAmount": 600_000_000}] + [
-        {"address": f"holder{n}", "uiAmount": 20_000_000} for n in range(12)
-    ]
+WALLET = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
 
-    share = top10_share(MINT, supply=1_000_000_000, exclude={VAULT}, rpc=FakeRpc(largest=largest))
+
+def owned_by(owner):
+    return {"data": {"parsed": {"info": {"owner": owner}}}}
+
+
+def test_accounts_owned_by_a_program_are_not_counted_among_the_top_holders():
+    from runner_web.solana_keys import bonding_curve
+
+    # A pool on another DEX: its token account is owned by a program address.
+    other_pool = "OtherDexVau1t11111111111111111111111111111"
+    largest = [
+        {"address": VAULT, "uiAmount": 600_000_000},
+        {"address": other_pool, "uiAmount": 150_000_000},
+    ] + [{"address": f"holder{n}", "uiAmount": 20_000_000} for n in range(12)]
+    rpc = FakeRpc(
+        mints={
+            other_pool: owned_by(bonding_curve(MINT)),
+            **{f"holder{n}": owned_by(WALLET) for n in range(12)},
+        },
+        largest=largest,
+    )
+
+    share = top10_share(MINT, supply=1_000_000_000, exclude={VAULT}, rpc=rpc)
 
     assert share == pytest.approx(20.0)
+    assert rpc.calls == ["getTokenLargestAccounts", "getMultipleAccounts"]
 
 
 def test_only_coins_passing_the_free_standards_cost_a_read():
     rpc = FakeRpc(
-        mints={MINT: mint_account()},
+        mints={MINT: mint_account(), **{f"holder{n}": owned_by(WALLET) for n in range(10)}},
         largest=[{"address": f"holder{n}", "uiAmount": 10_000_000} for n in range(10)],
     )
     young = row(
@@ -176,7 +196,7 @@ def test_only_coins_passing_the_free_standards_cost_a_read():
 
     assert rows[0]["ratification"]["ratified"] is True
     assert rows[1]["ratification"]["ratified"] is False
-    assert rpc.calls == ["getMultipleAccounts", "getTokenLargestAccounts"]
+    assert rpc.calls == ["getMultipleAccounts", "getTokenLargestAccounts", "getMultipleAccounts"]
     # Holders are remembered for six hours.
     ratify_rows(
         [row()], state, vaults={POOL: VAULT}, bundled=set(), rpc=rpc, at=AT + timedelta(hours=5)
@@ -209,3 +229,15 @@ def test_a_stale_quote_hides_the_mark():
     }
 
     assert 'class="ratified-mark"' not in render(listing("memecoins", [coin]))
+
+
+def test_holder_answers_under_older_rules_are_redone():
+    rpc = FakeRpc(
+        mints={MINT: mint_account(), **{f"holder{n}": owned_by(WALLET) for n in range(10)}},
+        largest=[{"address": f"holder{n}", "uiAmount": 10_000_000} for n in range(10)],
+    )
+    stale = {"holders": {MINT: {"checked_at": AT.isoformat(), "top10_pct": 100.0}}}
+
+    ratify_rows([row()], stale, vaults={}, bundled=set(), rpc=rpc, at=AT)
+
+    assert "getTokenLargestAccounts" in rpc.calls

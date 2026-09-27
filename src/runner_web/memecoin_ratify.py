@@ -15,11 +15,14 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from runner_web.memecoin_chain_prices import Rpc, read_accounts
+from runner_web.solana_keys import is_program_address
 
 MIN_LIQUIDITY_USD = 10_000.0
 MIN_AGE = timedelta(hours=24)
 MAX_TOP10_PCT = 30.0
 HOLDERS_TTL = timedelta(hours=6)
+# Bump when the holder count changes, so answers under older rules are redone.
+HOLDER_RULES = 2
 MAX_HOLDER_READS = 20
 # Token-2022 features that let someone tax, block, seize or pause holders.
 RISKY_EXTENSIONS = {
@@ -83,7 +86,12 @@ def mint_controls(
 
 
 def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> float | None:
-    """Percent of supply held by the ten largest accounts, not counting the pool."""
+    """Percent of supply held by the ten largest wallets.
+
+    Accounts owned by a program address (any DEX pool, bonding curve or lock)
+    are left out: a program-derived owner is never a person's key. That needs
+    one more read of the top 20 accounts (a credit).
+    """
 
     payload = rpc(
         {
@@ -94,18 +102,24 @@ def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> flo
         },
         credits=1,
     )
-    accounts = ((payload.get("result") or {}).get("value")) or []
+    accounts = [
+        item
+        for item in ((payload.get("result") or {}).get("value")) or []
+        if isinstance(item, dict) and item.get("address") and item["address"] not in exclude
+    ]
     if not accounts or supply <= 0:
         return None
-    held = sorted(
-        (
-            float(item.get("uiAmount") or 0)
-            for item in accounts
-            if isinstance(item, dict) and item.get("address") not in exclude
-        ),
-        reverse=True,
-    )[:10]
-    return sum(held) / supply * 100
+    owners = read_accounts([item["address"] for item in accounts], rpc)
+    held = []
+    for item in accounts:
+        try:
+            owner = owners[item["address"]]["data"]["parsed"]["info"]["owner"]  # type: ignore[index]
+        except (KeyError, TypeError):
+            continue
+        if is_program_address(owner):
+            continue
+        held.append(float(item.get("uiAmount") or 0))
+    return sum(sorted(held, reverse=True)[:10]) / supply * 100
 
 
 def _age(row: dict[str, Any], at: datetime) -> timedelta | None:
@@ -204,7 +218,8 @@ def ratify_rows(
     holders = {
         mint: entry
         for mint, entry in (saved.get("holders") or {}).items()
-        if at - datetime.fromisoformat(entry["checked_at"]) <= HOLDERS_TTL
+        if entry.get("rules") == HOLDER_RULES
+        and at - datetime.fromisoformat(entry["checked_at"]) <= HOLDERS_TTL
     }
     # The free standards first: only coins that pass them cost a read.
     candidates = [
@@ -228,7 +243,7 @@ def ratify_rows(
             exclude={vault for vault in (vaults.get(row.get("pool_address", "")),) if vault},
             rpc=rpc,
         )
-        holders[mint] = {"checked_at": at.isoformat(), "top10_pct": share}
+        holders[mint] = {"checked_at": at.isoformat(), "top10_pct": share, "rules": HOLDER_RULES}
     for row in rows:
         mint = row.get("token_address")
         row["ratification"] = standards(

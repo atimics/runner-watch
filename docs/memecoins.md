@@ -83,7 +83,8 @@ or advice.
 4. A graduated pool with $10K or more of real liquidity.
 5. At least 24 hours since its pool opened.
 6. No launch bundle (remembered for a week), creator selling or liquidity pull.
-7. The ten largest holders, not counting the pool's own token account, own 30%
+7. The ten largest holders, not counting accounts owned by a program address
+   (any DEX pool, bonding curve or lock; no private key controls one), own 30%
    or less of supply.
 
 Standards 4-6 cost nothing. Only coins passing them are read: the mint account
