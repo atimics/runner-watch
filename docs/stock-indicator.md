@@ -149,5 +149,8 @@ while markets are closed.
    arrive (migration 93), so notices filed before that are not seen.
 
 The board shows a Ratified mark; the stock page lists every standard as met,
-not met or not known. Missing financials leave a standard unknown, so the
+not met, not checked yet, or not applied. "Not applied" (a dash, with the
+reason) is a standard that does not fit the company, such as cash runway for a
+financial company: it is left out of the count ("4 of 4 met · 1 not applied")
+and does not block. "Not checked yet" means missing data, and does block. Missing financials leave a standard unknown, so the
 stock is not ratified.

@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from runner_web.issuer_risk import issuer_risk_contexts
+from runner_web.ratification import summarize
 
 MAJOR_EXCHANGES = {"NASDAQ", "NYSE", "NYSE AMERICAN", "NYSE MKT", "AMEX"}
 REPORT_DAYS = 135
@@ -76,11 +77,7 @@ def standards(
         "filings": None
         if not issuer.get("issuer_data_available")
         else report_day is not None and (today - report_day).days <= REPORT_DAYS,
-        "cash": True
-        if financial or not_burning
-        else None
-        if runway is None
-        else runway >= MIN_RUNWAY_MONTHS,
+        "cash": True if not_burning else None if runway is None else runway >= MIN_RUNWAY_MONTHS,
         "dilution": None if growth is None else growth <= MAX_SHARE_GROWTH_PCT,
         "trading": halted_on is None and delisting_on is None,
     }
@@ -97,7 +94,7 @@ def standards(
             if issuer.get("issuer_data_available")
             else ""
         ),
-        "cash": "not applied: financial company"
+        "cash": "financial company"
         if financial
         else "not burning cash"
         if not_burning
@@ -107,17 +104,15 @@ def standards(
         "dilution": f"shares up {growth:.0f}%" if growth is not None else "",
         "trading": ", ".join(trading),
     }
-    return {
-        "ratified": all(result is True for result in results.values()),
-        "met": sum(result is True for result in results.values()),
-        "total": len(results),
-        "standards": [
-            {"key": key, "label": LABELS[key], "met": results[key], "detail": details[key]}
-            for key in LABELS
-        ],
-        "note": NOTE,
-        "as_of": today.isoformat(),
-    }
+    # A lender's lending runs through operating cash flow: cash is not judged.
+    return summarize(
+        LABELS,
+        results,
+        details,
+        not_applied={"cash"} if financial else set(),
+        note=NOTE,
+        as_of=today.isoformat(),
+    )
 
 
 def _note_missing_sectors(database: Any, companies: dict[str, Any], at: datetime) -> None:
