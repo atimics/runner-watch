@@ -3824,6 +3824,28 @@ def _migration_093_filing_items(db: DatabaseConnection) -> None:
     _ensure_column(db, "sec_filings", "items TEXT NOT NULL DEFAULT ''")
 
 
+def _migration_094_trust_access_requests(db: DatabaseConnection) -> None:
+    """Requests to read the private RATi Rules, from checked GitHub accounts."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS trust_access_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            github_login TEXT NOT NULL,
+            github_id BIGINT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL CHECK(status IN ('pending','granted','declined')),
+            checks_json TEXT NOT NULL DEFAULT '{}',
+            ip_hash TEXT NOT NULL DEFAULT '',
+            requested_at TEXT NOT NULL,
+            decided_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS trust_access_requests_account
+            ON trust_access_requests(github_id,status);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3924,6 +3946,7 @@ MIGRATIONS = (
     Migration(91, "memecoin_call_orders", _migration_091_memecoin_call_orders),
     Migration(92, "memecoin_early_features", _migration_092_memecoin_early_features),
     Migration(93, "filing_items", _migration_093_filing_items),
+    Migration(94, "trust_access_requests", _migration_094_trust_access_requests),
 )
 
 
