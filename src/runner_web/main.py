@@ -207,11 +207,14 @@ from runner_web.memecoin_calls import (
 )
 from runner_web.memecoins import (
     REFRESH_SECONDS,
+    is_memecoin_view,
     memecoin_detail,
     memecoin_market,
+    note_memecoin_view,
     refresh_memecoins,
     request_memecoin,
     snapshot_version,
+    view_note_due,
 )
 from runner_web.memecoins import pool_state as memecoin_pool_state
 from runner_web.operations import (
@@ -2675,6 +2678,14 @@ async def security_headers(request: Request, call_next: Any) -> Response:
         response = JSONResponse({"detail": "Not found"}, status_code=404)
     else:
         response = await call_next(request)
+        if (
+            request.method == "GET"
+            and response.status_code < 400
+            and is_memecoin_view(request.url.path)
+            and view_note_due(time.monotonic())
+        ):
+            # Someone is reading memecoins, so the worker keeps its full sampling.
+            await run_in_threadpool(note_memecoin_view)
     if "runner_visitor" in request.cookies:
         response.delete_cookie("runner_visitor", path="/")
     response.headers["X-Content-Type-Options"] = "nosniff"

@@ -61,6 +61,11 @@ def ingest_stream(stream: str, address: str, *, at: datetime, rpc: Rpc) -> dict[
         not isinstance(cursor, str) or len(cursor) > 128 or cursor == state.get("cursor")
     ):
         raise ValueError("Invalid Helius pagination progress")
+    if len(entries) < PAGE_SIZE:
+        # Helius can return a next-page token after a partial page; the follow-up
+        # read came back empty and still cost 10 credits, so a partial page ends
+        # the window.
+        cursor = None
     valid = [
         entry for entry in valid_transactions(entries, at=at) if start <= entry["blockTime"] < end
     ]
@@ -91,7 +96,13 @@ def ingest_stream(stream: str, address: str, *, at: datetime, rpc: Rpc) -> dict[
     return {"transactions": valid, "events": events, "state": next_state}
 
 
-def collect_chain(*, at: datetime, rpc: Rpc | None = None) -> dict[str, Any]:
+def collect_chain(*, at: datetime, rpc: Rpc | None = None, quiet: bool = False) -> dict[str, Any]:
+    """One cycle of paid reads, then the saved events they add to.
+
+    Quiet (nobody reading memecoin pages) keeps only the graduation stream, the
+    history early detection needs, and skips the program and wallet samples.
+    """
+
     call = rpc or rpc_request
     schedule = evidence.stream_state("schedule")
     offset = schedule.get("offset", 0)
@@ -105,6 +116,8 @@ def collect_chain(*, at: datetime, rpc: Rpc | None = None) -> dict[str, Any]:
     pages = [pages[offset % len(pages)], pages[(offset + 1) % len(pages)]]
     if offset == 0:
         pages[1] = ("graduations", MIGRATION_AUTHORITY)
+    if quiet:
+        pages = [page for page in pages if page[0] == "graduations"]
     for stream, address in pages:
         name = stream.split(":", 1)[-1]
         try:
@@ -139,7 +152,7 @@ def collect_chain(*, at: datetime, rpc: Rpc | None = None) -> dict[str, Any]:
     }
     if buyers and offset % 3 == 0:
         wallets = buyers
-    if wallets:
+    if wallets and not quiet:
         progress = {row["stream"]: row for row in evidence.evidence_status(at=at)["streams"]}
         wallet = min(
             wallets,

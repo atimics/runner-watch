@@ -39,6 +39,18 @@ window. Gap records are committed with the new page and remain available for
 30 days. Wallet streams keep their existing cursor. Coverage begins at the
 recorded windows and includes these explicit gap records.
 
+### Quiet when unread
+
+Paid reads follow readers. A GET of a memecoin page, `/api/memecoins` or a
+coin's live refresh records a view (each web process at most once a minute;
+share cards and replay GIFs, which Telegram fetches for our own posts, do not
+count). After 30 minutes without one the worker is quiet: it skips the program
+and wallet sample pages (10 credits each, most of the spend) and keeps the
+graduation stream every 15 minutes and the chain prices every cycle, the
+history early detection needs. The next view resumes full sampling. A page
+with fewer than 100 transactions ends its window even when Helius sends a
+next-page token, because following it returned an empty page for 10 credits.
+
 ## Stored evidence
 
 Migration 58 adds transaction receipts, decoded events, stream progress and daily
