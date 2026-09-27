@@ -22,8 +22,10 @@ MIN_AGE = timedelta(hours=24)
 MAX_TOP10_PCT = 30.0
 HOLDERS_TTL = timedelta(hours=6)
 # Bump when the holder count changes, so answers under older rules are redone.
-HOLDER_RULES = 2
+HOLDER_RULES = 3
 MAX_HOLDER_READS = 20
+# getTokenLargestAccounts lists this many accounts.
+LARGEST_LISTED = 20
 # Token-2022 features that let someone tax, block, seize or pause holders.
 RISKY_EXTENSIONS = {
     "transferFeeConfig",
@@ -115,11 +117,17 @@ def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> flo
         try:
             owner = owners[item["address"]]["data"]["parsed"]["info"]["owner"]  # type: ignore[index]
         except (KeyError, TypeError):
-            continue
-        if is_program_address(owner):
+            owner = None  # unknown owners count: the standard must not pass on a gap
+        if owner and is_program_address(owner):
             continue
         held.append(float(item.get("uiAmount") or 0))
-    return sum(sorted(held, reverse=True)[:10]) / supply * 100
+    held.sort(reverse=True)
+    if len(held) < 10 and len(accounts) >= LARGEST_LISTED:
+        # The largest wallets sit below the listed accounts, so none holds more
+        # than the smallest listed: count that as an upper bound for each.
+        smallest = min(float(item.get("uiAmount") or 0) for item in accounts)
+        held += [smallest] * (10 - len(held))
+    return sum(held[:10]) / supply * 100
 
 
 def _age(row: dict[str, Any], at: datetime) -> timedelta | None:

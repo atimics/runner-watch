@@ -241,3 +241,27 @@ def test_holder_answers_under_older_rules_are_redone():
     ratify_rows([row()], stale, vaults={}, bundled=set(), rpc=rpc, at=AT)
 
     assert "getTokenLargestAccounts" in rpc.calls
+
+
+def test_an_unreadable_owner_counts_as_a_holder():
+    largest = [{"address": f"holder{n}", "uiAmount": 50_000_000} for n in range(10)]
+    rpc = FakeRpc(mints={}, largest=largest)  # no owner can be read
+
+    share = top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc)
+
+    assert share == pytest.approx(50.0)
+
+
+def test_when_the_listed_accounts_are_all_pools_the_hidden_wallets_are_bounded():
+    from runner_web.solana_keys import bonding_curve
+
+    # Twenty listed accounts, all program-owned: the wallets are further down,
+    # each holding at most the smallest listed balance (2.15%).
+    largest = [{"address": f"pool{n}", "uiAmount": 50_000_000 - n * 1_500_000} for n in range(20)]
+    rpc = FakeRpc(
+        mints={f"pool{n}": owned_by(bonding_curve(MINT)) for n in range(20)}, largest=largest
+    )
+
+    share = top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc)
+
+    assert share == pytest.approx(10 * 2.15)
