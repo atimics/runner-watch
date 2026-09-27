@@ -245,3 +245,34 @@ def test_a_finding_on_an_unwatched_coin_is_not_posted(database):
     )
 
     assert result["status"] == "idle"
+
+
+def test_an_unreadable_launch_transaction_is_skipped():
+    rpc = bundled_rpc(4)
+    broken = signature(0)
+    real = rpc.__call__
+
+    def flaky(body, *, credits):
+        if body["method"] == "getTransaction" and body["params"][0] == broken:
+            raise ValueError("Helius RPC returned an error")
+        return real(body, credits=credits)
+
+    finding = launch_bundle(MINT, rpc=flaky, at=AT)
+
+    # Three readable buyers are still a bundle.
+    assert finding["title"].startswith("Launch bundle: 3 wallets")
+
+
+def test_a_coin_whose_check_keeps_failing_is_given_up():
+    from runner_web.memecoin_watch import BUNDLE_MAX_ATTEMPTS, launch_bundles
+
+    def failing(body, *, credits):
+        raise RuntimeError("provider down")
+
+    checked = {}
+    for attempt in range(BUNDLE_MAX_ATTEMPTS):
+        _, checked = launch_bundles([row()], checked, rpc=failing, at=AT)
+        done = bool(checked[MINT].get("checked_at"))
+        assert done is (attempt == BUNDLE_MAX_ATTEMPTS - 1)
+    # Once given up, the coin costs nothing more.
+    _, checked = launch_bundles([row()], checked, rpc=lambda *_a, **_k: pytest.fail("read"), at=AT)

@@ -42,6 +42,8 @@ BUNDLE_MIN_SUPPLY_PCT = 10.0
 BUNDLE_CHECKS_PER_CYCLE = 10
 BUNDLE_SIGNATURE_PAGES = 5
 BUNDLE_MAX_TRANSACTIONS = 8
+# A coin whose check keeps failing is given up after this many cycles.
+BUNDLE_MAX_ATTEMPTS = 3
 FINDING_HOURS = 24
 
 
@@ -206,22 +208,27 @@ def launch_bundle(mint: str, *, rpc: Rpc, at: datetime) -> dict[str, Any] | None
         return None
     entries = []
     for signature in in_slot[:BUNDLE_MAX_TRANSACTIONS]:
-        payload = rpc(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getTransaction",
-                "params": [
-                    signature,
-                    {
-                        "encoding": "jsonParsed",
-                        "maxSupportedTransactionVersion": 0,
-                        "commitment": "finalized",
-                    },
-                ],
-            },
-            credits=1,
-        )
+        try:
+            payload = rpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTransaction",
+                    "params": [
+                        signature,
+                        {
+                            "encoding": "jsonParsed",
+                            "maxSupportedTransactionVersion": 0,
+                            "commitment": "finalized",
+                        },
+                    ],
+                },
+                credits=1,
+            )
+        except ValueError:
+            # One unreadable transaction should not sink the whole check.
+            LOG.warning("Launch transaction unreadable: %s", signature)
+            continue
         if isinstance(payload.get("result"), dict):
             entries.append(payload["result"])
     bought: dict[str, float] = {}
@@ -269,14 +276,20 @@ def launch_bundles(
 
     rank = {"setup": 0, "running": 1, "extended": 2}
     candidates = sorted(
-        (row for row in rows if row.get("token_address") and row["token_address"] not in checked),
+        (
+            row
+            for row in rows
+            if row.get("token_address")
+            and not (checked.get(row["token_address"]) or {}).get("checked_at")
+        ),
         key=lambda row: rank.get((row.get("early") or {}).get("state"), 3),
     )
     findings = []
     remembered = {
         mint: entry
         for mint, entry in checked.items()
-        if at - datetime.fromisoformat(entry["checked_at"]) <= timedelta(days=7)
+        if not entry.get("checked_at")
+        or at - datetime.fromisoformat(entry["checked_at"]) <= timedelta(days=7)
     }
     for row in candidates[:BUNDLE_CHECKS_PER_CYCLE]:
         mint = row["token_address"]
@@ -286,7 +299,11 @@ def launch_bundles(
             finding = None
         except Exception:
             LOG.warning("Launch bundle check failed for %s", mint, exc_info=True)
-            continue
+            attempts = int((checked.get(mint) or {}).get("attempts") or 0) + 1
+            if attempts < BUNDLE_MAX_ATTEMPTS:
+                remembered[mint] = {"attempts": attempts}
+                continue
+            finding = None  # stop paying for a check that keeps failing
         remembered[mint] = {"checked_at": at.isoformat(), "finding": finding}
         if finding:
             findings.append(finding)
