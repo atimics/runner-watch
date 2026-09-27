@@ -85,9 +85,28 @@ def test_a_lender_is_not_judged_on_cash_runway():
     # lending runs through operating cash flow.
     issuer = {**HEALTHY, "cash_runway_months": 0.2, "operating_cash_flow": -900_000_000.0}
 
-    cash = next(s for s in rated(issuer=issuer, sic="6798")["standards"] if s["key"] == "cash")
+    result = rated(issuer=issuer, sic="6798")
 
-    assert cash["met"] is True and cash["detail"] == "not applied: financial company"
+    cash = next(s for s in result["standards"] if s["key"] == "cash")
+    # Not a pass and not a failure: shown, not counted, and not blocking.
+    assert cash["applies"] is False and cash["met"] is None
+    assert cash["detail"] == "financial company"
+    assert result["ratified"] is True
+    assert (result["met"], result["total"], result["not_applied"]) == (4, 4, 1)
+
+
+def test_a_not_applied_standard_reads_as_such_on_the_page():
+    from runner_web.market_screens import detail
+    from tests.test_market_screens import render
+
+    issuer = {**HEALTHY, "cash_runway_months": 0.2, "operating_cash_flow": -900_000_000.0}
+    stock = {"ticker": "RWT", "price": 12.0, "ratification": rated(issuer=issuer, sic="6798")}
+
+    page = render(detail("stocks", {"current": stock, "ticker": "RWT"}))
+
+    assert "Ratified · 4 of 4 met · 1 not applied" in page
+    assert '<li class="standard-na"><span aria-hidden="true">–</span>' in page
+    assert "12+ months of cash, or not burning cash · not applied: financial company" in page
 
 
 def test_missing_financials_are_not_known_rather_than_met():

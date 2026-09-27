@@ -27,6 +27,7 @@ from runner_web.memecoin_chain_prices import (
     _raw,
     read_accounts,
 )
+from runner_web.ratification import summarize
 from runner_web.solana_keys import is_program_address
 
 LOG = logging.getLogger(__name__)
@@ -338,18 +339,7 @@ def standards(
         "holder_count": f"{holder_count:,} holders" if holder_count is not None else "",
         "liquidity_lock": _lock_detail(lock),
     }
-    met = sum(result is True for result in results.values())
-    return {
-        "ratified": all(result is True for result in results.values()),
-        "met": met,
-        "total": len(results),
-        "standards": [
-            {"key": key, "label": LABELS[key], "met": results[key], "detail": details[key]}
-            for key in LABELS
-        ],
-        "note": NOTE,
-        "as_of": at.isoformat(),
-    }
+    return summarize(LABELS, results, details, note=NOTE, as_of=at.isoformat())
 
 
 def _lock_detail(lock: dict[str, Any] | None) -> str:

@@ -43,8 +43,8 @@
 
 {% macro ratification_standards(item) -%}
 {% set ratification = item.ratification %}
-{% if ratification %}<section class="ratification-standards" aria-label="Standards"><details{% if ratification.ratified %} open{% endif %}><summary>{{ 'Ratified' if item.ratified else 'Standards' }} · {{ ratification.met }} of {{ ratification.total }} met</summary>
-<ul>{% for standard in ratification.standards %}<li class="standard-{{ 'met' if standard.met is sameas true else 'unmet' if standard.met is sameas false else 'unknown' }}"><span aria-hidden="true">{{ '✓' if standard.met is sameas true else '✗' if standard.met is sameas false else '·' }}</span> {{ standard.label }}{% if standard.met is sameas none %} · not checked yet{% elif standard.detail %} · {{ standard.detail }}{% endif %}</li>{% endfor %}</ul>
+{% if ratification %}<section class="ratification-standards" aria-label="Standards"><details{% if ratification.ratified %} open{% endif %}><summary>{{ 'Ratified' if item.ratified else 'Standards' }} · {{ ratification.met }} of {{ ratification.total }} met{% if ratification.not_applied %} · {{ ratification.not_applied }} not applied{% endif %}</summary>
+<ul>{% for standard in ratification.standards %}{% set applies = standard.applies is not defined or standard.applies %}<li class="standard-{{ 'na' if not applies else 'met' if standard.met is sameas true else 'unmet' if standard.met is sameas false else 'unknown' }}"><span aria-hidden="true">{{ '–' if not applies else '✓' if standard.met is sameas true else '✗' if standard.met is sameas false else '·' }}</span> {{ standard.label }}{% if not applies %} · not applied{% if standard.detail %}: {{ standard.detail }}{% endif %}{% elif standard.met is sameas none %} · not checked yet{% elif standard.detail %} · {{ standard.detail }}{% endif %}</li>{% endfor %}</ul>
 <p>{{ ratification.note }}</p></details></section>{% endif %}
 {%- endmacro %}
 
