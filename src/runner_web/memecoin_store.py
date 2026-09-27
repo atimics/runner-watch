@@ -147,3 +147,42 @@ def memecoin_history(coin_id: str, *, at: datetime, limit: int = 288) -> list[di
             ),
         ).fetchall()
     return [dict(row) for row in reversed(rows)]
+
+
+# The early reading's states, in the stock chart's tones. An untagged stretch is
+# "none", which the chart has no colour for, so the plain line shows through;
+# "paused" would mean a stale quote on a coin, not "no tag".
+STATE_TONES = {"setup": "setup", "running": "running", "extended": "extended", "avoid": "avoid"}
+
+
+def memecoin_state_changes(coin_id: str, *, at: datetime, days: int = 7) -> list[dict[str, Any]]:
+    """Where the coin's tag changed, so its chart can be drawn in the tag colours.
+
+    Each saved quote keeps the tag it was given (features_json), so this is one
+    query and no new storage. Quotes saved before tags were kept are skipped.
+    """
+
+    with connection() as database:
+        rows = database.execute(
+            """
+            SELECT observed_at,features_json FROM memecoin_quote_history
+            WHERE coin_id=? AND observed_at>=? AND observed_at<=? AND features_json IS NOT NULL
+            ORDER BY observed_at
+            """,
+            (
+                coin_id,
+                (at - timedelta(days=days)).isoformat(),
+                (at + timedelta(seconds=60)).isoformat(),
+            ),
+        ).fetchall()
+    changes: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            state = (json.loads(row["features_json"]) or {}).get("state")
+        except (TypeError, ValueError):
+            continue
+        tone = STATE_TONES.get(str(state), "none")
+        if changes and changes[-1]["tone"] == tone:
+            continue
+        changes.append({"time": str(row["observed_at"]), "tone": tone})
+    return changes

@@ -1058,3 +1058,28 @@ def test_golf_score_and_glyph_share_the_team_row_columns(page: Page, width):
     assert abs(glyph["y"] + glyph["height"] / 2 - score["y"] - score["height"] / 2) < 4
     assert page.locator(".ticker-list > *").count() == 1
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_a_memecoin_chart_is_drawn_in_its_tag_colours(page: Page):
+    """Memecoins carry the same tags, saved with each quote, so their chart
+    turns colour where the coin turned from untagged to setup to running."""
+
+    screen = detail("memecoins", {"coin": fixtures.sample("memecoins")})
+    screen.pop("refresh_url", None)
+    screen["series"] = [
+        {"time": f"2026-09-27T12:{minute:02d}:00Z", "value": value}
+        for minute, value in ((0, 1), (5, 1.1), (10, 1.3), (15, 1.6), (20, 2.2), (25, 3))
+    ]
+    screen["states"] = [
+        {"time": "2026-09-27T11:55:00Z", "tone": "none"},
+        {"time": "2026-09-27T12:07:00Z", "tone": "setup"},
+        {"time": "2026-09-27T12:17:00Z", "tone": "running"},
+    ]
+    open_screen(page, screen)
+
+    expect(page.locator(".chart-state.state-setup")).to_have_count(1)
+    expect(page.locator(".chart-state.state-running")).to_have_count(1)
+    # The untagged start stays the plain line and is not in the legend.
+    none = page.locator(".chart-state.state-none")
+    assert none.count() == 0 or none.first.evaluate("n => getComputedStyle(n).stroke") == "none"
+    expect(page.locator("[data-chart-state-legend] button")).to_have_text(["Running", "Setup"])

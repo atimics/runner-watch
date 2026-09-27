@@ -28,7 +28,12 @@ from runner_web.memecoin_integrity import creator_trades
 from runner_web.memecoin_model import assess_memecoin, display_assessment
 from runner_web.memecoin_ratify import ratify_rows
 from runner_web.memecoin_ratify import standards as ratify_standards
-from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
+from runner_web.memecoin_store import (
+    memecoin_history,
+    memecoin_state_changes,
+    save_memecoin_snapshot,
+    stored_memecoin,
+)
 from runner_web.memecoin_watch import creator_sells, launch_bundles, recent_findings
 
 LOG = logging.getLogger(__name__)
@@ -1259,6 +1264,7 @@ def memecoin_detail(
         "source": coin.get("source", "CoinGecko"),
         "currency": "USD",
         "history": memecoin_history(coin_id, at=current, limit=history_limit),
+        "states": memecoin_state_changes(coin_id, at=current),
         "evidence": {
             "source_url": coin["source_url"],
             "run_id": saved["run_id"],

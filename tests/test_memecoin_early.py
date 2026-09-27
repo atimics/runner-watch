@@ -277,3 +277,30 @@ def test_a_young_pool_is_compared_only_with_the_minutes_it_existed():
 
     assert "Volume 9.0× its 1h pace" in signal["reasons"]
     assert "Buyers 15.0× their 1h pace" in signal["reasons"]
+
+
+def test_a_coins_chart_is_coloured_by_its_saved_tags(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from runner_web import db
+    from runner_web.market_screens import detail
+    from runner_web.memecoin_store import memecoin_state_changes, save_memecoin_snapshot
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "states.db")
+    monkeypatch.setattr(db, "DATABASE_URL", "")
+    monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
+    db.init_db()
+    states = ((25, "quiet"), (20, "setup"), (15, "setup"), (10, "running"), (5, "quiet"))
+    for minutes, state in states:
+        when = AT - timedelta(minutes=minutes)
+        coin = _board_row("coin", observed_at=when.isoformat(), early={"state": state})
+        save_memecoin_snapshot([coin], run_id="test", collected_at=when)
+
+    changes = memecoin_state_changes("coin", at=AT)
+
+    # Only the turns. Untagged is "none": the plain line, and it must survive so
+    # the line stops being RUNNING-green when the tag goes away.
+    tones = ["none", "setup", "running", "none"]
+    assert [change["tone"] for change in changes] == tones
+    screen = detail("memecoins", {"coin": _board_row("coin"), "states": changes})
+    assert [change["tone"] for change in screen["states"]] == tones
