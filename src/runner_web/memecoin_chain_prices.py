@@ -160,5 +160,7 @@ def chain_prices(
         prices[address] = {
             "price": (quote[0] + virtual) / base[0] * quote_usd,
             "liquidity_usd": 2 * quote[0] * quote_usd,
+            # The pool's own token account, left out when counting top holders.
+            "base_vault": layout["base_vault"],
         }
     return {"sol_usd": sol_usd, "prices": prices}

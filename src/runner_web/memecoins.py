@@ -26,6 +26,8 @@ from runner_web.memecoin_early import early_signal
 from runner_web.memecoin_forensics import analyze_events
 from runner_web.memecoin_integrity import creator_trades
 from runner_web.memecoin_model import assess_memecoin, display_assessment
+from runner_web.memecoin_ratify import ratify_rows
+from runner_web.memecoin_ratify import standards as ratify_standards
 from runner_web.memecoin_store import memecoin_history, save_memecoin_snapshot, stored_memecoin
 from runner_web.memecoin_watch import creator_sells, launch_bundles, recent_findings
 
@@ -518,6 +520,42 @@ def _watch_findings(rows: list[dict[str, Any]], *, rpc: Rpc, at: datetime) -> li
     return findings
 
 
+def _ratify(
+    rows: list[dict[str, Any]], chain: dict[str, Any] | None, *, rpc: Rpc, at: datetime
+) -> None:
+    """Attach each row's ratification; a failed read leaves standards unknown."""
+
+    saved = _market_states(keys=("memecoin_ratification", "memecoin_launch_checks"))
+    # A bundled launch stays on the record for as long as the check is remembered.
+    bundled = {
+        mint
+        for mint, entry in (saved.get("memecoin_launch_checks") or {}).items()
+        if isinstance(entry, dict) and entry.get("finding")
+    }
+    vaults = {
+        address: quote["base_vault"]
+        for address, quote in ((chain or {}).get("prices") or {}).items()
+        if quote.get("base_vault")
+    }
+    try:
+        state = ratify_rows(
+            rows,
+            saved.get("memecoin_ratification") or {},
+            vaults=vaults,
+            bundled=bundled,
+            rpc=rpc,
+            at=at,
+        )
+        _save_state("memecoin_ratification", state, at)
+    except Exception:
+        LOG.warning("Ratification reads failed", exc_info=True)
+        for row in rows:
+            row.setdefault(
+                "ratification",
+                ratify_standards(row, None, None, row.get("token_address") in bundled, at),
+            )
+
+
 def price_source() -> str:
     """Where board prices come from: gecko, shadow (gecko, with chain compared) or chain."""
 
@@ -899,6 +937,7 @@ def _collect_helius(
     mark_copycats(rows, bursts, originals)
     for row in rows:
         row["early"] = early_signal(row)
+    _ratify(rows, chain, rpc=rpc or rpc_request, at=at)
     # A pool or curve that traded keeps its slot next cycle, busiest first.
     # Without GeckoTerminal's windows, a chain price that moved since last
     # cycle is the sign of trading.

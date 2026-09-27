@@ -69,6 +69,30 @@ A finding on a coin that was SETUP, RUNNING or EXTENDED just before, or that
 has an open Call, is posted once to the Telegram channel within its usual
 pacing (`TELEGRAM_MEMECOIN_ALERTS`).
 
+### Ratified
+
+A memecoin is Ratified when it meets all seven of RATi's basic standards
+(`src/runner_web/memecoin_ratify.py`). It is not an endorsement, a guarantee
+or advice.
+
+1. Mint authority revoked.
+2. Freeze authority revoked.
+3. No risky Token-2022 features (transfer fee or hook, permanent delegate,
+   pausing, default-frozen accounts, non-transferable, confidential transfers).
+   Pump's metadata extensions are not risky.
+4. A graduated pool with $10K or more of real liquidity.
+5. At least 24 hours since its pool opened.
+6. No launch bundle (remembered for a week), creator selling or liquidity pull.
+7. The ten largest holders, not counting the pool's own token account, own 30%
+   or less of supply.
+
+Standards 4-6 cost nothing. Only coins passing them are read: the mint account
+(one credit per 100, kept once clean, since a revoked authority cannot return
+and extensions are fixed at creation) and the largest holders (one credit a
+coin, every six hours, at most 20 a cycle). The board shows a Ratified mark on
+current quotes; the coin page lists every standard as met, not met or not yet
+checked.
+
 ### Quiet when unread
 
 Paid reads follow readers. A GET of a memecoin page, `/api/memecoins` or a

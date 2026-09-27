@@ -37,6 +37,17 @@
 </span>
 {%- endmacro %}
 
+{% macro ratified_mark(item) -%}
+{% if item.ratified %}<span class="ratified-mark" title="{{ item.ratification.note }}" aria-label="Ratified: meets RATi's basic standards">Ratified</span>{% endif %}
+{%- endmacro %}
+
+{% macro ratification_standards(item) -%}
+{% set ratification = item.ratification %}
+{% if ratification %}<section class="ratification-standards" aria-label="Standards"><details{% if ratification.ratified %} open{% endif %}><summary>{{ 'Ratified' if item.ratified else 'Standards' }} · {{ ratification.met }} of {{ ratification.total }} met</summary>
+<ul>{% for standard in ratification.standards %}<li class="standard-{{ 'met' if standard.met is sameas true else 'unmet' if standard.met is sameas false else 'unknown' }}"><span aria-hidden="true">{{ '✓' if standard.met is sameas true else '✗' if standard.met is sameas false else '·' }}</span> {{ standard.label }}{% if standard.met is sameas none %} · not checked yet{% elif standard.detail %} · {{ standard.detail }}{% endif %}</li>{% endfor %}</ul>
+<p>{{ ratification.note }}</p></details></section>{% endif %}
+{%- endmacro %}
+
 {% macro key_icon(kind) -%}
 <span class="indicator-key-icon" data-key-icon="{{ kind }}" aria-hidden="true"><span class="indicator-key-ring">{% if kind in ['evidence', 'bearish', 'sentiment'] %}<span class="indicator-pattern indicator-pattern--evidence" style="--slice-start: {{ '75%' if kind == 'sentiment' else '0%' }}; --slice-end: 100%"></span>{% elif kind in ['social', 'cluster'] %}<span class="indicator-pattern indicator-pattern--{{ kind }}" style="--slice-start: 0%; --slice-end: 100%"></span>{% endif %}</span>{% if kind in ['detected', 'significant', 'unknown'] %}<span class="indicator-key-marker">{{ '?' if kind == 'unknown' else '' }}</span>{% elif kind == 'verified' %}<svg class="indicator-key-check-symbol" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9"/><path d="m6 10 2.5 2.5 5.5-5.5"/></svg>{% endif %}</span>
 {%- endmacro %}
