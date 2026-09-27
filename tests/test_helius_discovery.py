@@ -753,8 +753,11 @@ def test_which_requests_count_as_someone_reading(path, reading):
 
 
 def test_a_process_records_a_view_at_most_once_a_minute(monkeypatch):
-    monkeypatch.setattr(memecoins, "_view_noted_at", 0.0)
+    monkeypatch.setattr(memecoins, "_view_noted_at", float("-inf"))
 
+    # A machine booted seconds ago still records its first view.
+    assert memecoins.view_note_due(5.0)
+    assert not memecoins.view_note_due(35.0)
     assert memecoins.view_note_due(1000.0)
     assert not memecoins.view_note_due(1030.0)
     assert memecoins.view_note_due(1061.0)
@@ -791,7 +794,7 @@ def test_a_view_on_the_site_keeps_the_worker_sampling(database, monkeypatch):
 
     from runner_web import main
 
-    monkeypatch.setattr(memecoins, "_view_noted_at", 0.0)
+    monkeypatch.setattr(memecoins, "_view_noted_at", float("-inf"))
     monkeypatch.setattr(main, "enforce_rate", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "current_user", lambda *_: None)
     client = TestClient(main.app)

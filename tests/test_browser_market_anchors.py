@@ -251,3 +251,23 @@ def test_a_setup_coin_reason_sits_below_its_name(page, width):
     box, line = row.bounding_box(), detail_line.bounding_box()
     assert line["y"] + line["height"] <= box["y"] + box["height"] + 1
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_a_ratified_coin_row_fits_on_a_phone(page, width):
+    from runner_web.memecoin_ratify import standards
+    from tests.test_memecoin_ratify import AT, CLEAN
+    from tests.test_memecoin_ratify import row as ratify_row
+
+    raw = screens.sample("memecoins")
+    raw.update(symbol=ADDRESS, name=ADDRESS, token_address=ADDRESS)
+    raw["ratification"] = standards(ratify_row(), CLEAN, 22.0, False, AT)
+    page.set_viewport_size(dict(width=width, height=844))
+    open_html(page, screens.render(listing("memecoins", [raw])))
+    row = page.locator(".ticker").first
+    mark = row.locator(".ratified-mark")
+    expect(mark).to_be_visible()
+    box, badge = row.bounding_box(), mark.bounding_box()
+    assert badge["x"] + badge["width"] <= box["x"] + box["width"] + 1
+    no_overlap(mark, row.locator(".ticker-value"))
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

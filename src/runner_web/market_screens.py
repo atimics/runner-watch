@@ -473,6 +473,15 @@ def row(
     return {
         **({"indicator": indicator} if indicator else {}),
         **({"verified": indicator["verification"]["verified"]} if market == "stocks" else {}),
+        # Ratified shows only on a current reading: a stale quote proves nothing now.
+        **(
+            {
+                "ratification": item["ratification"],
+                "ratified": bool(item["ratification"].get("ratified")) and not item.get("stale"),
+            }
+            if isinstance(item.get("ratification"), dict)
+            else {}
+        ),
         **(
             {
                 "assessment_stale": assessment_stale,

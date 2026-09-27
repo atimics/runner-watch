@@ -89,3 +89,8 @@
 @media(max-width:760px){.indicator-key-group ul{grid-template-columns:repeat(2,minmax(0,1fr))}.indicator-key-group li{gap:7px}.indicator-key-group li>span:last-child{min-width:0}.indicator-key-icon{width:34px}}
 @media(max-width:360px){.indicator-key-group ul{grid-template-columns:1fr}}
 @media(forced-colors:active){.indicator-key-icon{forced-color-adjust:none;--bg:Canvas;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--indicator-cluster:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}}
+.ratified-mark{display:inline-block;margin-left:6px;padding:1px 6px;border:1px solid var(--accent,currentColor);border-radius:999px;color:var(--accent,currentColor);font-size:10px;font-weight:700;letter-spacing:.02em;line-height:1.5;vertical-align:middle;white-space:nowrap}
+h1 .ratified-mark{font-size:12px}
+.ratification-standards{margin:4px 0 14px;font-size:13px}.ratification-standards summary{cursor:pointer;color:var(--muted)}.ratification-standards ul{margin:8px 0;padding:0;list-style:none}.ratification-standards li{padding:3px 0}.ratification-standards .standard-met span{color:var(--green)}.ratification-standards .standard-unmet span{color:var(--red)}.ratification-standards p{margin:6px 0 0;color:var(--muted);font-size:11px}
+/* A long coin address leaves no room beside it: the mark moves under the name. */
+.ticker-name .ticker-symbol{flex-wrap:wrap;min-width:0;max-width:100%;row-gap:2px}
