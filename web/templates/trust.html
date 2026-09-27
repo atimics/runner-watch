@@ -1,0 +1,66 @@
+{% extends "mobile_base.html" %}
+{% block app_class %}account-page trust-page{% endblock %}
+{% block title %}RATi Trust{% endblock %}
+{% block page_description %}<meta name="description" content="The RATi Rules: what Ratified means, the current version's commitment, and every past version in full.">{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
+{% block content %}
+<main class="account-wrap trust-wrap">
+  <section class="account-intro">
+    <span class="eyebrow">RATi Trust</span>
+    <h1>The RATi Rules</h1>
+    <p>A stock or memecoin is <strong>Ratified</strong> when it meets RATi's basic standards on the facts RATi could read at the time. It is not an endorsement, a guarantee, advice or an audit opinion. RATi is a shadow auditor: these rules are inspired by audit quality practice, including PCAOB QC 1000, not issued under or approved by any audit regulator.</p>
+  </section>
+
+  {% set current = trust.current %}
+  {% if current %}
+  <section class="trust-current" aria-labelledby="trust-current-heading">
+    <h2 id="trust-current-heading">Current version</h2>
+    <dl class="facts">
+      <div><dt>Version</dt><dd>{{ current.version }}</dd></div>
+      <div><dt>In force since</dt><dd>{{ current.released }}</dd></div>
+    </dl>
+    <p class="trust-digest-label">Rules digest (SHA-256)</p>
+    <code class="trust-digest">{{ current.digest }}</code>
+    <p>The full text of the current version stays sealed until it is replaced. This digest commits RATi to it now: when the version is published, anyone can recompute the digest from its files and check it is the same.</p>
+    {% if trust.revealed and trust.revealed[0].version == current.version %}<p>Version {{ current.version }} is published in full below as well: it matches the rules the RATi service already ran in public.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  <section class="trust-versions" aria-labelledby="trust-versions-heading">
+    <h2 id="trust-versions-heading">Published versions</h2>
+    {% for version in trust.revealed %}
+    <details class="trust-version"{% if loop.first %} open{% endif %}>
+      <summary>Version {{ version.version }} · {{ version.released }} · {% if version.verified %}digest checks out{% else %}digest does not match{% endif %}</summary>
+      <p class="trust-digest-label">Digest</p>
+      <code class="trust-digest">{{ version.digest }}</code>
+      <p>{% if version.verified %}Recomputed on this page from the {{ version.files|length }} files below: it matches.{% else %}Recomputed on this page from the files below: it does not match the published digest.{% endif %}</p>
+      <h3>Rules</h3>
+      <pre class="trust-text">{{ version.rules_text }}</pre>
+      <h3>Methodology</h3>
+      <pre class="trust-text">{{ version.methodology_text }}</pre>
+    </details>
+    {% else %}
+    <p>No version has been published in full yet.</p>
+    {% endfor %}
+  </section>
+
+  <section class="trust-verify" aria-labelledby="trust-verify-heading">
+    <h2 id="trust-verify-heading">Checking a digest</h2>
+    <p>For each covered file (the rulebook, the methodology and the rule code), take the SHA-256 of its contents. Write one line per file, <code>path hash</code>, in path order. The SHA-256 of those lines is the digest.</p>
+  </section>
+
+  <section class="trust-access" id="access" aria-labelledby="trust-access-heading">
+    <h2 id="trust-access-heading">Request access</h2>
+    <p>The rules repository is private. To read it, request access with your GitHub account. We check the account is real: a person's account, at least 30 days old, with public repositories or followers. Access is granted only by an invitation to that account.</p>
+    {% if requested %}<p class="trust-notice" role="status">{% if already %}A request for <strong>{{ requested }}</strong> is already waiting.{% else %}Request recorded for <strong>{{ requested }}</strong>. If it is approved, that account will get an invitation on GitHub.{% endif %}</p>{% endif %}
+    {% if error %}<p class="trust-notice trust-error" role="alert">{{ error }}</p>{% endif %}
+    <form class="trust-form" method="post" action="/trust/access">
+      <label for="trust-github">GitHub username</label>
+      <input id="trust-github" name="github" required maxlength="39" autocomplete="username" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}">
+      <label for="trust-reason">Why you would like access <span>(optional)</span></label>
+      <textarea id="trust-reason" name="reason" maxlength="500" rows="3"></textarea>
+      <button type="submit">Request access</button>
+    </form>
+  </section>
+</main>
+{% endblock %}
