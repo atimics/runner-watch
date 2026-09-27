@@ -32,6 +32,12 @@ def _on_curve(point: bytes) -> bool:
     return True
 
 
+def is_program_address(address: str) -> bool:
+    """A program-derived address, which no private key controls."""
+
+    return not _on_curve(_decode(address, 44))
+
+
 def find_program_address(seeds: list[bytes], program: str) -> str:
     program_id = _decode(program, 44)
     for bump in range(255, -1, -1):
