@@ -123,3 +123,26 @@ view. With the map focused, +/− zoom, arrows move and Home restores the view.
 Dragging pauses the orbit while the pointer is down and preserves stock links
 for ordinary taps. The holding size and stock glyph meaning stay steady at
 every zoom level.
+
+## Ratified
+
+A stock is Ratified when it meets all six of RATi's basic standards
+(`src/runner_web/stock_ratify.py`), from data already collected, at no extra
+cost. It is not an endorsement, a guarantee or advice, and it is separate from
+the "Verified evidence" check, which is one of the six.
+
+1. Listed on NASDAQ, NYSE or NYSE American (not OTC), from the SEC listing map.
+2. Up to date with SEC filings: a 10-Q or 10-K (or amendment) filed in the last
+   135 days, from the financial facts behind the issuer risk context. Foreign
+   issuers filing 20-F and 6-K do not meet this yet.
+3. At least 12 months of cash at the current operating burn, or not burning
+   cash (operating cash flow zero or positive).
+4. Share count up 25% or less over roughly a year.
+5. No trading halt in the last 30 days and no delisting notice (8-K item 3.01)
+   in the last 90. Item numbers are read from the EDGAR feed summary as filings
+   arrive (migration 93), so notices filed before that are not seen.
+6. The data-quality check passes ("Verified evidence — automated").
+
+The board shows a Ratified mark; the stock page lists every standard as met,
+not met or not known. Missing financials leave a standard unknown, so the
+stock is not ratified.

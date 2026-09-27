@@ -4,6 +4,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
+PERIODIC_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
+
 
 def _latest(rows: list[dict[str, Any]], concept: str) -> dict[str, Any] | None:
     matches = [row for row in rows if row["concept"] == concept]
@@ -24,6 +26,9 @@ def build_issuer_risk_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "current_ratio": None,
             "debt_to_cash": None,
             "facts_filed_at": None,
+            "operating_cash_flow": None,
+            "periodic_filed_at": None,
+            "periodic_form": None,
         }
 
     cash = _value(_latest(rows, "cash"))
@@ -91,6 +96,19 @@ def build_issuer_risk_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "current_ratio": round(current_ratio, 2) if current_ratio is not None else None,
         "debt_to_cash": round(debt_to_cash, 2) if debt_to_cash is not None else None,
         "facts_filed_at": max(str(row["filed_at"]) for row in rows),
+        # Positive or zero: the company is not burning cash, so runway is not the question.
+        "operating_cash_flow": _value(operating),
+        # The latest quarterly or annual report behind these facts.
+        **_latest_periodic(rows),
+    }
+
+
+def _latest_periodic(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    reports = [row for row in rows if str(row.get("form") or "").upper() in PERIODIC_FORMS]
+    latest = max(reports, key=lambda row: str(row["filed_at"])) if reports else None
+    return {
+        "periodic_filed_at": str(latest["filed_at"]) if latest else None,
+        "periodic_form": str(latest["form"]).upper() if latest else None,
     }
 
 
