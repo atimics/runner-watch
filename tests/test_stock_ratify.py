@@ -83,9 +83,16 @@ def test_a_company_not_burning_cash_meets_the_cash_standard():
 def test_a_lender_is_not_judged_on_cash_runway():
     # Live case: RWT, a mortgage lender, read "0 months of cash" because its
     # lending runs through operating cash flow.
-    issuer = {**HEALTHY, "cash_runway_months": 0.2, "operating_cash_flow": -900_000_000.0}
+    from runner_web.issuer_risk import build_issuer_risk_context
 
-    result = rated(issuer=issuer, sic="6798")
+    shared = build_issuer_risk_context([], sic="6798")
+    issuer = {
+        **HEALTHY,
+        "operating_cash_flow": -900_000_000.0,
+        **{key: shared[key] for key in ("cash_runway_months", "runway_applies", "financial")},
+    }
+
+    result = rated(issuer=issuer)
 
     cash = next(s for s in result["standards"] if s["key"] == "cash")
     # Not a pass and not a failure: shown, not counted, and not blocking.
@@ -99,8 +106,8 @@ def test_a_not_applied_standard_reads_as_such_on_the_page():
     from runner_web.market_screens import detail
     from tests.test_market_screens import render
 
-    issuer = {**HEALTHY, "cash_runway_months": 0.2, "operating_cash_flow": -900_000_000.0}
-    stock = {"ticker": "RWT", "price": 12.0, "ratification": rated(issuer=issuer, sic="6798")}
+    issuer = {**HEALTHY, "cash_runway_months": None, "runway_applies": False}
+    stock = {"ticker": "RWT", "price": 12.0, "ratification": rated(issuer=issuer)}
 
     page = render(detail("stocks", {"current": stock, "ticker": "RWT"}))
 

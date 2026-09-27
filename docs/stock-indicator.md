@@ -140,7 +140,9 @@ while markets are closed.
 3. At least 12 months of cash at the current operating burn, or not burning
    cash (operating cash flow zero or positive). Not applied to banks, lenders,
    insurers and real estate (SIC 6000-6799), whose lending runs through
-   operating cash flow. A stock readers see without a SIC code is looked up
+   operating cash flow. This is decided once, in the issuer facts
+   (`issuer_risk.py`: `runway_applies`), so the scanner's risk check,
+   eligibility, Dash and ratification all read the same answer. A stock readers see without a SIC code is looked up
    first by the sector backfill, five a pass, and a missing code is retried
    after six hours instead of waiting out the 90-day refresh.
 4. Share count up 25% or less over roughly a year.
