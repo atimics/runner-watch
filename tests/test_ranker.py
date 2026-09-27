@@ -36,9 +36,7 @@ def test_trainer_retries_failed_run_before_full_training_interval(monkeypatch):
     monkeypatch.setattr(
         ranker,
         "_trainer_state",
-        lambda key, value: heartbeats.append(value)
-        if key == "ranker_trainer_heartbeat"
-        else None,
+        lambda key, value: heartbeats.append(value) if key == "ranker_trainer_heartbeat" else None,
     )
     monkeypatch.setattr(ranker.time, "sleep", lambda _: (_ for _ in ()).throw(StopIteration))
 
@@ -365,3 +363,18 @@ def test_web_scan_saves_one_complete_candidate_group(
     assert len(training_examples) == len(snapshots)
     assert len(pulse_entries) == len(snapshots)
     assert len(json.loads(training_examples[0]["feature_vector_json"])) == len(FEATURE_NAMES)
+
+
+def test_runway_reads_as_no_concern_when_nothing_is_burning():
+    from runner_web.ranker import RUNWAY_CAP_MONTHS, _runway_months
+
+    # v4 read a missing runway as zero months: a profitable company looked
+    # about to run out of cash, and so did every lender.
+    assert _runway_months({"operating_cash_flow": 4_000_000, "cash_runway_months": None}) == (
+        RUNWAY_CAP_MONTHS
+    )
+    assert _runway_months({"runway_applies": False, "cash_runway_months": None}) == (
+        RUNWAY_CAP_MONTHS
+    )
+    assert _runway_months({"operating_cash_flow": -3_000_000, "cash_runway_months": 2.5}) == 2.5
+    assert _runway_months({}) == 0.0

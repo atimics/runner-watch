@@ -26,7 +26,9 @@ from runner_web.ranker_promotion import promotion_status
 
 LOG = logging.getLogger(__name__)
 
-FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v4"
+# v5: cash runway reads 36 months (no burn concern) for a company not burning
+# cash or a financial company, which v4 read as zero, "about to run out".
+FEATURE_SCHEMA_VERSION = "stonks.ranker_features.v5"
 MODEL_KIND = "integer_multiclass_logistic_barrier_v6"
 ARTIFACT_SCHEMA = "stonks.integer_ranker.v1"
 HORIZONS = {"60m"}
@@ -126,6 +128,26 @@ def _iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+RUNWAY_CAP_MONTHS = 36.0
+
+
+def _runway_months(issuer: dict[str, Any]) -> float:
+    """Cash runway for the model, capped at three years.
+
+    A company not burning cash, or one whose runway does not apply (a
+    financial company), has no burn to run out on: the cap, not zero. Zero is
+    kept for a runway that is truly short or unknown, which the data flag
+    beside it tells apart.
+    """
+
+    operating = issuer.get("operating_cash_flow")
+    if issuer.get("runway_applies") is False or (
+        operating is not None and _float(operating, -1.0) >= 0
+    ):
+        return RUNWAY_CAP_MONTHS
+    return min(RUNWAY_CAP_MONTHS, max(0.0, _float(issuer.get("cash_runway_months"))))
+
+
 def _float(value: Any, default: float = 0.0) -> float:
     try:
         number = float(value)
@@ -218,7 +240,7 @@ def feature_vector(row: dict[str, Any]) -> tuple[int, ...]:
         _flag(trade_state in {"triggered", "manage"}),
         _flag(trade_state in {"avoid", "exit"}),
         _scaled(issuer.get("shares_growth_pct")),
-        _scaled(min(36.0, max(0.0, _float(issuer.get("cash_runway_months"))))),
+        _scaled(_runway_months(issuer)),
         _scaled(min(10.0, max(0.0, _float(issuer.get("current_ratio"))))),
         _scaled(min(20.0, max(0.0, _float(issuer.get("debt_to_cash"))))),
         _flag(not bool(issuer.get("issuer_data_available"))),
