@@ -71,7 +71,7 @@ pacing (`TELEGRAM_MEMECOIN_ALERTS`).
 
 ### Ratified
 
-A memecoin is Ratified when it meets all seven of RATi's basic standards
+A memecoin is Ratified when it meets all nine of RATi's basic standards
 (`src/runner_web/memecoin_ratify.py`). It is not an endorsement, a guarantee
 or advice.
 
@@ -88,6 +88,15 @@ or advice.
    left out; supply under any other program counts, since a creator can hold
    it under a program of their own (live case: "NPC", 22 holders, once read
    0% by leaving out every program-owned account).
+8. At least 100 holders, from GeckoTerminal's token info (free; only for
+   coins passing everything else, at most five a cycle, kept six hours).
+   "NPC" had 22.
+9. Pool liquidity burned or locked: 10% or less of the pool's liquidity
+   tokens still exist. The pool's own count of issued tokens is compared with
+   the liquidity-token mint's supply (two reads, a credit per 100). Pump burns
+   all of a graduated PumpSwap pool's. PumpSwap and Raydium CPMM are read;
+   other DEXes, and liquidity held in a lock program rather than burned, show
+   as not checked yet, so the coin is not ratified.
 
 Standards 4-6 cost nothing. Only coins passing them are read: the mint account
 (one credit per 100, kept once clean, since a revoked authority cannot return
