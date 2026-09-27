@@ -22,9 +22,6 @@ MIN_RUNWAY_MONTHS = 12.0
 MAX_SHARE_GROWTH_PCT = 25.0
 HALT_DAYS = 30
 DELISTING_DAYS = 90
-# Banks, lenders, insurers and real estate (SIC 6000-6799): lending runs through
-# operating cash flow, so a burn-based runway says nothing about them.
-FINANCIAL_SIC = range(6000, 6800)
 LABELS = {
     "exchange": "Listed on NASDAQ, NYSE or NYSE American",
     "filings": "Up to date with SEC filings",
@@ -56,7 +53,6 @@ def standards(
     halted_on: date | None,
     delisting_on: date | None,
     today: date,
-    sic: str | None = None,
 ) -> dict[str, Any]:
     """Each standard as met, not met or not known, and whether all are met."""
 
@@ -66,10 +62,8 @@ def standards(
     operating = issuer.get("operating_cash_flow")
     growth = issuer.get("shares_growth_pct")
     not_burning = operating is not None and operating >= 0
-    try:
-        financial = int(str(sic).strip()) in FINANCIAL_SIC
-    except (TypeError, ValueError):
-        financial = False
+    # Whether runway applies is decided with the issuer facts, for every reader.
+    financial = issuer.get("runway_applies") is False
     results = {
         "exchange": None if not listed else listed in MAJOR_EXCHANGES,
         # No financial facts at all means we have not read its filings, not that
@@ -186,7 +180,6 @@ def stock_ratifications(
             halted_on=halts.get(ticker),
             delisting_on=delistings.get(ticker),
             today=at.date(),
-            sic=companies[ticker]["sic"] if ticker in companies else None,
         )
         for ticker in tickers
     }

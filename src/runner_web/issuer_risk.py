@@ -5,6 +5,18 @@ from datetime import date, timedelta
 from typing import Any
 
 PERIODIC_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
+# Banks, lenders, insurers and real estate: lending and premiums run through
+# operating cash flow, so a burn-based runway says nothing about them. This is
+# the one place that decides it; the risk check, ratification and Dash all
+# read the result.
+FINANCIAL_SIC = range(6000, 6800)
+
+
+def is_financial(sic: Any) -> bool:
+    try:
+        return int(str(sic).strip()) in FINANCIAL_SIC
+    except (TypeError, ValueError):
+        return False
 
 
 def _latest(rows: list[dict[str, Any]], concept: str) -> dict[str, Any] | None:
@@ -16,7 +28,23 @@ def _value(row: dict[str, Any] | None) -> float | None:
     return float(row["value"]) if row is not None else None
 
 
-def build_issuer_risk_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def build_issuer_risk_context(rows: list[dict[str, Any]], sic: Any = None) -> dict[str, Any]:
+    """Issuer facts and what they mean, decided once for every reader.
+
+    For a financial company the runway is not applicable: it is None with
+    `runway_applies` False, so no reader can treat it as a burn warning.
+    """
+
+    context = _raw_issuer_context(rows)
+    financial = is_financial(sic)
+    context.update(sic=str(sic).strip() if sic else None, financial=financial)
+    context["runway_applies"] = not financial
+    if financial:
+        context["cash_runway_months"] = None
+    return context
+
+
+def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows:
         return {
             "issuer_data_available": False,
@@ -119,7 +147,7 @@ def issuer_risk_contexts(database: Any, tickers: list[str]) -> dict[str, dict[st
     placeholders = ",".join("?" for _ in unique)
     rows = database.execute(
         f"""
-        SELECT c.ticker,f.concept,f.value,f.unit,f.period_start,f.period_end,
+        SELECT c.ticker,c.sic,f.concept,f.value,f.unit,f.period_start,f.period_end,
                f.filed_at,f.form,f.source_tag
         FROM sec_companies c
         LEFT JOIN issuer_facts f ON f.cik=c.cik
@@ -129,15 +157,20 @@ def issuer_risk_contexts(database: Any, tickers: list[str]) -> dict[str, dict[st
         unique,
     ).fetchall()
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    sics: dict[str, Any] = {}
     known = set(unique)
     for raw in rows:
         row = dict(raw)
         ticker = str(row["ticker"])
         known.discard(ticker)
+        sics[ticker] = sics.get(ticker) or row.get("sic")
         if row.get("concept"):
             grouped[ticker].append(row)
         else:
             grouped.setdefault(ticker, [])
     for ticker in known:
         grouped.setdefault(ticker, [])
-    return {ticker: build_issuer_risk_context(facts) for ticker, facts in grouped.items()}
+    return {
+        ticker: build_issuer_risk_context(facts, sics.get(ticker))
+        for ticker, facts in grouped.items()
+    }
