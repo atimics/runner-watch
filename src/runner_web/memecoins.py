@@ -430,7 +430,8 @@ def _saved_list(key: str) -> list[dict[str, Any]]:
     return value if isinstance(value, list) else []
 
 
-_view_noted_at = 0.0
+# monotonic() can be under a minute on a fresh machine, so the first view always counts.
+_view_noted_at = float("-inf")
 
 
 def is_memecoin_view(path: str) -> bool:
