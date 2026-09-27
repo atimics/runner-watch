@@ -12,9 +12,10 @@ The chart and text communicate different things. The line is green or red for
 an increase or decrease from its first saved price, or gray for unchanged prices.
 This does not recolor the status, and is not necessarily the session percentage
 shown beside the latest quote. The accessible description and SVG title include
-the saved time range, prices, and change. All rows retain the existing shared
-symmetric percentage domain (minimum ±2%), so the same vertical distance means
-the same percentage move within the batch. Time, not sample index, sets x position.
+the saved time range, prices, and change. Each row is scaled to its own low
+and high, like its full chart, with the start line where it falls. A shared
+domain once made every row the same scale, but one outsized move (a memecoin up
+1,000%) then flattened every other row on the board. Time, not sample index, sets x position.
 
 Only valid positive saved prices are drawn. Timestamps are sorted and duplicate
 times keep the last valid observation. No history is an em dash, one observation

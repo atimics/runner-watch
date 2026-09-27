@@ -277,7 +277,7 @@ def test_sparkline_orders_times_deduplicates_and_keeps_real_time_spacing(page):
     }
     open_list(page, [stock(ticker="TEST")], payload)
     expect(page.locator(".mini-chart-line")).to_have_attribute(
-        "d", "M1.00 9.00 L11.33 6.90 L63.00 2.00"
+        "d", "M1.00 16.00 L11.33 11.80 L63.00 2.00"
     )
     expect(page.locator(".pulse-entry-dot")).to_have_count(0)  # future marker is not a saved point
     expect(page.locator(".mini-chart")).to_have_attribute("aria-label", re.compile("\\+10.0%"))
@@ -424,3 +424,17 @@ def test_initial_fetch_failure_never_draws_fake_price_and_retries(page):
     page.clock.fast_forward(61000)
     expect(page.locator(".mini-chart")).to_have_attribute("data-history", "available")
     assert state["errors"] == []
+
+
+def test_one_rows_huge_move_does_not_flatten_the_others(page):
+    # A memecoin up 900% once set the scale for the whole board, so a row that
+    # moved 1% drew as a flat line while its full chart showed the swing.
+    open_list(
+        page,
+        [stock(ticker="CALM"), stock(ticker="RUNNER")],
+        {"charts": {"CALM": points(100, 101), "RUNNER": points(10, 100)}},
+    )
+    calm = page.locator('.mini-chart[data-ticker="CALM"] .mini-chart-line').get_attribute("d")
+    ys = [float(pair.split()[1]) for pair in calm.replace("M", "").split("L")]
+
+    assert (min(ys), max(ys)) == (2.0, 16.0)

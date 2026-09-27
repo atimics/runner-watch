@@ -224,19 +224,6 @@
     return [...ordered].sort((a, b) => a[0] - b[0]).map(([time, price]) => ({time, price}));
   }
 
-  function sharedChartDomain() {
-    let maximum = 0;
-    chartCache.forEach(points => {
-      const rows = chartRows(points), baseline = rows[0]?.price;
-      if (!baseline) return;
-      rows.forEach(point => {
-        const move = Math.abs((point.price / baseline - 1) * 100);
-        if (Number.isFinite(move)) maximum = Math.max(maximum, move);
-      });
-    });
-    return Math.max(2, Math.ceil(maximum / 2 - 1e-9) * 2);
-  }
-
   function chartElement(tag, attributes, text) {
     const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
     Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
@@ -260,7 +247,7 @@
     chartSummary(svg, 'price history unavailable');
   }
 
-  function drawMiniChart(svg, points, annotations = [], domain = sharedChartDomain()) {
+  function drawMiniChart(svg, points, annotations = []) {
     const rows = chartRows(points);
     if (!rows.length) { unavailableChart(svg); return; }
     const baseline = rows[0].price;
@@ -268,7 +255,10 @@
     if (values.some(value => !Number.isFinite(value))) { unavailableChart(svg); return; }
     const start = rows[0].time, end = rows.at(-1).time;
     const x = time => start === end ? 32 : 1 + (time - start) / (end - start) * 62;
-    const y = value => 9 - (value / domain) * 7;
+    // Each row on its own range, like its full chart: one row's 1,000% move
+    // no longer flattens every other row. The start line stays where it falls.
+    const low = Math.min(...values), high = Math.max(...values);
+    const y = value => high === low ? 9 : 16 - (value - low) / (high - low) * 14;
     const delta = values.at(-1);
     svg.classList.toggle('rising', delta > 0);
     svg.classList.toggle('falling', delta < 0);
@@ -279,7 +269,7 @@
     } else {
       const path = rows.map((point, index) => `${index ? 'L' : 'M'}${x(point.time).toFixed(2)} ${y(values[index]).toFixed(2)}`).join(' ');
       svg.append(
-        chartElement('line', {class:'mini-chart-zero', x1:1, y1:9, x2:63, y2:9}),
+        chartElement('line', {class:'mini-chart-zero', x1:1, y1:y(0), x2:63, y2:y(0)}),
         chartElement('path', {class:'mini-chart-line', d:path, fill:'none', stroke:'currentColor', 'stroke-width':1.4, 'vector-effect':'non-scaling-stroke', 'stroke-linecap':'round', 'stroke-linejoin':'round'}),
       );
     }
@@ -305,11 +295,10 @@
   const chartFailures = new Set(), chartRetries = new Set(), chartRetryTimers = new Map();
   let chartObserver = null;
   function paintCharts(root = document) {
-    const domain = sharedChartDomain();
     root.querySelectorAll('.mini-chart[data-ticker]').forEach(svg => {
       const ticker = svg.dataset.ticker;
       if (!chartCache.has(ticker) && svg.dataset.history === 'pending' && !chartFailures.has(ticker)) return;
-      drawMiniChart(svg, chartCache.get(svg.dataset.ticker), annotationCache.get(svg.dataset.ticker), domain);
+      drawMiniChart(svg, chartCache.get(svg.dataset.ticker), annotationCache.get(svg.dataset.ticker));
       if (chartFailures.has(ticker) && svg.classList.contains('loaded')) {
         svg.dataset.history = 'stale';
         const label = svg.getAttribute('aria-label') + '. Refresh unavailable; showing saved history.';
