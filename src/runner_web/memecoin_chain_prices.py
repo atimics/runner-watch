@@ -38,7 +38,7 @@ SOL_DECIMALS = 9
 Rpc = Callable[..., dict[str, Any]]
 
 
-def _accounts(addresses: list[str], rpc: Rpc) -> dict[str, dict[str, Any] | None]:
+def read_accounts(addresses: list[str], rpc: Rpc) -> dict[str, dict[str, Any] | None]:
     """jsonParsed accounts in calls of 100, one credit each."""
 
     found: dict[str, dict[str, Any] | None] = {}
@@ -73,7 +73,7 @@ def _raw(account: dict[str, Any] | None) -> bytes | None:
         return None
 
 
-def _token_amount(account: dict[str, Any] | None) -> tuple[float, int] | None:
+def token_amount(account: dict[str, Any] | None) -> tuple[float, int] | None:
     try:
         amount = account["data"]["parsed"]["info"]["tokenAmount"]  # type: ignore[index]
         return int(amount["amount"]) / 10 ** int(amount["decimals"]), int(amount["decimals"])
@@ -110,13 +110,13 @@ def chain_prices(
     """
 
     pumpswap = [pool for pool in pools if pool.get("program") in (None, PUMP_SWAP)]
-    first = _accounts(
+    first = read_accounts(
         [SOL_VAULT, USDC_VAULT]
         + [pool["pool_address"] for pool in pumpswap]
         + [curve["pool_address"] for curve in curves],
         rpc,
     )
-    sol, usdc = _token_amount(first[SOL_VAULT]), _token_amount(first[USDC_VAULT])
+    sol, usdc = token_amount(first[SOL_VAULT]), token_amount(first[USDC_VAULT])
     if not sol or not usdc or sol[0] <= 0:
         raise ValueError("SOL price unavailable")
     sol_usd = usdc[0] / sol[0]
@@ -140,7 +140,7 @@ def chain_prices(
         and layout["base_mint"] == pool["token_address"]
         and layout["quote_mint"] in (SOL, USDC)
     }
-    vaults = _accounts(
+    vaults = read_accounts(
         [
             key
             for layout in layouts.values()
@@ -150,8 +150,8 @@ def chain_prices(
     )
     for address, layout in layouts.items():
         base, quote = (
-            _token_amount(vaults[layout["base_vault"]]),
-            _token_amount(vaults[layout["quote_vault"]]),
+            token_amount(vaults[layout["base_vault"]]),
+            token_amount(vaults[layout["quote_vault"]]),
         )
         if not base or not quote or base[0] <= 0:
             continue

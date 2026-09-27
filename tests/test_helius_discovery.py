@@ -562,6 +562,10 @@ def test_graduations_are_read_every_third_run_within_the_same_pages(database):
     # Two pages and at most one wallet page each run, so the credit cost is unchanged.
     assert all(len(addresses) <= 3 for addresses in runs)
     assert [MIGRATION_AUTHORITY in addresses for addresses in runs] == [True, False, False]
+    # The launch stream takes the same kind of slot in another run.
+    from runner_web.memecoin_chain_ingestion import MINT_AUTHORITY
+
+    assert [MINT_AUTHORITY in addresses for addresses in runs] == [False, False, True]
 
 
 def test_a_graduation_creates_its_pool_from_the_migration(database):
@@ -796,3 +800,30 @@ def test_a_view_on_the_site_keeps_the_worker_sampling(database, monkeypatch):
     assert memecoins._market_states(keys=("memecoin_last_view",)) == {}
     assert client.get("/memecoins").status_code == 200
     assert memecoins._market_states(keys=("memecoin_last_view",))["memecoin_last_view"]
+
+
+def test_a_creator_sell_turns_the_coin_avoid_in_the_same_cycle(database, monkeypatch):
+    from runner_web.memecoin_watch import _finding
+
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "chain")
+    sell = _finding(
+        "creator_sell",
+        "Creator sold or moved 40% of their tokens (2.0% of supply)",
+        MINT,
+        CREATOR,
+        [helius._encode(bytes([5]) * 64)],
+        AT,
+    )
+    monkeypatch.setattr(memecoins, "creator_sells", lambda rows, balances, **_: ([sell], {}))
+
+    rows, _ = memecoins._collect_helius(
+        at=AT,
+        rpc=_chain_rpc(_pool_accounts()),
+        download=lambda *_: json.dumps({"data": [_gecko_pool()]}).encode(),
+    )
+
+    assert rows[0]["early"]["state"] == "avoid"
+    assert "Creator is selling" in rows[0]["early"]["reasons"]
+    saved = memecoins._market_states(keys=("memecoin_watch_findings",))["memecoin_watch_findings"]
+    assert saved[0]["id"] == sell["id"]

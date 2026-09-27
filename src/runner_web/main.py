@@ -2576,6 +2576,14 @@ async def memecoin_worker() -> None:
         except Exception:
             LOG.exception("Memecoin refresh failed")
         try:
+            from runner_web.memecoin_watch import dispatch_risk_alerts
+
+            await run_in_threadpool(dispatch_risk_alerts, origin=RUNNERS_ORIGIN)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("Memecoin risk alerts failed")
+        try:
             # Calls fill at the first quote after their request.
             for handle in dict.fromkeys(await run_in_threadpool(fill_memecoin_call_orders)):
                 _invalidate_public_screen_data("caller", handle)
