@@ -42,6 +42,7 @@ def test_saved_chain_findings_reach_list_and_detail_for_their_token(monkeypatch)
     monkeypatch.setattr(memecoins, "memecoins_enabled", lambda: True)
     monkeypatch.setattr(memecoins, "stored_memecoin", lambda _: None)
     monkeypatch.setattr(memecoins, "memecoin_history", lambda *a, **kw: [])
+    monkeypatch.setattr(memecoins, "memecoin_state_changes", lambda *a, **kw: [])
     board = listing("memecoins", memecoins.memecoin_market(at=at)["rows"])
     subject = detail("memecoins", memecoins.memecoin_detail("example", at=at))
     for item in (board["rows"][0], subject["item"]):
