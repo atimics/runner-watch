@@ -83,9 +83,11 @@ or advice.
 4. A graduated pool with $10K or more of real liquidity.
 5. At least 24 hours since its pool opened.
 6. No launch bundle (remembered for a week), creator selling or liquidity pull.
-7. The ten largest holders, not counting accounts owned by a program address
-   (any DEX pool, bonding curve or lock; no private key controls one), own 30%
-   or less of supply.
+7. The ten largest holders own 30% or less of supply. Accounts held by a
+   known pool or bonding curve (PumpSwap, Pump, Raydium, Orca, Meteora) are
+   left out; supply under any other program counts, since a creator can hold
+   it under a program of their own (live case: "NPC", 22 holders, once read
+   0% by leaving out every program-owned account).
 
 Standards 4-6 cost nothing. Only coins passing them are read: the mint account
 (one credit per 100, kept once clean, since a revoked authority cannot return
