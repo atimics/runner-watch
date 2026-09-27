@@ -8216,6 +8216,7 @@ def _stock_list_data_uncached() -> dict[str, Any]:
     from runner_web.stories import stories_by_subject
 
     rows, updated_at = _all_public_pulse_rows()
+    rows = _with_stock_ratification(rows)
     tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
     return listing(
         "stocks",
@@ -8230,6 +8231,7 @@ def _stock_search_base_uncached() -> dict[str, Any]:
     from runner_web.stories import stories_by_subject
 
     rows, updated_at = _all_public_pulse_rows()
+    rows = _with_stock_ratification(rows)
     tickers = [str(item.get("ticker") or "").upper() for item in rows if item.get("ticker")]
     return {
         "rows": rows,
@@ -9734,11 +9736,40 @@ def ticker_chart_data(ticker: str) -> list[dict[str, Any]]:
     return ticker_charts_data([ticker]).get(ticker, [])
 
 
+def _ratified_detail(ticker: str) -> dict[str, Any] | None:
+    detail = ticker_detail_data(ticker)
+    current = detail.get("current") if isinstance(detail, dict) else None
+    if isinstance(current, dict):
+        rated = _with_stock_ratification([{**current, "ticker": ticker}])[0]
+        if rated.get("ratification"):
+            detail["current"] = {**current, "ratification": rated["ratification"]}
+    return detail
+
+
+def _with_stock_ratification(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each stock row with its ratification; a failed check leaves rows as they were."""
+
+    from runner_web.stock_ratify import stock_ratifications
+
+    try:
+        with connection() as database:
+            found = stock_ratifications(database, rows, at=now())
+    except Exception:
+        LOG.warning("Stock ratification failed", exc_info=True)
+        return rows
+    return [
+        {**row, "ratification": found[ticker]}
+        if (ticker := str(row.get("ticker") or "").upper()) in found
+        else row
+        for row in rows
+    ]
+
+
 def _public_ticker_detail_data(ticker: str) -> dict[str, Any] | None:
     payload = _public_screen_data(
         "ticker-detail",
         ticker,
-        lambda: {"detail": ticker_detail_data(ticker)},
+        lambda: {"detail": _ratified_detail(ticker)},
     )
     detail = payload.get("detail")
     return dict(detail) if isinstance(detail, dict) else None

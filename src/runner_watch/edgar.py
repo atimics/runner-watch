@@ -28,6 +28,8 @@ LATEST_FILINGS_URL = (
 )
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://stonks.rati.foundation")
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
+# "Item 3.01: Notice of Delisting ..." lines in an 8-K's feed summary.
+ITEM_RE = re.compile(r"\bItem (\d{1,2}\.\d{2})\b")
 ACCESSION_RE = re.compile(r"accession-number=([0-9-]+)")
 TITLE_CIK_RE = re.compile(r"\((\d{6,10})\)\s+\((Issuer|Filer|Subject|Reporting)\)")
 MAX_SEC_RESPONSE_BYTES = 20 * 1024 * 1024
@@ -50,6 +52,8 @@ class EdgarFiling:
     role: str
     filed_at: str
     filing_url: str
+    # 8-K item numbers from the feed summary, comma separated ("3.01,9.01").
+    items: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +286,7 @@ def parse_latest_filings(text: str) -> list[EdgarFiling]:
             continue
         accession = accession_match.group(1)
         role = cik_match.group(2)
+        summary = entry.findtext("atom:summary", default="", namespaces=ATOM)
         filing = EdgarFiling(
             accession=accession,
             cik=int(cik_match.group(1)),
@@ -290,6 +295,7 @@ def parse_latest_filings(text: str) -> list[EdgarFiling]:
             role=role,
             filed_at=updated,
             filing_url=str(link.attrib.get("href", "")),
+            items=",".join(sorted(set(ITEM_RE.findall(summary)))),
         )
         current = selected.get(accession)
         if current is None or role_priority.get(role, 0) > role_priority.get(current.role, 0):

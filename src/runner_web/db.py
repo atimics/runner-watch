@@ -3818,6 +3818,12 @@ def _migration_092_memecoin_early_features(db: DatabaseConnection) -> None:
     _ensure_column(db, "memecoin_quote_history", "features_json TEXT")
 
 
+def _migration_093_filing_items(db: DatabaseConnection) -> None:
+    """8-K item numbers from the EDGAR feed, so a delisting notice (3.01) is seen."""
+
+    _ensure_column(db, "sec_filings", "items TEXT NOT NULL DEFAULT ''")
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3917,6 +3923,7 @@ MIGRATIONS = (
     Migration(90, "sports_market_activity", _migration_090_sports_market_activity),
     Migration(91, "memecoin_call_orders", _migration_091_memecoin_call_orders),
     Migration(92, "memecoin_early_features", _migration_092_memecoin_early_features),
+    Migration(93, "filing_items", _migration_093_filing_items),
 )
 
 

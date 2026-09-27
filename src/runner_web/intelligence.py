@@ -193,6 +193,7 @@ def _prepare_event(
         "title": filing.title,
         "filed_at": filing.filed_at,
         "filing_url": filing.filing_url,
+        "items": filing.items,
         "actor": ownership.owner_name if ownership else None,
         "actor_cik": ownership.owner_cik if ownership else None,
         "actor_title": ownership.owner_title if ownership else None,
@@ -282,6 +283,7 @@ def refresh_edgar() -> dict[str, Any]:
             "form": filing.form,
             "filed_at": filing.filed_at,
             "filing_url": filing.filing_url,
+            "items": filing.items,
         }
         if not _interesting(filing.form):
             mark_source_item(
@@ -363,7 +365,7 @@ def refresh_edgar() -> dict[str, Any]:
                     post_transaction_shares,stake_change_pct,is_10b5_1,
                     direct_ownership,footnotes
                     ,beneficial_ownership_pct,beneficial_shares,beneficial_owner_names,
-                    reporting_person_types,evidence_json
+                    reporting_person_types,evidence_json,items
                 ) VALUES(
                     :accession,:cik,:ticker,:company,:form,:kind,:sentiment,:score,:title,
                     :filed_at,:filing_url,:actor,:actor_cik,:actor_title,:transaction_codes,
@@ -372,7 +374,7 @@ def refresh_edgar() -> dict[str, Any]:
                     :parser_version,:post_transaction_shares,:stake_change_pct,
                     :is_10b5_1,:direct_ownership,:footnotes
                     ,:beneficial_ownership_pct,:beneficial_shares,:beneficial_owner_names,
-                    :reporting_person_types,:evidence_json
+                    :reporting_person_types,:evidence_json,:items
                 )
                 """,
                 {
