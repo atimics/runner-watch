@@ -1,8 +1,11 @@
 """Ratified: a stock that meets RATi's basic standards.
 
-Six standards, all required, from data already collected: the listing, SEC
-filings and financial facts, halts, and the existing data-quality check. Not
-an endorsement or advice.
+Five standards, all required, from data already collected: the listing, SEC
+filings and financial facts, and halts. Not an endorsement or advice.
+
+The scanner's evidence gate is not one of them: it asks whether today's
+momentum setup is backed up (volume, news, a current quote), so it fails
+every stock whenever markets are closed.
 """
 
 from __future__ import annotations
@@ -18,16 +21,18 @@ MIN_RUNWAY_MONTHS = 12.0
 MAX_SHARE_GROWTH_PCT = 25.0
 HALT_DAYS = 30
 DELISTING_DAYS = 90
+# Banks, lenders, insurers and real estate (SIC 6000-6799): lending runs through
+# operating cash flow, so a burn-based runway says nothing about them.
+FINANCIAL_SIC = range(6000, 6800)
 LABELS = {
     "exchange": "Listed on NASDAQ, NYSE or NYSE American",
     "filings": "Up to date with SEC filings",
     "cash": "12+ months of cash, or not burning cash",
     "dilution": "Share count up 25% or less in a year",
     "trading": "No halt in 30 days and no delisting notice in 90",
-    "data": "Data-quality check passes",
 }
 NOTE = (
-    "Ratified: meets RATi's six basic standards for a stock. "
+    "Ratified: meets RATi's five basic standards for a stock. "
     "Not an endorsement, a guarantee or advice."
 )
 
@@ -49,8 +54,8 @@ def standards(
     issuer: dict[str, Any],
     halted_on: date | None,
     delisting_on: date | None,
-    verified: bool,
     today: date,
+    sic: str | None = None,
 ) -> dict[str, Any]:
     """Each standard as met, not met or not known, and whether all are met."""
 
@@ -60,6 +65,10 @@ def standards(
     operating = issuer.get("operating_cash_flow")
     growth = issuer.get("shares_growth_pct")
     not_burning = operating is not None and operating >= 0
+    try:
+        financial = int(str(sic).strip()) in FINANCIAL_SIC
+    except (TypeError, ValueError):
+        financial = False
     results = {
         "exchange": None if not listed else listed in MAJOR_EXCHANGES,
         # No financial facts at all means we have not read its filings, not that
@@ -67,10 +76,13 @@ def standards(
         "filings": None
         if not issuer.get("issuer_data_available")
         else report_day is not None and (today - report_day).days <= REPORT_DAYS,
-        "cash": True if not_burning else None if runway is None else runway >= MIN_RUNWAY_MONTHS,
+        "cash": True
+        if financial or not_burning
+        else None
+        if runway is None
+        else runway >= MIN_RUNWAY_MONTHS,
         "dilution": None if growth is None else growth <= MAX_SHARE_GROWTH_PCT,
         "trading": halted_on is None and delisting_on is None,
-        "data": verified,
     }
     trading = [
         *([f"halted {_label(halted_on)}"] if halted_on else []),
@@ -85,14 +97,15 @@ def standards(
             if issuer.get("issuer_data_available")
             else ""
         ),
-        "cash": "not burning cash"
+        "cash": "not applied: financial company"
+        if financial
+        else "not burning cash"
         if not_burning
         else f"{runway:.0f} months of cash"
         if runway is not None
         else "",
         "dilution": f"shares up {growth:.0f}%" if growth is not None else "",
         "trading": ", ".join(trading),
-        "data": "" if verified else "evidence not complete",
     }
     return {
         "ratified": all(result is True for result in results.values()),
@@ -112,16 +125,14 @@ def stock_ratifications(
 ) -> dict[str, dict[str, Any]]:
     """Ratification for each item's ticker, from a few batched queries."""
 
-    from runner_web.stock_indicator import stock_indicator
-
     tickers = sorted({str(item.get("ticker") or "").upper() for item in items} - {""})
     if not tickers:
         return {}
     marks = ",".join("?" for _ in tickers)
-    exchanges = {
-        str(row["ticker"]).upper(): str(row["exchange"])
+    companies = {
+        str(row["ticker"]).upper(): row
         for row in database.execute(
-            f"SELECT ticker,exchange FROM sec_companies WHERE UPPER(ticker) IN ({marks})",
+            f"SELECT ticker,exchange,sic FROM sec_companies WHERE UPPER(ticker) IN ({marks})",
             tickers,
         ).fetchall()
     }
@@ -145,15 +156,14 @@ def stock_ratifications(
         if (day := _day(row["latest"])) is not None:
             delistings[row["ticker"]] = day
     issuers = issuer_risk_contexts(database, tickers)
-    by_ticker = {str(item.get("ticker") or "").upper(): item for item in items}
     return {
         ticker: standards(
-            exchange=exchanges.get(ticker),
+            exchange=companies[ticker]["exchange"] if ticker in companies else None,
             issuer=issuers.get(ticker) or {},
             halted_on=halts.get(ticker),
             delisting_on=delistings.get(ticker),
-            verified=bool(stock_indicator(by_ticker[ticker])["verification"]["verified"]),
             today=at.date(),
+            sic=companies[ticker]["sic"] if ticker in companies else None,
         )
         for ticker in tickers
     }
