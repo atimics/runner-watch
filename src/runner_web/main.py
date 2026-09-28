@@ -308,6 +308,7 @@ from runner_web.shared_state import (
 from runner_web.short_data import short_data_configured, short_data_for_scan
 from runner_web.source_workers import (
     apewisdom_source_worker,
+    delisting_notice_worker,
     discovery_source_worker,
     house_disclosure_worker,
     trading_halt_worker,
@@ -927,6 +928,7 @@ def _start_worker_tasks(
         asyncio.create_task(edgar_worker(), name="edgar"),
         asyncio.create_task(public_screen_warm_worker(), name="public-screens"),
         asyncio.create_task(trading_halt_worker(), name="trading-halts"),
+        asyncio.create_task(delisting_notice_worker(), name="delisting-notices"),
         asyncio.create_task(house_disclosure_worker(), name="house-disclosures"),
         asyncio.create_task(discovery_source_worker(), name="discovery-sources"),
         asyncio.create_task(apewisdom_source_worker(), name="apewisdom"),
