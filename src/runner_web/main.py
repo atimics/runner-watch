@@ -3052,6 +3052,24 @@ def trust_page(
     )
 
 
+@app.get("/rules.toml")
+@app.get("/trust/rules.toml")
+@app.get("/rules.schema.json")
+@app.get("/trust/rules.schema.json")
+def trust_rules_file(request: Request) -> Response:
+    """The newest published rules.toml or its schema, byte for byte as revealed."""
+
+    from runner_web.trust import published_file
+
+    enforce_rate(request, "trust", limit=120, seconds=60)
+    name = request.url.path.rsplit("/", 1)[-1]
+    text = published_file(name)
+    if text is None:
+        raise HTTPException(status_code=404, detail="Not published")
+    media = "application/schema+json" if name.endswith(".json") else "application/toml"
+    return Response(text, media_type=f"{media}; charset=utf-8")
+
+
 @app.post("/trust/access")
 async def trust_access_request(request: Request) -> RedirectResponse:
     """A request to read the private rules, from a GitHub account that looks real."""

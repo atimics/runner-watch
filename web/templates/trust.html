@@ -34,10 +34,60 @@
       <p class="trust-digest-label">Digest</p>
       <code class="trust-digest">{{ version.digest }}</code>
       <p>{% if version.verified %}Recomputed on this page from the {{ version.files|length }} files below: it matches.{% else %}Recomputed on this page from the files below: it does not match the published digest.{% endif %}</p>
+      {% if version.rules %}{% set rules = version.rules %}
+      <p>{{ rules.meaning }} <strong>Ratified when:</strong> {{ rules.ratified_when }}</p>
+      <p class="trust-source">Written as data: <code>rules.toml</code>, checked against <code>rules.schema.json</code>.{% if loop.first %} <a href="/trust/rules.toml">rules.toml</a> · <a href="/trust/rules.schema.json">rules.schema.json</a>{% endif %}</p>
+      <h3>Result states</h3>
+      <dl class="trust-states">
+        {% for state in rules.states %}<div><dt>{{ state.label }}</dt><dd>{{ state.meaning }} <span class="trust-meta">{% if state.counted %}Counted{% else %}Not counted{% endif %} · {% if state.blocks %}blocks ratification{% else %}does not block{% endif %}</span></dd></div>{% endfor %}
+      </dl>
+      {% for asset_id, asset in rules.assets.items() %}
+      <h3>{{ asset.label }}: {{ asset.standards|length }} standards</h3>
+      <ol class="trust-standards">
+        {% for standard in asset.standards %}
+        <li id="v{{ version.version|replace('.', '-') }}-{{ asset_id }}-{{ standard.id }}">
+          <p class="trust-standard-label"><strong>{{ standard.label }}</strong> <code>{{ asset_id }}.{{ standard.id }}</code></p>
+          {% for test in standard.tests %}<code class="trust-test">{{ test }}</code>{% endfor %}
+          {% if standard.why %}<p>{{ standard.why }}</p>{% endif %}
+          {% if standard.not_applied_text %}<p><strong>Not applied when</strong> <code>{{ standard.not_applied_text }}</code>: {{ standard.not_applied.reason }}</p>{% endif %}
+          <p class="trust-meta">Reads: {% for fact in standard.sources %}{{ fact.label }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+        </li>
+        {% endfor %}
+      </ol>
+      {% if asset.lists %}
+      <details class="trust-lists">
+        <summary>Lists the {{ asset.label|lower }} standards use</summary>
+        {% for list_name, items in asset.lists.items() %}
+        <p class="trust-meta"><code>{{ list_name }}</code></p>
+        <ul>{% for item in items %}<li>{{ item.label }} <code>{{ item.id }}</code></li>{% endfor %}</ul>
+        {% endfor %}
+      </details>
+      {% endif %}
+      <h4>How the facts are gathered</h4>
+      <dl class="trust-facts">
+        {% for fact in asset.facts %}
+        <div><dt>{{ fact.label }}</dt><dd>{{ fact.source }}{% if fact.refresh %}. <span class="trust-meta">{{ fact.refresh }}</span>{% endif %}{% if fact.xbrl %}<span class="trust-meta trust-xbrl">XBRL concepts read</span><ul class="trust-xbrl-list">{% for concept in fact.xbrl %}<li><code>{{ concept }}</code></li>{% endfor %}</ul>{% endif %}</dd></div>
+        {% endfor %}
+      </dl>
+      {% endfor %}
+      {% if rules.cases %}
+      <h3>Worked cases</h3>
+      <p>These shaped the rules and are kept as tests.</p>
+      <dl class="trust-facts">
+        {% for case in rules.cases %}<div><dt>{{ case.name }} <span class="trust-meta">{{ case.asset }}{% for id in case.standards %} · {{ id }}{% endfor %}</span></dt><dd>{{ case.what }} {{ case.lesson }}</dd></div>{% endfor %}
+      </dl>
+      {% endif %}
+      {% if rules.freshness %}<p>{{ rules.freshness }}</p>{% endif %}
+      <details class="trust-lists">
+        <summary>rules.toml as published</summary>
+        <pre class="trust-text">{{ version.files['src/ratitrust/rules.toml'] }}</pre>
+      </details>
+      {% else %}
       <h3>Rules</h3>
       <pre class="trust-text">{{ version.rules_text }}</pre>
       <h3>Methodology</h3>
       <pre class="trust-text">{{ version.methodology_text }}</pre>
+      {% endif %}
     </details>
     {% else %}
     <p>No version has been published in full yet.</p>
@@ -46,7 +96,7 @@
 
   <section class="trust-verify" aria-labelledby="trust-verify-heading">
     <h2 id="trust-verify-heading">Checking a digest</h2>
-    <p>For each covered file (the rulebook, the methodology and the rule code), take the SHA-256 of its contents. Write one line per file, <code>path hash</code>, in path order. The SHA-256 of those lines is the digest.</p>
+    <p>For each covered file (the rules, their schema and the rule code; for 1.0.0, the rulebook, the methodology and the rule code), take the SHA-256 of its contents. Write one line per file, <code>path hash</code>, in path order. The SHA-256 of those lines is the digest.</p>
   </section>
 
   <section class="trust-access" id="access" aria-labelledby="trust-access-heading">

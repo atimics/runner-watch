@@ -3,7 +3,9 @@
 The rules live in the private ratitrust repository. This page publishes, for
 the current version, its number, date and digest (a commitment to the text),
 and every revealed version in full, with its digest recomputed here from the
-files so a reader can see it matches.
+files so a reader can see it matches. From 1.0.1 the rules are data
+(rules.toml, with a JSON Schema), shown here as structured standards; 1.0.0
+was Markdown and is shown as its text.
 
 Access to the repository is by request with a GitHub account that looks real:
 it exists, is a person's account, is at least 30 days old and has some public
@@ -16,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -24,6 +27,18 @@ from pathlib import Path
 from typing import Any
 
 ASSETS = Path(__file__).parent / "assets"
+RULES_FILE = "src/ratitrust/rules.toml"
+SCHEMA_FILE = "src/ratitrust/rules.schema.json"
+OPERATORS = {
+    "==": "is",
+    ">=": "at least",
+    "<=": "at most",
+    "in": "one of",
+    "none_of": "none of",
+    "absent": "none",
+    "none_within": "none in the last",
+    "between": "between",
+}
 GITHUB_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}")
 MIN_ACCOUNT_AGE = timedelta(days=30)
 MAX_REASON = 500
@@ -68,11 +83,71 @@ def rules_record() -> dict[str, Any]:
         if not record or not record.get("files"):
             continue
         record["verified"] = recomputed_digest(record) == record.get("digest")
+        record["rules"] = parsed_rules(record["files"].get(RULES_FILE))
         record["rules_text"] = record["files"].get("RULES.md", "")
         record["methodology_text"] = record["files"].get("METHODOLOGY.md", "")
         revealed.append(record)
     revealed.sort(key=lambda record: [int(part) for part in record["version"].split(".")])
     return {"current": current, "revealed": list(reversed(revealed))}
+
+
+def parsed_rules(text: str | None) -> dict[str, Any] | None:
+    """A version's rules.toml, with each test written out for reading."""
+
+    if not text:
+        return None
+    try:
+        rules = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    for asset in (rules.get("assets") or {}).values():
+        facts = {fact["id"]: fact for fact in asset.get("facts") or []}
+        lists = asset.get("lists") or {}
+        for standard in asset.get("standards") or []:
+            standard["tests"] = [describe_clause(clause, lists) for clause in standard["test"]]
+            if standard.get("not_applied"):
+                standard["not_applied_text"] = describe_clause(standard["not_applied"], lists)
+            standard["sources"] = [facts[name] for name in standard["facts"] if name in facts]
+    return rules
+
+
+def describe_clause(clause: dict[str, Any], lists: dict[str, Any]) -> str:
+    """One test clause in words, e.g. "real_liquidity at least 10,000 USD"."""
+
+    op = OPERATORS.get(clause["op"], clause["op"])
+    value = clause.get("value")
+    if "list" in clause:
+        items = lists.get(clause["list"]) or []
+        target = f"{clause['list']} ({len(items)})"
+    elif isinstance(value, list):
+        target = " and ".join(_number(item) for item in value)
+    elif value is None:
+        target = ""
+    else:
+        target = _number(value)
+    unit = f" {clause['unit']}" if clause.get("unit") else ""
+    text = f"{clause['fact']} {op} {target}{unit}".strip()
+    if clause.get("unless"):
+        text += f", unless {describe_clause(clause['unless'], lists)}"
+    return text
+
+
+def _number(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return str(value)
+    # Group thousands in amounts, not in codes such as a four-digit SIC.
+    grouping = "," if abs(value) >= 10_000 else ""
+    return f"{value:{grouping}.0f}" if float(value).is_integer() else f"{value:{grouping}}"
+
+
+def published_file(name: str) -> str | None:
+    """The newest revealed version's rules.toml or schema, as published."""
+
+    path = {"rules.toml": RULES_FILE, "rules.schema.json": SCHEMA_FILE}.get(name)
+    for record in rules_record()["revealed"]:
+        if path and path in record["files"] and record["verified"]:
+            return record["files"][path]
+    return None
 
 
 def fetch_github_user(login: str) -> dict[str, Any] | None:
