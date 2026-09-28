@@ -22,7 +22,7 @@ from datetime import date as calendar_date
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote, unquote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -459,6 +459,7 @@ APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
 RUNNERS_ORIGIN = os.getenv("RUNNERS_ORIGIN", APP_ORIGIN).rstrip("/")
 SPORTS_ORIGIN = os.getenv("SPORTS_ORIGIN", "https://sports.rati.chat").rstrip("/")
 LEGACY_ORIGIN = os.getenv("LEGACY_ORIGIN", "https://stonks.rati.foundation").rstrip("/")
+TRUST_ORIGIN = os.getenv("TRUST_ORIGIN", "https://trust.rati.chat").rstrip("/")
 RP_ID = os.getenv("RP_ID", "localhost")
 LEGACY_RP_ID = os.getenv("LEGACY_RP_ID", "stonks.rati.foundation")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
@@ -1402,6 +1403,7 @@ def _request_host(request: Request) -> str:
         _origin_host(RUNNERS_ORIGIN),
         _origin_host(SPORTS_ORIGIN),
         _origin_host(LEGACY_ORIGIN),
+        _origin_host(TRUST_ORIGIN),
     }
     return forwarded_host if forwarded_host in known_hosts else direct_host
 
@@ -1417,6 +1419,7 @@ def origin_for_request(request: Request) -> str:
         _origin_host(RUNNERS_ORIGIN): RUNNERS_ORIGIN,
         _origin_host(SPORTS_ORIGIN): SPORTS_ORIGIN,
         _origin_host(LEGACY_ORIGIN): LEGACY_ORIGIN,
+        _origin_host(TRUST_ORIGIN): TRUST_ORIGIN,
     }
     return known.get(host, APP_ORIGIN)
 
@@ -3017,6 +3020,71 @@ def roadmap_page(
         name="roadmap.html",
         context=page_context(request, runner_session, roadmap=roadmap),
     )
+
+
+def _trust_home(request: Request) -> str:
+    """trust.rati.chat serves the page at its root; elsewhere it is /trust."""
+
+    return "/" if _request_host(request) == _origin_host(TRUST_ORIGIN) else "/trust"
+
+
+@app.get("/trust", response_class=HTMLResponse)
+def trust_page(
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    from runner_web.trust import GITHUB_LOGIN, MESSAGES, rules_record
+
+    enforce_rate(request, "trust", limit=120, seconds=60)
+    requested = request.query_params.get("requested", "")
+    error = request.query_params.get("error", "")
+    return templates.TemplateResponse(
+        request=request,
+        name="trust.html",
+        context=page_context(
+            request,
+            runner_session,
+            trust=rules_record(),
+            requested=requested if GITHUB_LOGIN.fullmatch(requested) else "",
+            already=request.query_params.get("already") == "1",
+            error=MESSAGES.get(error, ""),
+        ),
+    )
+
+
+@app.post("/trust/access")
+async def trust_access_request(request: Request) -> RedirectResponse:
+    """A request to read the private rules, from a GitHub account that looks real."""
+
+    from runner_web.trust import check_github_account, record_access_request
+
+    require_origin(request)
+    enforce_rate(request, "trust-access", limit=5, seconds=3600)
+    form = parse_qs((await request.body())[:4096].decode("utf-8", "replace"))
+    login = (form.get("github") or [""])[0]
+    reason = (form.get("reason") or [""])[0]
+    home = _trust_home(request)
+    account = await run_in_threadpool(check_github_account, login)
+    if not account["ok"]:
+        return RedirectResponse(f"{home}?{urlencode({'error': account['code']})}#access", 303)
+    with connection() as database:
+        new = record_access_request(
+            database,
+            account,
+            reason=reason,
+            ip_hash=client_ip_hash(_request_client_ip(request), RATE_LIMIT_HASH_KEY),
+            at=now(),
+        )
+    query = {"requested": account["login"], **({} if new else {"already": "1"})}
+    return RedirectResponse(f"{home}?{urlencode(query)}#access", 303)
+
+
+@app.get("/api/trust/access-requests")
+def trust_access_requests_api(_access: None = Depends(require_operations_access)) -> JSONResponse:
+    from runner_web.trust import access_requests
+
+    with connection() as database:
+        return JSONResponse({"requests": access_requests(database)})
 
 
 @app.get("/api/roadmap")
@@ -8207,6 +8275,8 @@ def home(
     view: str = DEFAULT_BOARD_VIEW,
 ) -> HTMLResponse:
     selected_view = board_view(view)
+    if _request_host(request) == _origin_host(TRUST_ORIGIN):
+        return trust_page(request, runner_session)
     if product_for_request(request) == "sports":
         return sports_board_response(request, runner_session, selected_view, league)
     return runners_board_response(request, runner_session, selected_view)

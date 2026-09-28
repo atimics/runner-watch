@@ -279,3 +279,18 @@ def test_a_ratified_coin_row_fits_on_a_phone(page, width):
     assert badge["x"] + badge["width"] <= box["x"] + box["width"] + 1
     no_overlap(mark, row.locator(".ticker-value"))
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390])
+def test_the_trust_page_fits_on_a_phone(page, width):
+    from fastapi.testclient import TestClient
+
+    from runner_web import main
+
+    main.RATE_LIMITS.clear()
+    html = TestClient(main.app, base_url=main.RUNNERS_ORIGIN).get("/trust").text
+    page.set_viewport_size(dict(width=width, height=844))
+    open_html(page, html)
+    expect(page.locator(".trust-digest").first).to_be_visible()
+    expect(page.locator(".trust-form button")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
