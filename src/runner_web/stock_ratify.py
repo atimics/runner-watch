@@ -57,9 +57,17 @@ def _note_missing_sectors(database: Any, companies: dict[str, Any], at: datetime
 
 
 def stock_ratifications(
-    database: Any, items: list[dict[str, Any]], *, at: datetime
+    database: Any,
+    items: list[dict[str, Any]],
+    *,
+    at: datetime,
+    facts: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Ratification for each item's ticker, from a few batched queries."""
+    """Ratification for each item's ticker, from a few batched queries.
+
+    When `facts` is given, it receives each ticker's inputs to the rules, for
+    the record of results.
+    """
 
     tickers = sorted({str(item.get("ticker") or "").upper() for item in items} - {""})
     if not tickers:
@@ -109,15 +117,18 @@ def stock_ratifications(
     issuers = issuer_risk_contexts(database, tickers)
     read = notices_read(database, at)
     _note_missing_sectors(database, companies, at)
-    return {
-        ticker: standards(
-            exchange=companies[ticker]["exchange"] if ticker in companies else None,
-            issuer=issuers.get(ticker) or {},
-            halted_on=halts.get(ticker),
-            delisting_on=delistings.get(ticker),
-            today=at.date(),
-            filed=periodic.get(ticker),
-            delistings_read=read,
-        )
-        for ticker in tickers
-    }
+    results = {}
+    for ticker in tickers:
+        inputs = {
+            "exchange": companies[ticker]["exchange"] if ticker in companies else None,
+            "issuer": issuers.get(ticker) or {},
+            "halted_on": halts.get(ticker),
+            "delisting_on": delistings.get(ticker),
+            "today": at.date(),
+            "filed": periodic.get(ticker),
+            "delistings_read": read,
+        }
+        results[ticker] = standards(**inputs)
+        if facts is not None:
+            facts[ticker] = inputs
+    return results

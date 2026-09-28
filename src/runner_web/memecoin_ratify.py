@@ -54,6 +54,15 @@ HOLDERS_TTL = timedelta(hours=6)
 # Bump when the holder rules change, so answers under older rules are redone.
 HOLDER_RULES = 6
 MAX_HOLDER_READS = 20
+# The row fields the rules read, kept with each recorded result.
+ROW_FACTS = (
+    "venue",
+    "pool_address",
+    "liquidity_usd",
+    "real_liquidity_usd",
+    "pool_created_at",
+    "memecoin_assessment",
+)
 
 
 def mint_controls(
@@ -210,11 +219,13 @@ def ratify_rows(
     bundled: set[str],
     rpc: Rpc,
     at: datetime,
+    facts: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Attach `ratification` to every row; read the chain only for close candidates.
 
     `vaults` maps a pool address to its own token account; `bundled` holds the
     mints a launch-bundle check flagged. Returns the saved state for next cycle.
+    When `facts` is given, it receives each mint's inputs to the rules.
     """
 
     known_controls = dict(saved.get("controls") or {})
@@ -268,14 +279,24 @@ def ratify_rows(
     counts = holder_counts(finalists, saved.get("counts") or {}, rpc=rpc, at=at)
     for row in rows:
         mint = row.get("token_address")
+        inputs = {
+            "controls": known_controls.get(mint),
+            "top10_pct": (holders.get(mint) or {}).get("top10_pct"),
+            "bundled": mint in bundled,
+            "holder_count": (counts.get(mint) or {}).get("count"),
+            "holder_count_at_least": bool((counts.get(mint) or {}).get("at_least")),
+            "lock": locks.get(row.get("pool_address", "")),
+        }
         row["ratification"] = standards(
             row,
-            known_controls.get(mint),
-            (holders.get(mint) or {}).get("top10_pct"),
-            mint in bundled,
+            inputs["controls"],
+            inputs["top10_pct"],
+            inputs["bundled"],
             at,
-            holder_count=(counts.get(mint) or {}).get("count"),
-            holder_count_at_least=bool((counts.get(mint) or {}).get("at_least")),
-            lock=locks.get(row.get("pool_address", "")),
+            holder_count=inputs["holder_count"],
+            holder_count_at_least=inputs["holder_count_at_least"],
+            lock=inputs["lock"],
         )
+        if facts is not None and mint:
+            facts[mint] = {"row": {key: row.get(key) for key in ROW_FACTS}, **inputs}
     return {"controls": known_controls, "holders": holders, "counts": counts}

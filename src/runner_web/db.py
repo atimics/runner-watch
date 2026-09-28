@@ -3846,6 +3846,37 @@ def _migration_094_trust_access_requests(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_095_ratification_records(db: DatabaseConnection) -> None:
+    """Each change in a Ratified result, with the rules version and the facts used."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS ratification_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            market TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            rules_version TEXT NOT NULL,
+            rules_digest TEXT NOT NULL,
+            ratified INTEGER NOT NULL,
+            met INTEGER NOT NULL,
+            total INTEGER NOT NULL,
+            result_json TEXT NOT NULL,
+            facts_json TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ratification_records_subject
+            ON ratification_records(market,subject,recorded_at);
+        CREATE TABLE IF NOT EXISTS ratification_latest (
+            market TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            PRIMARY KEY (market,subject)
+        );
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -3947,6 +3978,7 @@ MIGRATIONS = (
     Migration(92, "memecoin_early_features", _migration_092_memecoin_early_features),
     Migration(93, "filing_items", _migration_093_filing_items),
     Migration(94, "trust_access_requests", _migration_094_trust_access_requests),
+    Migration(95, "ratification_records", _migration_095_ratification_records),
 )
 
 
