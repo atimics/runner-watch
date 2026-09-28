@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
+from runner_web.sports_identity import participants_ready
 from runner_web.sports_indicator import sports_indicator
 
 SOURCES = {
@@ -259,7 +260,10 @@ def ticker(
     current = now or datetime.now(UTC)
     golf = str(event.get("id", "")).startswith("golf:")
     cup = event.get("id") == "golf:401824815"
-    contracts = _cup_contracts(event) if cup else [] if golf else [_team_contract(event)]
+    teams_pending = not golf and not participants_ready(event)
+    contracts = (
+        _cup_contracts(event) if cup else [] if golf or teams_pending else [_team_contract(event)]
+    )
     selected_contract = next(
         (c for c in contracts if c["key"] == contract), next(iter(contracts), None)
     )
@@ -276,7 +280,9 @@ def ticker(
             else "Forecast needs a saved season record and game snapshot."
         ),
     }
-    if cup:
+    if teams_pending:
+        result["pending"] = "Forecast awaits confirmed team identities."
+    elif cup:
         prediction = (event.get("analysis") or {}).get("prediction") or {}
         if prediction:
             result["score_call"] = {

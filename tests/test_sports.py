@@ -1019,7 +1019,14 @@ def test_concurrent_pick_conflict_returns_the_stored_pick(monkeypatch) -> None:
             if "SELECT * FROM sports_picks" in statement:
                 return Result(None)
             if "SELECT * FROM sports_events" in statement:
-                return Result({"id": "mlb:race", "status": "pre"})
+                return Result(
+                    {
+                        "id": "mlb:race",
+                        "status": "pre",
+                        "home_abbreviation": "HOM",
+                        "away_abbreviation": "AWY",
+                    }
+                )
             if "INSERT INTO sports_picks" in statement:
                 return Result(rowcount=0)
             raise AssertionError(statement)
@@ -2386,3 +2393,34 @@ def test_scoreboard_team_stats_are_saved_on_game_detail(sports_db) -> None:
     response = sports_game_page(event["id"], request(path=f"/game/{event['id']}"), None)
     assert b"Game statistics" in response.body
     assert b"Hits" in response.body
+
+
+def test_confirmed_participant_refreshes_identity_and_prediction(sports_db) -> None:
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    confirmed = dict(event["away"])
+    event["away"].update(id="-2", name="TBD", abbreviation="TBD")
+    at = datetime.now(UTC)
+    store_events([event], observed_at=at)
+    pending = sports_event(event["id"])
+    assert pending["away_team_id"] == "-2"
+    assert pending["prediction"] is None
+    assert pending["view_state"]["pick_state"] == "unavailable"
+    with pytest.raises(ValueError, match="Team identities are pending"):
+        create_sports_pick("user-1", event["id"], "away")
+
+    event["away"] = confirmed
+    store_events([event], observed_at=at + timedelta(seconds=1))
+    saved = sports_event(event["id"])
+    assert saved["away_team_id"] == confirmed["id"]
+    assert saved["away_team_name"] == confirmed["name"]
+    assert saved["away_abbreviation"] == confirmed["abbreviation"]
+    assert saved["prediction"] is not None
+
+    # A new participant changes the model inputs even when the records match.
+    event["away"].update(id="3", name="Replacement Club", abbreviation="NEW")
+    store_events([event], observed_at=at + timedelta(seconds=2))
+    replacement = sports_event(event["id"])
+    assert replacement["away_team_id"] == "3"
+    assert replacement["away_abbreviation"] == "NEW"
+    assert replacement["prediction"]["id"] != saved["prediction"]["id"]
