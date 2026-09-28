@@ -3044,6 +3044,55 @@ def trust_page(
     )
 
 
+RATIFICATION_MARKETS = {"stock", "memecoin"}
+
+
+@app.get("/api/ratification/{market}/{subject}")
+def ratification_history_api(market: str, subject: str, request: Request) -> JSONResponse:
+    """Every recorded change in an asset's result: rules version, digest, state."""
+
+    from runner_web.ratification_records import page_history
+
+    enforce_rate(request, "ratification-records", limit=120, seconds=60)
+    if market not in RATIFICATION_MARKETS:
+        raise HTTPException(404, "Market not found")
+    subject = subject.upper() if market == "stock" else subject
+    return JSONResponse(
+        {"market": market, "subject": subject, "records": page_history(market, subject, limit=100)}
+    )
+
+
+@app.get("/api/ratification/{market}/{subject}/{record_id}.json")
+def ratification_record_api(
+    market: str, subject: str, record_id: int, request: Request
+) -> JSONResponse:
+    """One result with the facts and rules version to recompute it."""
+
+    from runner_web.ratification_records import record
+
+    enforce_rate(request, "ratification-records", limit=120, seconds=60)
+    if market not in RATIFICATION_MARKETS:
+        raise HTTPException(404, "Market not found")
+    subject = subject.upper() if market == "stock" else subject
+    with connection() as database:
+        found = record(database, market, subject, record_id)
+    if found is None:
+        raise HTTPException(404, "Record not found")
+    return JSONResponse(
+        {
+            "market": market,
+            "subject": subject,
+            **found,
+            "reproduce": (
+                "With the files of RATi Rules "
+                f"{found['rules_version']} (published on {TRUST_ORIGIN} once replaced): "
+                f'ratitrust.reproduce.reproduce("{market}", facts) == result'
+            ),
+        },
+        headers={"Content-Disposition": f'inline; filename="{market}-{subject}-{record_id}.json"'},
+    )
+
+
 @app.get("/rules.toml")
 @app.get("/trust/rules.toml")
 @app.get("/rules.schema.json")
@@ -7747,6 +7796,14 @@ def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
     detail = _cached_memecoin_detail(coin_id)
     if detail is None:
         raise HTTPException(404, "Coin not found")
+    from runner_web.ratification_records import page_history
+
+    mint = str(detail["coin"].get("token_address") or "")
+    if mint and detail["coin"].get("ratification"):
+        detail = {
+            **detail,
+            "coin": {**detail["coin"], "ratification_history": page_history("memecoin", mint)},
+        }
     return {
         **detail,
         "calls": memecoin_calls(coin_id=coin_id),
@@ -9835,7 +9892,13 @@ def _ratified_detail(ticker: str) -> dict[str, Any] | None:
     if isinstance(current, dict):
         rated = _with_stock_ratification([{**current, "ticker": ticker}])[0]
         if rated.get("ratification"):
-            detail["current"] = {**current, "ratification": rated["ratification"]}
+            from runner_web.ratification_records import page_history
+
+            detail["current"] = {
+                **current,
+                "ratification": rated["ratification"],
+                "ratification_history": page_history("stock", ticker.upper()),
+            }
     return detail
 
 

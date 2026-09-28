@@ -479,6 +479,7 @@ def row(
             {
                 "ratification": item["ratification"],
                 "ratified": bool(item["ratification"].get("ratified")) and not item.get("stale"),
+                "ratification_history": item.get("ratification_history") or [],
             }
             if isinstance(item.get("ratification"), dict)
             else {}

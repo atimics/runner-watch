@@ -851,6 +851,7 @@
 .trust-ok{color:var(--green)!important;font-size:inherit!important}
 .trust-bad{color:var(--red)!important;font-size:inherit!important}
 .trust-note{color:var(--muted);font-size:13px;line-height:1.5}
+.trust-wrap code{overflow-wrap:anywhere}
 .trust-jump{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 30px}
 .trust-jump a{padding:7px 12px;border:1px solid var(--line);border-radius:999px;font-size:13px;color:var(--soft);text-decoration:none}
 .trust-jump a:hover{border-color:var(--muted);color:var(--text)}
