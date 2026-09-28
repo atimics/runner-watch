@@ -19,15 +19,31 @@ PERSON = {
 }
 
 
-def test_the_published_record_commits_to_v1_and_its_digest_checks_out():
+def test_the_published_record_commits_to_the_current_version_and_every_digest_checks_out():
     record = trust.rules_record()
 
-    assert record["current"]["version"] == "1.0.0"
-    assert record["current"]["digest"].startswith("025c4cbb")
+    assert record["current"]["version"] == "1.0.1"
+    assert record["current"]["digest"].startswith("10449ca7")
     assert "files" not in record["current"]  # the current version is only a commitment
-    published = record["revealed"][0]
-    assert published["version"] == "1.0.0" and published["verified"] is True
-    assert "## Memecoins: nine standards" in published["rules_text"]
+    assert [version["version"] for version in record["revealed"]] == ["1.0.1", "1.0.0"]
+    assert all(version["verified"] for version in record["revealed"])
+    assert "## Memecoins: nine standards" in record["revealed"][1]["rules_text"]
+
+
+def test_rules_published_as_data_are_read_as_structured_standards():
+    rules = trust.rules_record()["revealed"][0]["rules"]
+
+    memecoin, stock = rules["assets"]["memecoin"], rules["assets"]["stock"]
+    assert len(memecoin["standards"]) == 9 and len(stock["standards"]) == 5
+    pool = next(item for item in memecoin["standards"] if item["id"] == "pool")
+    assert pool["tests"] == ["venue is pool", "real_liquidity at least 10,000 USD"]
+    cash = next(item for item in stock["standards"] if item["id"] == "cash")
+    assert cash["tests"] == [
+        "cash_runway at least 12 months, unless operating_cash_flow at least 0 USD"
+    ]
+    assert cash["not_applied_text"] == "sic between 6000 and 6799"
+    financials = next(fact for fact in stock["facts"] if fact["id"] == "financials")
+    assert "us-gaap:NetCashProvidedByUsedInOperatingActivities" in financials["xbrl"]
 
 
 def test_a_tampered_file_no_longer_matches_its_digest():
@@ -99,8 +115,11 @@ def test_the_trust_page_shows_the_commitment_and_the_form(client):
     page = client.get("/trust")
 
     assert page.status_code == 200
-    assert "025c4cbb2e8a3a153953964b29364c745cb6039a8bf0d32bc01f40cd69b58976" in page.text
-    assert "digest checks out" in page.text
+    assert "10449ca786f57627bf7ded97beac49a1e05cfecbd83ded004911b7f52c088b17" in page.text
+    assert "digest checks out" in page.text and "digest does not match" not in page.text
+    assert "real_liquidity at least 10,000 USD" in page.text
+    assert "us-gaap:CashAndCashEquivalentsAtCarryingValue" in page.text
+    assert "## Memecoins: nine standards" in page.text  # 1.0.0 is still shown as it was
     assert 'action="/trust/access"' in page.text
 
 
@@ -164,3 +183,15 @@ def test_trust_rati_chat_serves_the_page_at_its_root(client):
 
 def test_only_operations_can_list_requests(client):
     assert client.get("/api/trust/access-requests").status_code == 404
+
+
+def test_the_published_rules_file_and_schema_are_served_as_revealed(client):
+    from runner_web import main
+
+    published = trust.rules_record()["revealed"][0]["files"]
+    rules = client.get("/trust/rules.toml")
+    schema = TestClient(main.app, base_url=main.TRUST_ORIGIN).get("/rules.schema.json")
+
+    assert rules.status_code == 200 and rules.text == published["src/ratitrust/rules.toml"]
+    assert rules.headers["content-type"].startswith("application/toml")
+    assert schema.json()["$id"] == "https://trust.rati.chat/rules.schema.json"
