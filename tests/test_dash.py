@@ -1158,6 +1158,17 @@ def test_expand_finds_a_coin_by_address_and_never_by_its_creator_set_name(monkey
     assert "contract address" in by_name["note"]
     assert dash.dash_expand("coin:" + real.lower())["known"] is False
     assert dash.dash_expand("coin:nope")["known"] is False
+    # An unknown address is queued for the next cycle, as a board search would.
+    unknown = "GQgpzXBbJsqeMuTtNdBpbnicyTQ6dRgSaoKeaNipump"
+    looked = dash.dash_expand("coin:" + unknown)
+    assert looked["known"] is False and looked["requested"] is True
+    assert "Queued" in looked["note"]
+    with connection() as database:
+        queue = database.execute(
+            "SELECT value FROM worker_state WHERE key='memecoin_searched'"
+        ).fetchone()
+    assert unknown in json.loads(queue["value"])
+    assert "requested" not in dash.dash_expand("coin:nope")
     assert set(dash.dash_expand("sports")) >= {"live", "up_next", "finals"}
     assert "sports" in dash.dash_world(at=NOW) and "memecoins" in dash.dash_world(at=NOW)
 

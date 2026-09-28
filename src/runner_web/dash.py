@@ -984,7 +984,7 @@ def coin_detail(query: str) -> dict[str, Any]:
     """
 
     from runner_web.memecoin_chain_parser import display_claim, looks_like_address
-    from runner_web.memecoins import memecoin_detail, memecoin_market
+    from runner_web.memecoins import memecoin_detail, memecoin_market, request_memecoin
 
     wanted = query.strip()
     rows = memecoin_market(sort="volume")["rows"]
@@ -1004,9 +1004,23 @@ def coin_detail(query: str) -> dict[str, Any]:
             for row in rows
             if name and name == str(display_claim(row) or "").casefold()
         ][:10]
+        # An address not on the board is queued, as a board search would: the
+        # worker quotes it next cycle, so Dash can say it is being looked up.
+        requested = looks_like_address(wanted) and request_memecoin(wanted)
         return {
             "known": False,
             "query": query,
+            **(
+                {
+                    "requested": True,
+                    "note": (
+                        "Not on the board yet. Queued: RATi quotes it within about five "
+                        "minutes if it trades in a pool. Ask again then."
+                    ),
+                }
+                if requested
+                else {}
+            ),
             **(
                 {
                     "same_name_candidates": candidates,
