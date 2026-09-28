@@ -116,7 +116,9 @@ def test_the_trust_page_shows_the_commitment_and_the_form(client):
 
     assert page.status_code == 200
     assert "10449ca786f57627bf7ded97beac49a1e05cfecbd83ded004911b7f52c088b17" in page.text
-    assert "digest checks out" in page.text and "digest does not match" not in page.text
+    assert "Published, digest matches" in page.text and "does not match" not in page.text
+    assert 'class="market-switcher"' not in page.text  # the rules are not a market
+    assert "board-view-bar" not in page.text  # no List/Map bar on the rules
     assert "real_liquidity at least 10,000 USD" in page.text
     assert "us-gaap:CashAndCashEquivalentsAtCarryingValue" in page.text
     assert "## Memecoins: nine standards" in page.text  # 1.0.0 is still shown as it was
@@ -195,3 +197,19 @@ def test_the_published_rules_file_and_schema_are_served_as_revealed(client):
     assert rules.status_code == 200 and rules.text == published["src/ratitrust/rules.toml"]
     assert rules.headers["content-type"].startswith("application/toml")
     assert schema.json()["$id"] == "https://trust.rati.chat/rules.schema.json"
+
+
+def test_a_sealed_version_in_force_says_which_published_rules_are_shown(client, monkeypatch):
+    record = trust.rules_record()
+    sealed = {"version": "1.1.0", "released": "2026-10-01", "digest": "ab" * 32}
+    monkeypatch.setattr(
+        trust,
+        "rules_record",
+        lambda: {**record, "current": sealed, "shown": record["revealed"][0], "sealed": True},
+    )
+
+    page = client.get("/trust").text
+
+    assert "Version 1.1.0 stays sealed until it is replaced" in page
+    assert "Shown below is version 1.0.1, the newest published in full." in page
+    assert "In force, sealed" in page and "ab" * 32 in page

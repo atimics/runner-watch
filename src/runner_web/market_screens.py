@@ -11,6 +11,7 @@ from urllib.parse import quote
 from runner_web.market_assessments import assessment
 from runner_web.memecoin_chain_parser import coin_search_rank, display_claim, short_address
 from runner_web.prediction_tickers import ticker as prediction_ticker
+from runner_web.sports_identity import participants_ready
 from runner_web.stock_indicator import memecoin_indicator, stock_indicator
 
 LABELS = {"stocks": "Stocks", "memecoins": "Memecoins", "sports": "Sports"}
@@ -147,7 +148,7 @@ def sports_market_chart(history: dict[str, Any]) -> dict[str, Any] | None:
 def sports_matchup(item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """Keep the scoreboard leader separate from the saved model and value side."""
     sides = ("away", "home")
-    prediction = item.get("prediction") or {}
+    prediction = (item.get("prediction") or {}) if participants_ready(item) else {}
     probabilities = [number(prediction.get(f"{side}_probability")) for side in sides]
     if all(p is None or 0 <= p <= 1 for p in probabilities):
         if prediction.get("away_probability") is None and probabilities[1] is not None:
@@ -566,7 +567,7 @@ def state_tag(item: dict[str, Any]) -> tuple[str, str, bool]:
         state = str(early.get("state") or "")
         if state == "avoid":
             return "AVOID", "avoid", True
-        if state in {"extended", "running", "setup"}:
+        if state in {"extended", "running", "setup", "watch"}:
             return state.upper(), state, False
         return "", "", False
     rug = str(item.get("rug_level") or "").lower()
@@ -693,6 +694,7 @@ def listing(
                 start.tzinfo is not None
                 and saved.tzinfo is not None
                 and source.get("status") == "pre"
+                and participants_ready(source)
                 and signal in {"watch", "lean"}
                 and chance is not None
                 and 0 <= chance <= 1
@@ -977,7 +979,8 @@ def detail(
             )
         model = number((data.get("prediction") or {}).get(f"{selected}_probability"))
         result["prediction_markets"] = []
-        for source_row in data.get("prediction_markets") or []:
+        venue_rows = (data.get("prediction_markets") or []) if participants_ready(data) else []
+        for source_row in venue_rows:
             source = str(source_row.get("source") or "")
             if source not in {"kalshi", "polymarket"}:
                 continue

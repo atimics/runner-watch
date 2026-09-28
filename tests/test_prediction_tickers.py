@@ -543,3 +543,30 @@ def test_direct_cup_page_pins_its_default_outcome_for_full_page_refresh():
     refreshed = detail("sports", event, **selection)
     assert refreshed["ticker"]["selected"]["key"] == "international"
     assert refreshed["ticker"]["indicator"]["sentiment"] == "negative"
+
+
+@pytest.mark.parametrize(
+    "team_id,label", [("-2", "TBD"), ("-1", "ATL"), ("", "ATL"), ("1", "Unknown")]
+)
+def test_pending_team_identity_keeps_saved_prices_out_of_the_forecast(team_id, label):
+    from runner_web.market_screens import detail, listing
+
+    event = team_event()
+    event.update(
+        away_team_id=team_id,
+        away_abbreviation=label,
+        projected_home_score_display="4.6",
+        projected_away_score_display="4.0",
+    )
+    event["prediction"].update(selection="away", signal="watch", edge=0.093)
+    result = ticker(event, now=AT)
+    assert result["selected"] is None
+    assert result["contracts"] == []
+    assert result["score_call"] is None
+    assert result["pending"] == "Forecast awaits confirmed team identities."
+    board = listing("sports", [event])
+    assert board["rows"][0]["tag"] == "PENDING"
+    assert "rank_detail" not in board["rows"][0]
+    screen = detail("sports", event)
+    assert screen["item"]["matchup"]["forecast"] is None
+    assert screen["prediction_markets"] == []

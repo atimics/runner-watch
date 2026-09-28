@@ -21,7 +21,7 @@
 <body class="{{ current_product }}-product">
   <a class="skip-link" href="#app-content">Skip to content</a>
   <div class="mobile-app {% block app_class %}{% endblock %}" id="app-content">
-    {% include "_market_switcher.html" %}
+    {% if current_product != 'trust' %}{% include "_market_switcher.html" %}{% endif %}
     {% include "_account_strip.html" %}
     {% block content %}{% endblock %}
     {% block bottom_nav %}

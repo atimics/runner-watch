@@ -58,6 +58,8 @@ def test_sports_filter_counts_show_pending_for_missing_probabilities():
         {
             "id": signal,
             "start_time": "2026-09-20T12:00:00Z",
+            "home_abbreviation": "HOM",
+            "away_abbreviation": "AWY",
             "prediction": {"signal": signal, "selection": "pass"},
         }
         for signal in ("lean", "pass", "watch", "model only")
