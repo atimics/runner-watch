@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import urllib.request
 from collections import defaultdict
 from collections.abc import Callable
@@ -37,6 +38,10 @@ FACT_TAGS: dict[tuple[str, str], str] = {
     ): "operating_cash_flow",
     ("us-gaap", "NetCashUsedInOperatingActivities"): "operating_cash_flow",
     ("us-gaap", "StockholdersEquity"): "stockholders_equity",
+    # Foreign private issuers reporting under IFRS, often in their own currency.
+    ("ifrs-full", "CashAndCashEquivalents"): "cash",
+    ("ifrs-full", "CashFlowsFromUsedInOperatingActivities"): "operating_cash_flow",
+    ("ifrs-full", "NumberOfSharesOutstanding"): "shares_outstanding",
 }
 ALLOWED_FORMS = {"10-K", "10-Q", "20-F", "40-F", "6-K", "8-K"}
 
@@ -55,6 +60,17 @@ def _day(value: Any) -> date | None:
         return date.fromisoformat(str(value))
     except ValueError:
         return None
+
+
+CURRENCY = re.compile(r"[A-Z]{3}")
+
+
+def _allowed_unit(namespace: str, unit: str) -> bool:
+    """Dollars and shares; an IFRS filer's own currency too, kept with its unit."""
+
+    if unit in {"USD", "shares"}:
+        return True
+    return namespace == "ifrs-full" and bool(CURRENCY.fullmatch(unit))
 
 
 def parse_company_facts(
@@ -77,7 +93,7 @@ def parse_company_facts(
         if not isinstance(units, dict):
             continue
         for unit, entries in units.items():
-            if unit not in {"USD", "shares"} or not isinstance(entries, list):
+            if not _allowed_unit(namespace, unit) or not isinstance(entries, list):
                 continue
             for entry in entries:
                 if not isinstance(entry, dict) or str(entry.get("form") or "") not in ALLOWED_FORMS:

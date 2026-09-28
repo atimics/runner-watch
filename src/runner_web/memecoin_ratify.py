@@ -44,11 +44,18 @@ LOG = logging.getLogger(__name__)
 MAX_COUNT_LOOKUPS = 5
 RAYDIUM_CPMM = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
 CPMM_DISCRIMINATOR = bytes([247, 237, 227, 245, 215, 195, 222, 70])
-# (program, discriminator, lp mint offset, lp supply offset, name): Pump's and
-# Raydium's official IDLs. Pump burns a graduated pool's liquidity tokens.
+RAYDIUM_AMM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8"
+# AMM v4's AmmInfo is not an Anchor account: no discriminator, 752 bytes.
+AMM_V4_SIZE = 752
+# (program, discriminator or None, lp mint offset, lp issued offset, name): Pump's
+# and Raydium's official IDLs, and AMM v4's AmmInfo (lp_mint at 464, lp_amount at
+# 720), checked against live pools. Pump burns a graduated pool's liquidity tokens.
+# Concentrated pools (Raydium CLMM, Orca, Meteora DLMM) hold positions, not
+# liquidity tokens: they are not read.
 LP_LAYOUTS = (
     (PUMP_SWAP, POOL_DISCRIMINATOR, 107, 203, "PumpSwap"),
     (RAYDIUM_CPMM, CPMM_DISCRIMINATOR, 136, 333, "Raydium CPMM"),
+    (RAYDIUM_AMM_V4, None, 464, 720, "Raydium AMM v4"),
 )
 HOLDERS_TTL = timedelta(hours=6)
 # Bump when the holder rules change, so answers under older rules are redone.
@@ -141,7 +148,7 @@ def liquidity_locks(pools: list[str], *, rpc: Rpc) -> dict[str, dict[str, Any]]:
             if (
                 raw is not None
                 and (account or {}).get("owner") == program
-                and raw[:8] == discriminator
+                and (raw[:8] == discriminator if discriminator else len(raw) == AMM_V4_SIZE)
                 and len(raw) >= supply_at + 8
             ):
                 issued = int.from_bytes(raw[supply_at : supply_at + 8], "little")
@@ -298,5 +305,5 @@ def ratify_rows(
             lock=inputs["lock"],
         )
         if facts is not None and mint:
-            facts[mint] = {"row": {key: row.get(key) for key in ROW_FACTS}, **inputs}
+            facts[mint] = {"row": {key: row.get(key) for key in ROW_FACTS}, **inputs, "at": at}
     return {"controls": known_controls, "holders": holders, "counts": counts}

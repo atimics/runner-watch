@@ -307,6 +307,39 @@ def test_a_graduated_pools_burned_liquidity_is_read_from_its_lp_mint():
     assert liquidity_locks([POOL], rpc=rpc) == {POOL: {"left_pct": 0.0, "dex": "PumpSwap"}}
 
 
+def amm_v4_pool(lp_mint, issued, size=752):
+    import base64
+
+    from runner_web.helius_discovery import _decode
+    from runner_web.memecoin_ratify import RAYDIUM_AMM_V4
+
+    raw = bytearray(size)
+    raw[464:496] = _decode(lp_mint)
+    raw[720:728] = issued.to_bytes(8, "little")
+    return {"owner": RAYDIUM_AMM_V4, "data": [base64.b64encode(bytes(raw)).decode(), "base64"]}
+
+
+def test_a_raydium_amm_v4_pool_is_read_from_its_lp_mint():
+    from runner_web.helius_discovery import _encode
+    from runner_web.memecoin_ratify import liquidity_locks
+
+    lp = _encode(bytes([34]) * 32)
+    other = "Other111111111111111111111111111111111111111"
+    # Live shapes: DICE left every liquidity token out; gary burned all but 0.31%.
+    rpc = FakeRpc(
+        mints={
+            POOL: amm_v4_pool(lp, 45_811_242_658_040),
+            lp: lp_mint_account(45_810_174_946_731),
+            other: amm_v4_pool(lp, 10, size=700),  # not an AmmInfo: not read
+        }
+    )
+
+    locks = liquidity_locks([POOL, other], rpc=rpc)
+
+    assert locks[POOL]["dex"] == "Raydium AMM v4" and round(locks[POOL]["left_pct"]) == 100
+    assert locks[other] == {"left_pct": None, "dex": None}
+
+
 def test_only_coins_passing_the_free_standards_cost_a_read():
     from runner_web.helius_discovery import _encode
 

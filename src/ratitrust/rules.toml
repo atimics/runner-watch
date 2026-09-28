@@ -3,7 +3,7 @@
 # against rules.schema.json.
 
 name = "The RATi Rules"
-version = "2.0.0"
+version = "2.1.0"
 summary = "The standards a stock or memecoin must meet to be Ratified."
 meaning = """\
 Ratified means the asset meets RATi's basic standards on the facts RATi could \
@@ -111,7 +111,7 @@ test = [{ fact = "holder_count", op = ">=", value = 100 }]
 [[assets.memecoin.standards]]
 id = "liquidity_lock"
 label = "Pool liquidity burned or locked"
-why = "The pool's own count of liquidity tokens issued, against the liquidity-token mint's supply. Read for PumpSwap (Pump burns a graduated pool's) and Raydium CPMM. Other DEXes, and liquidity held in a lock program, are not checked yet."
+why = "The pool's own count of liquidity tokens issued, against the liquidity-token mint's supply. Read for PumpSwap (Pump burns a graduated pool's), Raydium CPMM and Raydium AMM v4. Concentrated pools (Raydium CLMM, Orca Whirlpools, Meteora DLMM) hold liquidity in positions, not liquidity tokens, and liquidity held in a lock program is not read either: both are not checked yet."
 facts = ["liquidity_tokens"]
 test = [{ fact = "lp_tokens_left", op = "<=", value = 10, unit = "percent" }]
 
@@ -211,7 +211,7 @@ refresh = "Every six hours, only for coins passing everything else"
 [[assets.memecoin.facts]]
 id = "liquidity_tokens"
 label = "Liquidity tokens"
-source = "The pool account's issued count and the liquidity-token mint's supply"
+source = "The pool account's issued count and the liquidity-token mint's supply: PumpSwap and Raydium CPMM from their IDLs, Raydium AMM v4 from its AmmInfo (lp_mint and lp_amount)"
 refresh = "Every cycle for candidates"
 
 # ------------------------------------------------------------------- stocks
@@ -305,8 +305,11 @@ source = "SEC XBRL company facts and the EDGAR filing index; whichever is later"
 [[assets.stock.facts]]
 id = "financials"
 label = "Cash, operating cash flow, shares outstanding"
-source = "SEC XBRL company facts"
+source = "SEC XBRL company facts: US GAAP in dollars, or IFRS in the filer's reporting currency. Cash runway compares cash and burn in one currency; a foreign issuer's figures come from its annual report"
 xbrl = [
+  "ifrs-full:CashAndCashEquivalents",
+  "ifrs-full:CashFlowsFromUsedInOperatingActivities",
+  "ifrs-full:NumberOfSharesOutstanding",
   "us-gaap:CashAndCashEquivalentsAtCarryingValue",
   "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
   "us-gaap:NetCashProvidedByUsedInOperatingActivities",

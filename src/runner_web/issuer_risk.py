@@ -64,9 +64,15 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "periodic_filed_at": None,
             "periodic_form": None,
             "foreign_issuer": False,
+            "reporting_currency": None,
         }
 
-    cash = _value(_latest(rows, "cash"))
+    operating = _latest(rows, "operating_cash_flow")
+    # An IFRS filer may report in its own currency: cash, burn and debt are only
+    # compared within one unit, and cash is shown in dollars only when it is.
+    currency = str((operating or _latest(rows, "cash") or {}).get("unit") or "USD")
+    cash_row = _latest([row for row in rows if row.get("unit", "USD") == currency], "cash")
+    cash = _value(cash_row)
     assets_current = _value(_latest(rows, "assets_current"))
     liabilities_current = _value(_latest(rows, "liabilities_current"))
     debt_total = _value(_latest(rows, "debt_total"))
@@ -80,9 +86,12 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if assets_current is not None and liabilities_current and liabilities_current > 0
         else None
     )
-    debt_to_cash = debt_total / cash if debt_total is not None and cash and cash > 0 else None
+    debt_to_cash = (
+        debt_total / cash
+        if debt_total is not None and cash and cash > 0 and currency == "USD"
+        else None
+    )
 
-    operating = _latest(rows, "operating_cash_flow")
     runway = None
     if cash is not None and cash >= 0 and operating is not None and float(operating["value"]) < 0:
         start_text = operating.get("period_start")
@@ -125,7 +134,8 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "issuer_data_available": True,
-        "cash": cash,
+        "cash": cash if currency == "USD" else None,
+        "reporting_currency": currency,
         "cash_runway_months": round(runway, 1) if runway is not None else None,
         "shares_growth_pct": round(shares_growth, 1) if shares_growth is not None else None,
         "current_ratio": round(current_ratio, 2) if current_ratio is not None else None,
