@@ -36,21 +36,33 @@ def test_chain_rows_keep_theirs_and_others_are_read_from_their_pool():
         "venue": "pool",
         "source": "GeckoTerminal",
         "liquidity_usd": 900.0,
-        "pool_address": "x",
+        "pool_address": "Small",
+        "token_address": "SmallMint",
     }
     curve = {"venue": "bonding_curve", "liquidity_usd": 5_000.0}
     urls = []
 
     def download(url, timeout):
         urls.append(url)
-        return json.dumps({"pairs": [QUANT]}).encode()
+        tiny = {
+            "pairAddress": "Small",
+            "baseToken": {"address": "SmallMint"},
+            "liquidity": {"quote": 3.0},
+            "priceNative": "0.5",
+            "priceUsd": "100",
+        }
+        return json.dumps({"pairs": [QUANT, tiny]}).encode()
 
     attach_real_liquidity([chain, quant, small, curve], download=download)
 
     assert chain["real_liquidity_usd"] == 30_000.0
     assert round(quant["real_liquidity_usd"]) == 95
-    assert "real_liquidity_usd" not in small and "real_liquidity_usd" not in curve
-    assert urls == ["https://api.dexscreener.com/latest/dex/pairs/solana/" + QUANT["pairAddress"]]
+    # A small pool is read too, so it fails the standard rather than going unchecked.
+    assert small["real_liquidity_usd"] == 2 * 3.0 * 200
+    assert "real_liquidity_usd" not in curve
+    assert urls == [
+        "https://api.dexscreener.com/latest/dex/pairs/solana/" + QUANT["pairAddress"] + ",Small"
+    ]
 
 
 def test_a_pair_for_another_coin_or_a_failed_read_leaves_it_unread():

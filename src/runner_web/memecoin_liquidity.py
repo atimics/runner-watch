@@ -4,7 +4,7 @@ A pool's quoted liquidity values the coin at the coin's own price, so a pool
 holding $47 of USDC against a coin priced at will can quote $941M. The RATi
 Rules read the quote side instead. Pools the chain reader prices (PumpSwap)
 already carry it; for the rest, DexScreener reports each pool's quote amount,
-30 pools a request, free.
+30 pools a request, free: a few requests a cycle.
 """
 
 from __future__ import annotations
@@ -13,8 +13,6 @@ import json
 import logging
 from collections.abc import Callable
 from typing import Any
-
-from ratitrust.memecoin import MIN_LIQUIDITY_USD
 
 LOG = logging.getLogger(__name__)
 PAIRS_URL = "https://api.dexscreener.com/latest/dex/pairs/solana/"
@@ -39,8 +37,9 @@ def quote_side_usd(pair: dict[str, Any]) -> float | None:
 def attach_real_liquidity(rows: list[dict[str, Any]], *, download: Download) -> None:
     """Set `real_liquidity_usd` on each pool row; unread pools are left without it.
 
-    Chain-priced rows already hold twice their quote side. Only pools quoting
-    enough to pass are looked up: a pool quoting less cannot hold more.
+    Chain-priced rows already hold twice their quote side. Every other pool is
+    looked up, whatever it quotes: a concentrated pool can hold more on its
+    quote side than its quoted total, so the quote is no bound either way.
     """
 
     wanted = []
@@ -49,7 +48,7 @@ def attach_real_liquidity(rows: list[dict[str, Any]], *, download: Download) -> 
             continue
         if row.get("source") == CHAIN_SOURCE:
             row["real_liquidity_usd"] = row.get("liquidity_usd")
-        elif float(row.get("liquidity_usd") or 0) >= MIN_LIQUIDITY_USD and row.get("pool_address"):
+        elif row.get("pool_address"):
             wanted.append(row)
     by_pool = {row["pool_address"]: row for row in wanted}
     addresses = list(by_pool)
