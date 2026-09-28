@@ -11,12 +11,12 @@ from runner_web import db, trust
 def test_the_published_record_commits_to_the_current_version_and_every_digest_checks_out():
     record = trust.rules_record()
 
-    assert record["current"]["version"] == "1.0.1"
-    assert record["current"]["digest"].startswith("10449ca7")
+    assert record["current"]["version"] == "1.0.2"
+    assert record["current"]["digest"].startswith("7826eefb")
     assert "files" not in record["current"]  # the current version is only a commitment
-    assert [version["version"] for version in record["revealed"]] == ["1.0.1", "1.0.0"]
+    assert [version["version"] for version in record["revealed"]] == ["1.0.2", "1.0.1", "1.0.0"]
     assert all(version["verified"] for version in record["revealed"])
-    assert "## Memecoins: nine standards" in record["revealed"][1]["rules_text"]
+    assert "## Memecoins: nine standards" in record["revealed"][2]["rules_text"]
 
 
 def test_rules_published_as_data_are_read_as_structured_standards():
@@ -59,7 +59,7 @@ def test_the_trust_page_shows_the_commitment_and_the_rules(client):
     page = client.get("/trust")
 
     assert page.status_code == 200
-    assert "10449ca786f57627bf7ded97beac49a1e05cfecbd83ded004911b7f52c088b17" in page.text
+    assert "7826eefb85d977529dc7277fe7d3279a4352ca227d27a2629cc9869cea6bf97a" in page.text
     assert "Published, digest matches" in page.text and "does not match" not in page.text
     assert 'class="market-switcher"' not in page.text  # the rules are not a market
     assert "board-view-bar" not in page.text  # no List/Map bar on the rules
@@ -107,5 +107,5 @@ def test_a_sealed_version_in_force_says_which_published_rules_are_shown(client, 
     page = client.get("/trust").text
 
     assert "Version 1.1.0 stays sealed until it is replaced" in page
-    assert "Shown below is version 1.0.1, the newest published in full." in page
+    assert "Shown below is version 1.0.2, the newest published in full." in page
     assert "In force, sealed" in page and "ab" * 32 in page
