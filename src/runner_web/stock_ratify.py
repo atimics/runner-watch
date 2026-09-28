@@ -232,7 +232,7 @@ def stock_ratifications(
         entry["forms"].add(row["form"])
         # 6-K is a current report: it marks a foreign issuer but is not the report.
         if row["form"] in PERIODIC_FORMS | FOREIGN_ANNUAL_FORMS and (day := _day(row["latest"])):
-            if entry.get("filed_at") is None or day > entry["filed_at"]:
+            if entry.get("filed_at") is None or day.isoformat() > entry["filed_at"]:
                 entry.update(filed_at=day.isoformat(), form=row["form"])
     issuers = issuer_risk_contexts(database, tickers)
     _note_missing_sectors(database, companies, at)

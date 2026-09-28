@@ -192,6 +192,20 @@ def test_a_foreign_issuer_20f_is_read_from_sec_filings(database, monkeypatch):
     assert filings["detail"] == "latest 20-F filed Apr 28 · foreign issuer, annual report"
 
 
+def test_a_company_with_both_a_10q_and_a_10k_is_read_without_failing(database):
+    database.executescript(
+        """
+        INSERT INTO sec_filings VALUES ('GOOD','10-K','','2026-03-01T20:00:00+00:00'),
+            ('GOOD','10-Q','','2026-08-10T20:00:00+00:00');
+        """
+    )
+
+    found = stock_ratifications(database, [{"ticker": "GOOD"}, {"ticker": "DLST"}], at=AT)
+
+    filings = next(s for s in found["GOOD"]["standards"] if s["key"] == "filings")
+    assert filings["met"] is True and "DLST" in found
+
+
 def test_a_company_not_burning_cash_meets_the_cash_standard():
     issuer = {**HEALTHY, "cash_runway_months": None, "operating_cash_flow": 4_000_000.0}
 
