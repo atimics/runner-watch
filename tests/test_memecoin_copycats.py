@@ -201,3 +201,18 @@ def test_answers_cached_under_older_rules_are_searched_again():
 
     assert searches == 1
     assert originals[name_key("Trolloween")]["token_address"] == ORIGINAL
+
+
+def test_a_rate_limit_stops_the_searches_for_this_cycle():
+    import urllib.error
+
+    bursts = {f"name{n}": {"query": f"Name {n}", "h24": n, "launches": []} for n in range(3)}
+    tried = []
+
+    def download(url, timeout):
+        tried.append(url)
+        raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+
+    originals, cache, searches = find_originals(bursts, {}, download=download, at=AT, pause=0)
+
+    assert len(tried) == 1 and originals == {} and cache == {}

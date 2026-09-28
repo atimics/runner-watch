@@ -152,9 +152,10 @@ def test_an_unchecked_standard_is_not_counted_as_met():
 
 
 class FakeRpc:
-    def __init__(self, mints=None, largest=None):
+    def __init__(self, mints=None, largest=None, holders=624):
         self.mints = mints or {}
         self.largest = largest or []
+        self.holders = holders
         self.calls = []
 
     def __call__(self, body, *, credits):
@@ -163,6 +164,13 @@ class FakeRpc:
             return {"result": {"value": [self.mints.get(a) for a in body["params"][0]]}}
         if body["method"] == "getTokenLargestAccounts":
             return {"result": {"value": self.largest}}
+        if body["method"] == "getTokenAccounts":
+            assert credits == 10 and body["params"]["mint"]
+            accounts = [
+                {"owner": f"wallet{n}", "amount": 1 if n < self.holders else 0}
+                for n in range(min(self.holders + 3, 1000))
+            ]
+            return {"result": {"token_accounts": accounts}}
         raise AssertionError(body["method"])
 
 
@@ -314,24 +322,16 @@ def test_only_coins_passing_the_free_standards_cost_a_read():
             for n in range(10)
         ],
     )
-    lookups = []
-
-    def download(url, timeout):
-        lookups.append(url)
-        return b'{"data": {"attributes": {"holders": {"count": 624}}}}'
-
     young = row(
         token_address="Young1111111111111111111111111111111111111", pool_created_at=AT.isoformat()
     )
     rows = [row(), young]
 
-    state = ratify_rows(
-        rows, {}, vaults={POOL: VAULT}, bundled=set(), rpc=rpc, at=AT, download=download
-    )
+    state = ratify_rows(rows, {}, vaults={POOL: VAULT}, bundled=set(), rpc=rpc, at=AT)
 
     assert rows[0]["ratification"]["ratified"] is True
     assert rows[1]["ratification"]["ratified"] is False
-    assert len(lookups) == 1 and MINT in lookups[0]
+    assert rpc.calls.count("getTokenAccounts") == 1
     # Holders and counts are remembered for six hours.
     ratify_rows(
         [row()],
@@ -340,18 +340,37 @@ def test_only_coins_passing_the_free_standards_cost_a_read():
         bundled=set(),
         rpc=rpc,
         at=AT + timedelta(hours=5),
-        download=download,
     )
-    assert rpc.calls.count("getTokenLargestAccounts") == 1 and len(lookups) == 1
+    assert rpc.calls.count("getTokenLargestAccounts") == 1
+    assert rpc.calls.count("getTokenAccounts") == 1
 
 
 def test_a_failed_holder_count_leaves_it_unknown():
     from runner_web.memecoin_ratify import holder_counts
 
-    def download(url, timeout):
-        raise OSError("rate limited")
+    def rpc(body, *, credits):
+        raise ValueError("Helius request failed")
 
-    assert holder_counts([MINT], {}, download=download, pause=0, at=AT) == {}
+    assert holder_counts([MINT], {}, rpc=rpc, at=AT) == {}
+
+
+def test_holders_are_owners_with_a_balance_and_a_full_page_is_a_lower_bound():
+    from runner_web.memecoin_ratify import holder_counts
+
+    few = holder_counts([MINT], {}, rpc=FakeRpc(holders=40), at=AT)[MINT]
+    many = holder_counts([MINT], {}, rpc=FakeRpc(holders=5000), at=AT)[MINT]
+
+    assert (few["count"], few["at_least"]) == (40, False)
+    assert (many["count"], many["at_least"]) == (1000, True)
+
+
+def test_a_count_from_the_old_geckoterminal_lookup_is_read_again():
+    from runner_web.memecoin_ratify import holder_counts
+
+    old = {MINT: {"checked_at": AT.isoformat(), "count": 624}}
+    rpc = FakeRpc(holders=300)
+
+    assert holder_counts([MINT], old, rpc=rpc, at=AT)[MINT]["count"] == 300
 
 
 def test_the_board_and_page_show_the_mark_and_the_standards():

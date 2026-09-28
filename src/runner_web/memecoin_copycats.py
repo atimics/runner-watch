@@ -15,6 +15,7 @@ import logging
 import re
 import time
 import unicodedata
+import urllib.error
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -186,6 +187,11 @@ def find_originals(
             body = json.loads(raw)
             if not isinstance(body, dict):
                 raise ValueError("Search response is invalid")
+        except urllib.error.HTTPError as exc:
+            LOG.warning("Copycat original search failed for %r: HTTP %s", key, exc.code)
+            if exc.code == 429:
+                break  # rate limited: the other names would only be refused too
+            continue
         except Exception:
             LOG.warning("Copycat original search failed for %r", key, exc_info=True)
             continue

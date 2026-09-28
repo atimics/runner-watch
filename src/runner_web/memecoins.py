@@ -532,7 +532,6 @@ def _ratify(
     *,
     rpc: Rpc,
     at: datetime,
-    download: Download,
 ) -> None:
     """Attach each row's ratification; a failed read leaves standards unknown."""
 
@@ -556,8 +555,6 @@ def _ratify(
             bundled=bundled,
             rpc=rpc,
             at=at,
-            download=download,
-            pause=QUOTE_PAUSE_SECONDS,
         )
         _save_state("memecoin_ratification", state, at)
     except Exception:
@@ -950,7 +947,7 @@ def _collect_helius(
     mark_copycats(rows, bursts, originals)
     for row in rows:
         row["early"] = early_signal(row)
-    _ratify(rows, chain, rpc=rpc or rpc_request, at=at, download=download)
+    _ratify(rows, chain, rpc=rpc or rpc_request, at=at)
     # A pool or curve that traded keeps its slot next cycle, busiest first.
     # Without GeckoTerminal's windows, a chain price that moved since last
     # cycle is the sign of trading.
