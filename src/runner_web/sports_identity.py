@@ -19,7 +19,7 @@ def participants_ready(event: dict[str, Any]) -> bool:
             team.get("abbreviation", event.get(f"{side}_abbreviation")),
             team.get("name", event.get(f"{side}_team_name")),
         ]
-        present = [str(label).strip().casefold() for label in labels if label is not None]
+        present = [str(label).strip().casefold() for label in labels if str(label or "").strip()]
         if not present or any(label in PENDING_TEAM_NAMES for label in present):
             return False
     return True
