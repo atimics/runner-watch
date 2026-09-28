@@ -1,12 +1,13 @@
-"""Ratified: a memecoin that meets RATi's basic standards.
+"""Ratified memecoins: the chain reads the RATi Rules need, and the rules applied.
 
-Seven standards, all required. Not an endorsement or advice: it says the
-token's controls, pool, age, record and holders pass basic checks.
+The standards are the RATi Rules' own (the vendored `ratitrust` package, at the
+version in force); this module reads the facts they need, cheaply:
 
 The mint account (one credit per 100) answers the three control standards;
 a revoked authority cannot come back and Token-2022 extensions are fixed at
 creation, so a clean answer is kept. Top holders cost a credit a coin and are
-read only for coins that pass everything else, every six hours.
+read only for coins that pass the free standards, every six hours; the holder
+count (10 credits) only for coins passing everything else.
 """
 
 from __future__ import annotations
@@ -15,6 +16,18 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+from ratitrust.memecoin import (
+    HOLDER_PAGE,
+    LARGEST_LISTED,
+    MAX_LP_LEFT_PCT,
+    MAX_TOP10_PCT,
+    POOL_AUTHORITIES,
+    classify_mint,
+    lp_left_pct,
+    passes_free_standards,
+    standards,
+    top10_share_from,
+)
 from runner_web.helius_discovery import _encode
 from runner_web.memecoin_chain_prices import (
     POOL_DISCRIMINATOR,
@@ -23,17 +36,12 @@ from runner_web.memecoin_chain_prices import (
     _raw,
     read_accounts,
 )
-from runner_web.ratification import summarize
 from runner_web.solana_keys import is_program_address
 
+__all__ = ["LARGEST_LISTED", "ratify_rows", "standards", "top10_share"]
+
 LOG = logging.getLogger(__name__)
-MIN_LIQUIDITY_USD = 10_000.0
-MIN_HOLDERS = 100
-# The pool's liquidity tokens still in existence; the rest were burned.
-MAX_LP_LEFT_PCT = 10.0
 MAX_COUNT_LOOKUPS = 5
-# One page of token accounts; more than this many holders is already enough.
-HOLDER_PAGE = 1000
 RAYDIUM_CPMM = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
 CPMM_DISCRIMINATOR = bytes([247, 237, 227, 245, 215, 195, 222, 70])
 # (program, discriminator, lp mint offset, lp supply offset, name): Pump's and
@@ -42,71 +50,10 @@ LP_LAYOUTS = (
     (PUMP_SWAP, POOL_DISCRIMINATOR, 107, 203, "PumpSwap"),
     (RAYDIUM_CPMM, CPMM_DISCRIMINATOR, 136, 333, "Raydium CPMM"),
 )
-MIN_AGE = timedelta(hours=24)
-MAX_TOP10_PCT = 30.0
 HOLDERS_TTL = timedelta(hours=6)
-# Bump when the holder count changes, so answers under older rules are redone.
-HOLDER_RULES = 5
+# Bump when the holder rules change, so answers under older rules are redone.
+HOLDER_RULES = 6
 MAX_HOLDER_READS = 20
-# getTokenLargestAccounts lists this many accounts.
-LARGEST_LISTED = 20
-# Token-2022 features that let someone tax, block, seize or pause holders.
-RISKY_EXTENSIONS = {
-    "transferFeeConfig",
-    "transferHook",
-    "permanentDelegate",
-    "pausableConfig",
-    "defaultAccountState",
-    "nonTransferable",
-    "confidentialTransferMint",
-}
-# Pools and curves hold supply for everyone, so their accounts are left out of
-# the top holders. An account owned by a program address is left out only when
-# that address belongs to one of these programs: anyone can hold supply under a
-# program of their own, and that must count.
-POOL_PROGRAMS = {
-    "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",  # PumpSwap
-    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",  # Pump bonding curves
-    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium AMM v4
-    "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",  # Raydium CPMM
-    "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",  # Raydium CLMM
-    "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj",  # Raydium LaunchLab
-    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",  # Orca Whirlpools
-    "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",  # Meteora DLMM
-    "Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB",  # Meteora DAMM v1
-    "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",  # Meteora DAMM v2
-}
-# Pool authorities with no account of their own to show a program.
-POOL_AUTHORITIES = {
-    "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",  # Raydium AMM v4
-    "GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL",  # Raydium CPMM
-}
-RISK_KINDS = {
-    "synchronized_buys": "launch bundle",
-    "creator_sell": "creator selling",
-    "liquidity_withdrawal": "liquidity pulled",
-}
-LABELS = {
-    "mint_authority": "Mint authority revoked",
-    "freeze_authority": "Freeze authority revoked",
-    "token_features": "No risky token features",
-    "pool": "Graduated pool with $10K+ real liquidity",
-    "age": "24 hours since its pool opened",
-    "record": "No launch bundle, creator selling or liquidity pull",
-    "holders": "Top 10 holders own 30% or less",
-    "holder_count": "At least 100 holders",
-    "liquidity_lock": "Pool liquidity burned or locked",
-}
-NOTE = (
-    "Ratified: meets RATi's nine basic standards for a memecoin. "
-    "Standards are checks on chain facts, separate from any Call. "
-    "Not an endorsement, a guarantee or advice."
-)
-UNRATIFIED_NOTE = (
-    "Not ratified: this memecoin does not meet all of RATi's nine basic standards, "
-    "or one is not checked yet. Standards are checks on chain facts, separate "
-    "from any Call. Not an endorsement, a guarantee or advice."
-)
 
 
 def mint_controls(
@@ -122,40 +69,16 @@ def mint_controls(
                 info = account["data"]["parsed"]["info"]  # type: ignore[index]
             except (KeyError, TypeError):
                 continue
-            risky = sorted(
-                str(extension.get("extension"))
-                for extension in info.get("extensions") or []
-                if extension.get("extension") in RISKY_EXTENSIONS
-            )
-            entry = {
-                "mint_authority": info.get("mintAuthority"),
-                "freeze_authority": info.get("freezeAuthority"),
-                "risky_extensions": risky,
-                "supply": int(info.get("supply") or 0) / 10 ** int(info.get("decimals") or 0),
-            }
-            entry["clean"] = not (
-                entry["mint_authority"] or entry["freeze_authority"] or entry["risky_extensions"]
-            )
-            controls[mint] = entry
+            controls[mint] = classify_mint(info)
     return controls
 
 
-def _amount(item: dict[str, Any]) -> float:
-    """The raw amount scaled by decimals; uiAmount can be null and read as zero."""
-
-    try:
-        return int(item["amount"]) / 10 ** int(item["decimals"])
-    except (KeyError, TypeError, ValueError):
-        raise ValueError("Holder amount missing") from None
-
-
 def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> float | None:
-    """Percent of supply held by the ten largest wallets.
+    """Percent of supply held by the ten largest wallets, under the rules.
 
-    Accounts held by a known pool or bonding curve are left out, found from the
-    owner of each of the top 20 accounts and the program behind that owner (two
-    more one-credit reads). Anything else counts, including supply held under
-    a program nobody here knows.
+    Reads the top 20 accounts, each account's owner, and the program behind
+    each program-address owner (three one-credit reads), then applies the
+    rules' own count.
     """
 
     payload = rpc(
@@ -189,49 +112,8 @@ def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> flo
         address: (account or {}).get("owner")
         for address, account in (read_accounts(derived, rpc) if derived else {}).items()
     }
-    held = []
-    for item in accounts:
-        owner = owners[item["address"]]
-        if owner in POOL_AUTHORITIES or programs.get(owner or "") in POOL_PROGRAMS:
-            continue
-        held.append(_amount(item))
-    held.sort(reverse=True)
-    if len(held) < 10 and len(accounts) >= LARGEST_LISTED:
-        # The largest wallets sit below the listed accounts, so none holds more
-        # than the smallest listed: count that as an upper bound for each.
-        smallest = min(_amount(item) for item in accounts)
-        held += [smallest] * (10 - len(held))
-    return sum(held[:10]) / supply * 100
-
-
-def _age(row: dict[str, Any], at: datetime) -> timedelta | None:
-    try:
-        opened = datetime.fromisoformat(str(row["pool_created_at"]).replace("Z", "+00:00"))
-    except (KeyError, TypeError, ValueError):
-        return None
-    return at - opened
-
-
-def _flags(row: dict[str, Any], bundled: bool) -> list[str]:
-    factors = ((row.get("memecoin_assessment") or {}).get("risk") or {}).get("factors") or []
-    found = {
-        RISK_KINDS[factor["kind"]]
-        for factor in factors
-        if isinstance(factor, dict) and factor.get("kind") in RISK_KINDS
-    }
-    return sorted(found | ({"launch bundle"} if bundled else set()))
-
-
-def _passes_free_standards(row: dict[str, Any], bundled: bool, at: datetime) -> bool:
-    """Pool, age and record: known without a read, so they decide who is worth one."""
-
-    age = _age(row, at)
-    return (
-        row.get("venue") == "pool"
-        and float(row.get("liquidity_usd") or 0) >= MIN_LIQUIDITY_USD
-        and age is not None
-        and age >= MIN_AGE
-        and not _flags(row, bundled)
+    return top10_share_from(
+        accounts, owners, programs, supply=supply, program_address=is_program_address
     )
 
 
@@ -265,8 +147,7 @@ def liquidity_locks(pools: list[str], *, rpc: Rpc) -> dict[str, dict[str, Any]]:
         except (KeyError, TypeError, ValueError):
             results[pool] = {"left_pct": None, "dex": name}
             continue
-        left = min(100.0, outstanding / issued * 100) if issued > 0 else None
-        results[pool] = {"left_pct": left, "dex": name}
+        results[pool] = {"left_pct": lp_left_pct(outstanding, issued), "dex": name}
     return results
 
 
@@ -321,71 +202,6 @@ def holder_counts(
     return counts
 
 
-def standards(
-    row: dict[str, Any],
-    controls: dict[str, Any] | None,
-    top10_pct: float | None,
-    bundled: bool,
-    at: datetime,
-    *,
-    holder_count: int | None = None,
-    lock: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Each standard as met, not met or not yet known, and whether all are met."""
-
-    flagged = _flags(row, bundled)
-    age = _age(row, at)
-    liquidity = float(row.get("liquidity_usd") or 0)
-    results = {
-        "mint_authority": None if controls is None else not controls["mint_authority"],
-        "freeze_authority": None if controls is None else not controls["freeze_authority"],
-        "token_features": None if controls is None else not controls["risky_extensions"],
-        "pool": row.get("venue") == "pool" and liquidity >= MIN_LIQUIDITY_USD,
-        "age": None if age is None else age >= MIN_AGE,
-        "record": not flagged,
-        "holders": None if top10_pct is None else top10_pct <= MAX_TOP10_PCT,
-        "holder_count": None if holder_count is None else holder_count >= MIN_HOLDERS,
-        "liquidity_lock": None
-        if not lock or lock.get("left_pct") is None
-        else lock["left_pct"] <= MAX_LP_LEFT_PCT,
-    }
-    details = {
-        "mint_authority": "still active" if controls and controls["mint_authority"] else "",
-        "freeze_authority": "still active" if controls and controls["freeze_authority"] else "",
-        "token_features": ", ".join(controls["risky_extensions"]) if controls else "",
-        "pool": "on its bonding curve"
-        if row.get("venue") == "bonding_curve"
-        else f"${liquidity:,.0f} real liquidity",
-        "age": f"{age.total_seconds() / 3600:.0f} hours" if age is not None else "",
-        "record": ", ".join(flagged),
-        "holders": f"top 10 hold {top10_pct:.0f}%" if top10_pct is not None else "",
-        "holder_count": f"{holder_count:,} holders" if holder_count is not None else "",
-        "liquidity_lock": _lock_detail(lock),
-    }
-    return summarize(
-        LABELS,
-        results,
-        details,
-        note=NOTE,
-        unratified_note=UNRATIFIED_NOTE,
-        as_of=at.isoformat(),
-    )
-
-
-def _lock_detail(lock: dict[str, Any] | None) -> str:
-    if not lock:
-        return ""
-    if lock.get("left_pct") is None:
-        return (
-            f"{lock['dex']} pool not readable"
-            if lock.get("dex")
-            else "this DEX is not supported yet"
-        )
-    if lock["left_pct"] <= 0:
-        return f"all {lock['dex']} liquidity tokens burned"
-    return f"{lock['left_pct']:.0f}% of {lock['dex']} liquidity tokens still held"
-
-
 def ratify_rows(
     rows: list[dict[str, Any]],
     saved: dict[str, Any],
@@ -413,7 +229,7 @@ def ratify_rows(
         row
         for row in rows
         if row.get("token_address")
-        and _passes_free_standards(row, row["token_address"] in bundled, at)
+        and passes_free_standards(row, row["token_address"] in bundled, at)
     ]
     controls = mint_controls([row["token_address"] for row in candidates], known_controls, rpc=rpc)
     known_controls.update(controls)
@@ -459,6 +275,7 @@ def ratify_rows(
             mint in bundled,
             at,
             holder_count=(counts.get(mint) or {}).get("count"),
+            holder_count_at_least=bool((counts.get(mint) or {}).get("at_least")),
             lock=locks.get(row.get("pool_address", "")),
         )
     return {"controls": known_controls, "holders": holders, "counts": counts}

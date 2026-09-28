@@ -126,11 +126,15 @@ def describe_clause(clause: dict[str, Any], lists: dict[str, Any]) -> str:
     text = f"{clause['fact']} {op} {target}{unit}".strip()
     if clause.get("unless"):
         text += f", unless {describe_clause(clause['unless'], lists)}"
+    if clause.get("when"):
+        text += f", when {describe_clause(clause['when'], lists)}"
     return text
 
 
 def _number(value: Any) -> str:
-    if isinstance(value, bool) or not isinstance(value, int | float):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if not isinstance(value, int | float):
         return str(value)
     # Group thousands in amounts, not in codes such as a four-digit SIC.
     grouping = "," if abs(value) >= 10_000 else ""

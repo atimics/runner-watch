@@ -71,6 +71,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 runner_web = ["assets/*.json"]
+# The RATi Rules, vendored from atimics/ratitrust at the version in force.
+ratitrust = ["rules.toml", "rules.schema.json"]
 
 [tool.pytest.ini_options]
 cache_dir = ".test-cache.nosync/pytest"

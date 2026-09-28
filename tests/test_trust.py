@@ -11,8 +11,9 @@ from runner_web import db, trust
 def test_the_published_record_commits_to_the_current_version_and_every_digest_checks_out():
     record = trust.rules_record()
 
-    assert record["current"]["version"] == "1.0.2"
-    assert record["current"]["digest"].startswith("7826eefb")
+    assert record["current"]["version"] == "2.0.0"
+    assert record["current"]["digest"].startswith("cd035785")
+    assert record["sealed"] is True and record["shown"]["version"] == "1.0.2"
     assert "files" not in record["current"]  # the current version is only a commitment
     assert [version["version"] for version in record["revealed"]] == ["1.0.2", "1.0.1", "1.0.0"]
     assert all(version["verified"] for version in record["revealed"])
@@ -59,8 +60,10 @@ def test_the_trust_page_shows_the_commitment_and_the_rules(client):
     page = client.get("/trust")
 
     assert page.status_code == 200
-    assert "7826eefb85d977529dc7277fe7d3279a4352ca227d27a2629cc9869cea6bf97a" in page.text
-    assert "Published, digest matches" in page.text and "does not match" not in page.text
+    assert "cd0357851f936c3628b12f65b7a62bf24cc0c02d40fe265dea26f98d622b029d" in page.text
+    assert "Version 2.0.0 stays sealed until it is replaced" in page.text
+    assert "Shown below is version 1.0.2, the newest published in full." in page.text
+    assert "does not match" not in page.text
     assert 'class="market-switcher"' not in page.text  # the rules are not a market
     assert "board-view-bar" not in page.text  # no List/Map bar on the rules
     assert "real_liquidity at least 10,000 USD" in page.text
@@ -109,3 +112,17 @@ def test_a_sealed_version_in_force_says_which_published_rules_are_shown(client, 
     assert "Version 1.1.0 stays sealed until it is replaced" in page
     assert "Shown below is version 1.0.2, the newest published in full." in page
     assert "In force, sealed" in page and "ab" * 32 in page
+
+
+def test_a_clause_that_applies_only_in_one_case_says_so():
+    clause = {
+        "fact": "days_since_annual_report",
+        "op": "<=",
+        "value": 490,
+        "unit": "days",
+        "when": {"fact": "foreign_issuer", "op": "==", "value": True},
+    }
+
+    assert trust.describe_clause(clause, {}) == (
+        "days_since_annual_report at most 490 days, when foreign_issuer is true"
+    )

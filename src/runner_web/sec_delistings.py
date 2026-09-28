@@ -19,18 +19,19 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ratitrust.stock import DELISTING_DAYS, DELISTING_SWEEP_FRESH_HOURS
 from runner_watch.edgar import SEC_USER_AGENT, classify_filing
 from runner_web.db import connection
 
 LOG = logging.getLogger(__name__)
 SEARCH_URL = "https://efts.sec.gov/LATEST/search-index?"
-WINDOW = timedelta(days=90)
+WINDOW = timedelta(days=DELISTING_DAYS)
 PAGE = 100
 MAX_PAGES = 20
 RETRY_PAUSE = 5.0
 STATE_KEY = "sec_delisting_sweep"
-# A sweep older than this no longer vouches for the window.
-FRESH = timedelta(hours=36)
+# A sweep older than this no longer vouches for the window (the rules' own figure).
+FRESH = timedelta(hours=DELISTING_SWEEP_FRESH_HOURS)
 TICKER_RE = re.compile(r"\(([A-Z][A-Z0-9.\-]{0,9})\)")
 Download = Callable[[str, float], bytes]
 
