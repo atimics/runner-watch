@@ -48,6 +48,7 @@ from runner_web.odds_api import (
     refresh_decision,
 )
 from runner_web.odds_api import PROVIDER as ODDS_PROVIDER
+from runner_web.sports_identity import participants_ready
 from runner_web.sports_markets import event_readings, refresh_prediction_markets
 
 MODEL_VERSION = "team-form-v1"
@@ -1375,6 +1376,8 @@ def collect_stored_player_appearances(
 
 def _input_hash(event: dict[str, Any], prediction: dict[str, Any]) -> str:
     fields = {
+        "home_team_id": event["home"].get("id"),
+        "away_team_id": event["away"].get("id"),
         "home_record": event["home"].get("record"),
         "away_record": event["away"].get("record"),
         "home_odds": event.get("home_odds"),
@@ -1586,6 +1589,10 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                     season_type=excluded.season_type,name=excluded.name,
                     start_time=excluded.start_time,status=excluded.status,
                     status_detail=excluded.status_detail,completed=excluded.completed,
+                    home_team_id=excluded.home_team_id,home_team_name=excluded.home_team_name,
+                    home_abbreviation=excluded.home_abbreviation,
+                    away_team_id=excluded.away_team_id,away_team_name=excluded.away_team_name,
+                    away_abbreviation=excluded.away_abbreviation,
                     home_record=excluded.home_record,home_score=excluded.home_score,
                     away_record=excluded.away_record,away_score=excluded.away_score,
                     venue=excluded.venue,location=excluded.location,
@@ -1728,6 +1735,8 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                         ),
                     )
             _store_bookmaker_moneylines(database, event, timestamp)
+            if not participants_ready(event):
+                continue
             prediction = predict_event(event)
             input_state_hash = _input_hash(event, prediction)
             previous_prediction = database.execute(
@@ -3834,7 +3843,7 @@ def _game_view_state(event: dict[str, Any], current: datetime | None = None) -> 
 
     if started or status != "pre":
         pick_state = "closed"
-    elif event.get("paper_odds"):
+    elif participants_ready(event) and event.get("paper_odds"):
         pick_state = "open"
     else:
         pick_state = "unavailable"
@@ -4846,6 +4855,8 @@ def create_sports_pick(
         ).fetchone()
         if not event:
             raise ValueError("This game is no longer open for picks")
+        if not participants_ready(dict(event)):
+            raise ValueError("Team identities are pending. Please check this game again later.")
         bookmaker_rows = _latest_bookmaker_rows(database, [event_id])
         comparison = _market_comparison(dict(event), bookmaker_rows)
         odds = _paper_moneyline(

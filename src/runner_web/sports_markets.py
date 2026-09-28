@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from runner_watch.ingestion import SourceFetch
 from runner_web.db import connection
 from runner_web.ingestion import record_source_fetch
+from runner_web.sports_identity import participants_ready
 
 KALSHI_ROOT = "https://external-api.kalshi.com/trade-api/v2"
 POLY_ROOT = "https://gamma-api.polymarket.com"
@@ -67,6 +68,7 @@ def _candidates(events: list[dict[str, Any]], at: datetime) -> list[dict[str, An
         event
         for event in events
         if event.get("status") == "pre"
+        and participants_ready(event)
         and event.get("season_type") not in {"preseason", "pre-season", "spring-training"}
         and (start := _time(event.get("start_time"))) is not None
         and at < start <= at + timedelta(days=45)

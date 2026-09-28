@@ -271,3 +271,14 @@ def test_activity_metadata_survives_storage_and_list_detail_agree(tmp_path, monk
         "volume_scope": "whole game market",
         "spread": 0.02,
     }
+
+
+@pytest.mark.parametrize("source", ["kalshi", "polymarket"])
+def test_pending_participant_id_keeps_game_out_of_market_matching(source):
+    event = game()
+    event["away"]["id"] = "-2"
+    if source == "kalshi":
+        readings = sports_markets.normalize_kalshi([event], [kalshi_event()], AT)
+    else:
+        readings = sports_markets.normalize_polymarket([event], [polymarket_event()], AT)
+    assert readings == []
