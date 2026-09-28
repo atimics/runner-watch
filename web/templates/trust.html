@@ -31,7 +31,6 @@
     <a href="#states">Result states</a>
     {% if rules.cases %}<a href="#cases">Cases</a>{% endif %}
     <a href="#versions">Versions</a>
-    <a href="#access">Request access</a>
   </nav>
 
   {% for asset_id, asset in rules.assets.items() %}
@@ -125,19 +124,6 @@
     <p class="trust-note">A version's digest is published while it is in force; its full text is published when it is replaced, and never edited. To check one: take the SHA-256 of each covered file, write one line per file, <code>path hash</code>, in path order, and take the SHA-256 of those lines. This page does that for every published version.</p>
   </section>
 
-  <section class="trust-access" id="access" aria-labelledby="trust-access-heading">
-    <h2 id="trust-access-heading">Request access</h2>
-    <p>The rules repository is private. To read it, request access with your GitHub account. We check the account is real: a person's account, at least 30 days old, with public repositories or followers. Access is granted only by an invitation to that account.</p>
-    {% if requested %}<p class="trust-notice" role="status">{% if already %}A request for <strong>{{ requested }}</strong> is already waiting.{% else %}Request recorded for <strong>{{ requested }}</strong>. If it is approved, that account will get an invitation on GitHub.{% endif %}</p>{% endif %}
-    {% if error %}<p class="trust-notice trust-error" role="alert">{{ error }}</p>{% endif %}
-    <form class="trust-form" method="post" action="/trust/access">
-      <label for="trust-github">GitHub username</label>
-      <input id="trust-github" name="github" required maxlength="39" autocomplete="username" autocapitalize="none" spellcheck="false" pattern="[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}">
-      <label for="trust-reason">Why you would like access <span>(optional)</span></label>
-      <textarea id="trust-reason" name="reason" maxlength="500" rows="3"></textarea>
-      <button type="submit">Request access</button>
-    </form>
-  </section>
 </main>
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
