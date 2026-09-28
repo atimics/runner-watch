@@ -3045,6 +3045,7 @@ def trust_page(
             request,
             runner_session,
             trust=rules_record(),
+            nav_product="trust",
             requested=requested if GITHUB_LOGIN.fullmatch(requested) else "",
             already=request.query_params.get("already") == "1",
             error=MESSAGES.get(error, ""),
