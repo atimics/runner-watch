@@ -11,13 +11,9 @@ read only for coins that pass everything else, every six hours.
 
 from __future__ import annotations
 
-import json
 import logging
-import time
-from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import quote
 
 from runner_web.helius_discovery import _encode
 from runner_web.memecoin_chain_prices import (
@@ -36,6 +32,8 @@ MIN_HOLDERS = 100
 # The pool's liquidity tokens still in existence; the rest were burned.
 MAX_LP_LEFT_PCT = 10.0
 MAX_COUNT_LOOKUPS = 5
+# One page of token accounts; more than this many holders is already enough.
+HOLDER_PAGE = 1000
 RAYDIUM_CPMM = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
 CPMM_DISCRIMINATOR = bytes([247, 237, 227, 245, 215, 195, 222, 70])
 # (program, discriminator, lp mint offset, lp supply offset, name): Pump's and
@@ -276,31 +274,50 @@ def holder_counts(
     mints: list[str],
     cached: dict[str, Any],
     *,
-    download: Callable[[str, float], bytes],
-    pause: float,
+    rpc: Rpc,
     at: datetime,
 ) -> dict[str, Any]:
-    """Holder counts from GeckoTerminal's token info (free), a few a cycle, kept six hours."""
+    """Holders from Helius's token accounts for the mint, a few a cycle, kept six hours.
+
+    One page of up to 1,000 accounts costs 10 credits. A holder is an owner
+    with a balance; a full page is a lower bound, which is all the standard
+    needs.
+    """
 
     counts = {
         mint: entry
         for mint, entry in cached.items()
         if at - datetime.fromisoformat(entry["checked_at"]) <= HOLDERS_TTL
+        and entry.get("source") == "helius"
     }
     looked = 0
     for mint in mints:
         if mint in counts or looked >= MAX_COUNT_LOOKUPS:
             continue
-        time.sleep(pause)
         looked += 1
-        url = f"https://api.geckoterminal.com/api/v2/networks/solana/tokens/{quote(mint)}/info"
         try:
-            holders = json.loads(download(url, 10.0))["data"]["attributes"]["holders"]
-            count = int(holders["count"])
+            result = rpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "holders",
+                    "method": "getTokenAccounts",
+                    "params": {"mint": mint, "limit": HOLDER_PAGE},
+                },
+                credits=10,
+            )["result"]
+            accounts = result["token_accounts"]
+            owners = {
+                account["owner"] for account in accounts if int(account.get("amount") or 0) > 0
+            }
         except Exception:
             LOG.warning("Holder count unavailable for %s", mint, exc_info=True)
             continue
-        counts[mint] = {"checked_at": at.isoformat(), "count": count}
+        counts[mint] = {
+            "checked_at": at.isoformat(),
+            "count": len(owners),
+            "at_least": len(accounts) >= HOLDER_PAGE,
+            "source": "helius",
+        }
     return counts
 
 
@@ -377,8 +394,6 @@ def ratify_rows(
     bundled: set[str],
     rpc: Rpc,
     at: datetime,
-    download: Callable[[str, float], bytes] | None = None,
-    pause: float = 0.0,
 ) -> dict[str, Any]:
     """Attach `ratification` to every row; read the chain only for close candidates.
 
@@ -424,7 +439,7 @@ def ratify_rows(
         except ValueError:
             continue  # this coin's holders stay unknown; the others still count
         holders[mint] = {"checked_at": at.isoformat(), "top10_pct": share, "rules": HOLDER_RULES}
-    # The holder count is the last and a free lookup: only coins passing the rest.
+    # The holder count is the last read: only coins passing the rest.
     finalists = [
         row["token_address"]
         for row in candidates
@@ -434,11 +449,7 @@ def ratify_rows(
         and (locks.get(row["pool_address"]) or {}).get("left_pct") is not None
         and locks[row["pool_address"]]["left_pct"] <= MAX_LP_LEFT_PCT
     ]
-    counts = (
-        holder_counts(finalists, saved.get("counts") or {}, download=download, pause=pause, at=at)
-        if download
-        else dict(saved.get("counts") or {})
-    )
+    counts = holder_counts(finalists, saved.get("counts") or {}, rpc=rpc, at=at)
     for row in rows:
         mint = row.get("token_address")
         row["ratification"] = standards(
