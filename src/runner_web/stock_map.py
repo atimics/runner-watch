@@ -139,6 +139,32 @@ ENTITY_WORDS = {
     "THE",
 }
 SUFFIXES = {"JR", "JR.", "SR", "SR.", "II", "III", "IV", "V", "MD", "M.D.", "PHD", "PH.D."}
+PARTICLES = {
+    "van",
+    "von",
+    "de",
+    "der",
+    "den",
+    "del",
+    "della",
+    "di",
+    "da",
+    "du",
+    "la",
+    "le",
+    "dos",
+    "das",
+    "ter",
+    "ten",
+    "bin",
+    "binti",
+    "ibn",
+    "al",
+    "el",
+    "st.",
+    "st",
+    "mac",
+}
 _NAME_TOKEN = re.compile(r"^[^\W\d_][\w.'’-]*$")
 
 
@@ -150,12 +176,20 @@ def natural_name(filed: str) -> str:
     """
 
     words = filed.replace(",", " ").split()
-    if not 2 <= len(words) <= 5 or any(w.upper() in ENTITY_WORDS for w in words):
+    if not 2 <= len(words) <= 6 or any(w.upper() in ENTITY_WORDS for w in words):
         return filed
     suffix = [words.pop()] if words[-1].upper() in SUFFIXES and len(words) > 2 else []
-    if not 2 <= len(words) <= 4 or not all(_NAME_TOKEN.match(w) for w in words):
+    if not 2 <= len(words) <= 5 or not all(_NAME_TOKEN.match(w) for w in words):
         return filed
-    return " ".join([*words[1:], words[0], *suffix])
+    # A surname led by particles ("Van Der Berg", "de la Cruz", "bin Salman")
+    # is the particles plus the next word.
+    cut = 0
+    while cut < len(words) - 2 and words[cut].casefold() in PARTICLES:
+        cut += 1
+    surname, given = words[: cut + 1], words[cut + 1 :]
+    if not given or len(given) > 3:
+        return filed
+    return " ".join([*given, *surname, *suffix])
 
 
 def _person(raw: dict[str, Any], ticker: str, *, individual: bool = False) -> dict[str, Any]:

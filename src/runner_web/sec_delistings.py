@@ -178,3 +178,45 @@ def notices_read(database: Any, at: datetime) -> bool:
     except (TypeError, KeyError, ValueError):
         return False
     return at - checked <= FRESH
+
+
+# A foreign issuer's notice is a 6-K, read from its text as the filing arrives
+# (`runner_web.intelligence`). Until that reading has covered the whole 90-day
+# window, "no notice" is not known for it: the standard says "not checked yet".
+FOREIGN_STATE_KEY = "sec_6k_notices_read_from"
+
+
+def mark_foreign_notices_read_from(database: Any, day: datetime) -> None:
+    """Record the day from which every 6-K's text has been read for notices.
+
+    An earlier day already on record is kept, so a later reading never shortens
+    the window that was covered.
+    """
+
+    row = database.execute(
+        "SELECT value FROM worker_state WHERE key=?", (FOREIGN_STATE_KEY,)
+    ).fetchone()
+    if row:
+        try:
+            if datetime.fromisoformat(json.loads(row["value"])["from"]) <= day:
+                return
+        except (TypeError, KeyError, ValueError):
+            pass
+    database.execute(
+        "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+        (FOREIGN_STATE_KEY, json.dumps({"from": day.isoformat()}), day.isoformat()),
+    )
+
+
+def foreign_notices_read(database: Any, at: datetime) -> bool:
+    """Whether 6-K texts have been read for the whole 90-day window ending `at`."""
+
+    row = database.execute(
+        "SELECT value FROM worker_state WHERE key=?", (FOREIGN_STATE_KEY,)
+    ).fetchone()
+    try:
+        start = datetime.fromisoformat(json.loads(row["value"])["from"])
+    except (TypeError, KeyError, ValueError):
+        return False
+    return start <= at - WINDOW

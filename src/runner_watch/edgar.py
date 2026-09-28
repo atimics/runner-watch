@@ -233,6 +233,11 @@ class EdgarClient:
         return None
 
     def archive_primary_filing(self, filing: EdgarFiling) -> str | None:
+        archived = self.primary_filing_text(filing)
+        return archived[0] if archived else None
+
+    def primary_filing_text(self, filing: EdgarFiling) -> tuple[str, str] | None:
+        """The primary document's URL and text; fetching it archives it."""
 
         directory_url = filing_directory_url(filing.filing_url)
         index = self.get_json(f"{directory_url}/index.json")
@@ -240,8 +245,7 @@ class EdgarClient:
         if not names:
             return None
         url = f"{directory_url}/{names[0]}"
-        self.get_text(url)
-        return url
+        return url, self.get_text(url)
 
 
 def parse_company_map(payload: dict[str, Any]) -> list[EdgarCompany]:
@@ -661,6 +665,31 @@ def parse_beneficial_ownership_xml(text: str) -> BeneficialOwnershipSummary | No
     )
 
 
+# A foreign private issuer reports an exchange deficiency or delisting notice on
+# 6-K, which has no item numbers (a domestic issuer uses 8-K item 3.01). The
+# notice is read from the text. "Regained compliance" is good news and must not
+# match, so each pattern names the failure itself.
+LISTING_NOTICE_ITEM = "listing-notice"
+_LISTING_NOTICE = re.compile(
+    r"(?:not|no longer)\s+(?:be\s+)?in\s+compliance\s+with\s+(?:the\s+)?"
+    r"(?:nasdaq|nyse|new york stock exchange|listing|continued listing|minimum bid)"
+    r"|(?:does|did)\s+not\s+(?:meet|satisfy|comply\s+with)\s+(?:the\s+)?"
+    r"(?:nasdaq|nyse|continued listing|minimum bid|listing)"
+    r"|failure\s+to\s+(?:satisfy|meet|comply\s+with)\s+(?:a\s+|the\s+)?continued\s+listing"
+    r"|delisting\s+determination|notice\s+of\s+delisting|staff\s+determination"
+    r"|(?:suspend|suspension\s+of)\s+trading\s+(?:in|of)\s+the\s+company",
+    re.IGNORECASE,
+)
+
+
+def is_listing_notice(text: str) -> bool:
+    """A 6-K reporting an exchange deficiency, delisting or suspension notice."""
+
+    plain = re.sub(r"<[^>]+>", " ", text[:400_000])
+    plain = re.sub(r"&nbsp;|&#160;|\s+", " ", plain)
+    return bool(_LISTING_NOTICE.search(plain))
+
+
 def classify_filing(form: str, ownership: OwnershipSummary | None = None) -> dict[str, Any]:
     normalized = form.upper()
     if normalized.startswith("4") and ownership:
@@ -685,7 +714,8 @@ def classify_filing(form: str, ownership: OwnershipSummary | None = None) -> dic
         return {"kind": "Insider ownership update", "sentiment": "neutral", "score": 28}
 
     rules = (
-        (("S-1", "S-3", "424B", "POS AM"), "Offering or dilution filing", "risk", 82),
+        # F-1 and F-3 are the foreign private issuer's S-1 and S-3.
+        (("S-1", "S-3", "F-1", "F-3", "424B", "POS AM"), "Offering or dilution filing", "risk", 82),
         (("EFFECT",), "Registration became effective", "risk", 72),
         (("NT 10-Q", "NT 10-K", "NT 20-F"), "Late periodic report", "risk", 76),
         (("144",), "Proposed security sale", "risk", 62),

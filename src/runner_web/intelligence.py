@@ -6,11 +6,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from runner_watch.edgar import (
+    LISTING_NOTICE_ITEM,
     BeneficialOwnershipSummary,
     EdgarClient,
     EdgarFiling,
     OwnershipSummary,
     classify_filing,
+    is_listing_notice,
 )
 from runner_watch.models import ScanSettings
 from runner_watch.scanner import RunnerScanner
@@ -18,6 +20,7 @@ from runner_web.collection import recording_market_data
 from runner_web.db import connection
 from runner_web.ingestion import TERMINAL_ITEM_STATUSES, mark_source_item, record_source_fetch
 from runner_web.legal_risk import sync_filing_people
+from runner_web.sec_delistings import mark_foreign_notices_read_from
 from runner_web.sec_facts import refresh_company_facts
 from runner_web.stock_map import restore_archived_map_evidence
 
@@ -37,6 +40,9 @@ INTERESTING_FORMS = (
     "SCHEDULE 13G",
     "NT 10-Q",
     "NT 10-K",
+    "NT 20-F",
+    "F-1",
+    "F-3",
     "10-Q",
     "10-K",
     "20-F",
@@ -275,6 +281,8 @@ def refresh_edgar() -> dict[str, Any]:
     filings = client.latest_filings()
     new_events: list[dict[str, Any]] = []
     item_errors: dict[str, str] = {}
+    listing_notices: set[str] = set()
+    six_k_unread = False
     for filing in filings:
         if _already_seen(filing.accession):
             continue
@@ -317,9 +325,16 @@ def refresh_edgar() -> dict[str, Any]:
                 item_errors[filing.accession] = f"Beneficial ownership parsing failed: {exc}"
         else:
             try:
-                client.archive_primary_filing(filing)
+                archived = client.primary_filing_text(filing)
+                if (
+                    archived
+                    and filing.form.upper().startswith("6-K")
+                    and is_listing_notice(archived[1])
+                ):
+                    listing_notices.add(filing.accession)
             except Exception as exc:
                 LOG.warning("Could not archive filing text %s: %s", filing.accession, exc)
+                six_k_unread = six_k_unread or filing.form.upper().startswith("6-K")
                 item_errors[filing.accession] = f"Filing text archive failed: {exc}"
         company = _company_for_cik(issuer_cik)
         if company is None:
@@ -333,11 +348,22 @@ def refresh_edgar() -> dict[str, Any]:
                 parser_version=PARSER_VERSION,
             )
             continue
-        new_events.append(_prepare_event(filing, company, ownership, beneficial))
+        event = _prepare_event(filing, company, ownership, beneficial)
+        if filing.accession in listing_notices:
+            # Read like an 8-K item 3.01 by the trading standard.
+            event["items"] = LISTING_NOTICE_ITEM
+            event["kind"] = "Exchange listing notice"
+            event["sentiment"] = "risk"
+            event["score"] = 76.0
+        new_events.append(event)
 
     market = _market_context([event["ticker"] for event in new_events])
     timestamp = iso()
     with connection() as db:
+        if not six_k_unread:
+            # Every 6-K in this feed was read for notices: from now on, "no notice"
+            # is known for a foreign issuer once the window has filled.
+            mark_foreign_notices_read_from(db, datetime.now(UTC))
         for event in new_events:
             context = market.get(event["ticker"], {})
             market_score = context.get("market_score")
