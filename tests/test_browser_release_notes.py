@@ -83,10 +83,10 @@ def test_release_notes_stay_compact_and_factual(page: Page, width: int) -> None:
     assert box["height"] < 430
     assert page.locator(".flash-release-visual").count() == 0
     assert page.locator(".flash-release-features li").all_inner_texts() == [
-        "Telegram replies\nDash can answer group mentions and replies again.",
-        "Flash targets\nPre-market targets with closing prices and results.",
-        "Sports Calls\nPaper picks with saved odds and settled returns.",
-        "Memecoins\nBrowse prices, volume, and source times.",
+        "Ratified memecoins\nReal liquidity, holders and burned liquidity, read on chain.",
+        "Foreign stocks\n20-F and 40-F filers read from their IFRS reports.",
+        "Records\nEach mark shows since when, its rules, and a record to download.",
+        "trust.rati.chat\nThe RATi Rules, every past version, and its digest.",
     ]
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth") is True
     assert errors == []

@@ -2,7 +2,7 @@
 <dialog
   class="flash-release-dialog"
   id="flashReleaseDialog"
-  data-release-id="{{ release_announcement_id }}-telegram-replies"
+  data-release-id="{{ release_announcement_id }}-ratified-records"
   data-balance="{{ flash_wallet.balance }}"
   data-can-claim="{{ 'true' if flash_wallet.can_claim else 'false' }}"
   data-claim-day="{{ flash_wallet.claim_day }}"
@@ -16,14 +16,14 @@
   </div>
   <div class="flash-release-body">
     <header>
-      <h2 id="flashReleaseTitle">RATi Runners 1.0</h2>
-      <p id="flashReleaseIntro">Follow the move, read the evidence, and track the result.</p>
+      <h2 id="flashReleaseTitle">Ratified, on the record</h2>
+      <p id="flashReleaseIntro">Every Ratified mark now shows when, under which rules, and why.</p>
     </header>
     <ul class="flash-release-features">
-      <li><strong>Telegram replies</strong><small>Dash can answer group mentions and replies again.</small></li>
-      <li><strong>Flash targets</strong><small>Pre-market targets with closing prices and results.</small></li>
-      <li><strong>Sports Calls</strong><small>Paper picks with saved odds and settled returns.</small></li>
-      <li><strong>Memecoins</strong><small>Browse prices, volume, and source times.</small></li>
+      <li><strong>Ratified memecoins</strong><small>Real liquidity, holders and burned liquidity, read on chain.</small></li>
+      <li><strong>Foreign stocks</strong><small>20-F and 40-F filers read from their IFRS reports.</small></li>
+      <li><strong>Records</strong><small>Each mark shows since when, its rules, and a record to download.</small></li>
+      <li><strong>trust.rati.chat</strong><small>The RATi Rules, every past version, and its digest.</small></li>
     </ul>
     <section class="flash-daily-card" aria-labelledby="flashDailyTitle">
       <div>
@@ -77,8 +77,8 @@
   }
   function setReleaseCopy() {
     releaseKicker.textContent = 'RELEASE NOTES';
-    releaseTitle.textContent = 'RATi Runners 1.0';
-    releaseIntro.textContent = 'Follow the move, read the evidence, and track the result.';
+    releaseTitle.textContent = 'Ratified, on the record';
+    releaseIntro.textContent = 'Every Ratified mark now shows when, under which rules, and why.';
   }
   function setLowBalanceCopy(required) {
     const shortfall = Math.max(0, Number(required || 0) - balance);

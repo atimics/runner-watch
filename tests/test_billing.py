@@ -174,8 +174,8 @@ def test_signed_in_pages_show_flash_calls_and_the_release_claim_modal(
     assert "<small>0 open</small>" in html
     assert 'id="flashReleaseDialog"' in html
     assert "RELEASE NOTES" in html
-    assert "RATi Runners 1.0" in html
-    assert "Follow the move, read the evidence, and track the result." in html
+    assert "Ratified, on the record" in html
+    assert "Every Ratified mark now shows when, under which rules, and why." in html
     assert "/static/flash-daily-release.webp" not in html
     assert "Your edge, one glance away." not in html
     assert "100 Flash available" in html
