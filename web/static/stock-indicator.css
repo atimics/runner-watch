@@ -16,7 +16,7 @@
 .indicator-pattern--social{background:radial-gradient(circle,var(--glyph-ink) 0 1px,transparent 1.1px);background-size:4px 4px}
 .indicator-pattern--cluster{background:linear-gradient(90deg,var(--glyph-ink) 1px,transparent 1px),linear-gradient(var(--glyph-ink) 1px,transparent 1px);background-size:6px 6px}
 .indicator-divider{position:absolute;left:calc(50% - .6px);top:0;width:1.2px;height:50%;background:var(--glyph-ink);transform-origin:50% 100%;pointer-events:none}
-.ticker-sentiment{color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;line-height:1.4}
+
 .market-memecoins .ticker-name{flex-direction:column;align-items:flex-start;gap:2px}
 .indicator-glyph[data-mix="unknown"] .score-pie,.indicator-glyph[data-mix="zero"] .score-pie{
   background:none;border:1px solid var(--muted);-webkit-mask:none;mask:none;
@@ -41,10 +41,8 @@
   .market-stocks .ticker-name,.market-memecoins .ticker-name{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:2px 5px}
   .ticker-name>.ticker-symbol,.market-memecoins .ticker-name>strong{grid-column:1;grid-row:1}
   .market-stocks .ticker-name>small,.market-memecoins .ticker-name>small{grid-column:2;grid-row:1}
-  .ticker-sentiment{grid-column:1/-1;grid-row:2}
   /* The ranking reason gets its own line under the name, above the reading. */
   .market-stocks .ticker-name>.rank-detail,.market-memecoins .ticker-name>.rank-detail{grid-column:1/-1;grid-row:2}
-  .ticker-name:has(>.rank-detail)>.ticker-sentiment{grid-row:3}
 }
 @media(forced-colors:active){
   .indicator-glyph{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--glyph-ink:Canvas;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--indicator-cluster:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText}

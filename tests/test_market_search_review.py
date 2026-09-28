@@ -75,8 +75,9 @@ def test_memecoin_route_keeps_matches_through_both_filters(board_context, monkey
     assert len(rows) == 1
     assert rows[0]["href"] == "/memecoins/coin/wif-token"
     assert rows[0].select_one(".ticker-name strong").get_text() == "So1111…111112"
-    assert rows[0].select_one(".ticker-name small").get_text() == "Creator-set: WIF"
-    assert rows[0].select_one(".ticker-name small")["title"] == ADDRESS
+    # The address is the identity: no creator-set name under it, full address on hover.
+    assert rows[0].select_one(".ticker-name small") is None
+    assert rows[0].select_one(".ticker-name strong")["title"] == ADDRESS
 
 
 def game(selection="home", **changes):

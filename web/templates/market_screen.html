@@ -1,5 +1,5 @@
 {% from '_sports_indicator.html' import sports_indicator_legend %}
-{% from '_stock_indicator.html' import indicator_glyph, verified_check, ratified_mark, ratification_standards, indicator_legend, sentiment_reading %}
+{% from '_stock_indicator.html' import indicator_glyph, verified_check, ratified_mark, ratification_standards, indicator_legend %}
 {% macro score_pie(item) -%}
 {%- if item.indicator is defined -%}
 {{ indicator_glyph(item) }}
@@ -102,7 +102,7 @@
         {% else %}
         {% if item.tag %}<span class="tag tag-{{ item.tag_tone }}{% if item.risk %} has-risk{% endif %}">{% if item.risk %}<i aria-hidden="true">▲</i>{% endif %}{{ item.tag }}</span>
         {% else %}<span class="ticker-mark tone-{{ loop.index0 % 5 }}" aria-hidden="true">{{ item.mark }}</span>{% endif %}
-        <span class="ticker-name">{% if screen.market == "stocks" %}<span class="ticker-symbol"><strong>{{ item.name }}</strong>{{ verified_check(item) }}{{ ratified_mark(item) }}</span>{% else %}<span class="ticker-symbol"><strong>{{ item.name }}</strong>{{ ratified_mark(item) }}</span>{% endif %}<small{% if screen.market == 'memecoins' and item.contract_address %} title="{{ item.contract_address }}"{% endif %}>{{ item.subtitle }}</small>{% if item.rank_detail %}<small class="rank-detail" title="{{ item.rank_detail }}">{{ item.rank_detail }}</small>{% endif %}{% if item.indicator is defined %}{{ sentiment_reading(item) }}{% endif %}</span>
+        <span class="ticker-name">{% if screen.market == "stocks" %}<span class="ticker-symbol"><strong>{{ item.name }}</strong>{{ verified_check(item) }}{{ ratified_mark(item) }}</span>{% else %}<span class="ticker-symbol"><strong{% if screen.market == 'memecoins' and item.contract_address %} title="{{ item.contract_address }}"{% endif %}>{{ item.name }}</strong>{{ ratified_mark(item) }}</span>{% endif %}{% if item.subtitle %}<small>{{ item.subtitle }}</small>{% endif %}{% if item.rank_detail %}<small class="rank-detail" title="{{ item.rank_detail }}">{{ item.rank_detail }}</small>{% endif %}</span>
         <span class="ticker-value"><strong>{{ item.value }}</strong><small class="{{ item.tone }}">{{ item.change }}</small></span>
         {% if screen.market in ['stocks', 'memecoins'] %}<span class="ticker-trend">
           <svg class="mini-chart" data-ticker="{{ item.chart_key|default(item.name) }}" data-history="pending" viewBox="0 0 64 18" preserveAspectRatio="none" role="img" aria-label="{{ item.name }}: price history loading"><text class="mini-chart-empty" x="32" y="12" text-anchor="middle">—</text></svg>

@@ -458,10 +458,10 @@ def row(
     if not re.fullmatch(r"(?:[1-9A-HJ-NP-Za-km-z]{32,44}|0x[a-fA-F0-9]{40})", address):
         address = ""
     if address:
-        # The address is the headline; the launch's own name is secondary and marked.
+        # The address is the headline and the identity; a creator-set name is
+        # unverified, so the row shows none.
         name = short_address(address)
-        claimed = display_claim(item)
-        subtitle = f"Creator-set: {claimed}" if claimed else "No launch name recorded"
+        subtitle = ""
     indicator = (
         stock_indicator(item) if market == "stocks" else memecoin_indicator(item) if coin else None
     )

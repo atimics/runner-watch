@@ -21,10 +21,6 @@
 </span>
 {%- endmacro %}
 
-{% macro sentiment_reading(item) -%}
-<span class="ticker-sentiment" aria-label="{{ item.indicator.sentiment_mix.description }}">{{ item.indicator.sentiment_mix.compact }}</span>
-{%- endmacro %}
-
 {% macro verified_check(item) -%}
 <span class="ticker-verification" data-stock-verification{% if not item.verified %} hidden{% endif %}>
 {% if item.verified %}

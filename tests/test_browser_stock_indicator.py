@@ -216,7 +216,7 @@ def test_sentiment_shares_and_neutral_gap_survive_markup_refresh(page, width):
     )
     page.clock.fast_forward(61000)
     expect(glyph).to_have_attribute("data-sentiment-mix", "unknown")
-    expect(page.locator(".ticker-sentiment")).to_have_text("▲— / ▼—")
+    expect(page.locator(".ticker-sentiment")).to_have_count(0)  # no text readout on the row
     expect(glyph.locator("[data-bearish-pattern]")).to_have_count(0)
     expect(border).to_have_css("border-top-style", "dashed")
     expect(border).to_have_css("background-image", "none")
@@ -252,11 +252,8 @@ def test_visible_sentiment_patterns_and_risk_shapes_in_both_color_modes(
         ),
     ]
     helpers.open_screen(page, listing(market, source))
-    readings = page.locator(".ticker-sentiment")
-    expect(readings).to_have_text(["▲75% / ▼25%", "▲0% / ▼100%", "▲— / ▼—"])
-    for reading in readings.all():
-        expect(reading).to_be_visible()
-        assert reading.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    # The rows carry no ▲/▼ text readout; the glyph's outer ring is the reading.
+    expect(page.locator(".ticker-sentiment")).to_have_count(0)
     glyphs = page.locator(".indicator-glyph")
     expect(glyphs.nth(0).locator("[data-bearish-pattern]")).to_be_visible()
     expect(glyphs.nth(1).locator("[data-bearish-pattern]")).to_be_visible()
