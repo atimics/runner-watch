@@ -28,6 +28,7 @@ from runner_web.free_risk_sources import (
     refresh_free_legal_sources,
 )
 from runner_web.nasdaq_halts import refresh_trade_halts
+from runner_web.sec_delistings import refresh_delisting_notices
 
 LOG = logging.getLogger(__name__)
 
@@ -92,6 +93,25 @@ async def trading_halt_worker() -> None:
                 _state("trading_halts", str(exc))
                 LOG.warning("Nasdaq halt refresh failed: %s", exc)
         await asyncio.sleep(60)
+
+
+DELISTING_INTERVAL_SECONDS = 12 * 3600
+
+
+async def delisting_notice_worker() -> None:
+    """Twice a day, the last 90 days of delisting notices from EDGAR full-text search."""
+
+    await asyncio.sleep(45)
+    while True:
+        try:
+            await asyncio.to_thread(refresh_delisting_notices)
+            _state("delisting_notices")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _state("delisting_notices", str(exc))
+            LOG.warning("Delisting notice sweep failed: %s", exc)
+        await asyncio.sleep(DELISTING_INTERVAL_SECONDS)
 
 
 async def house_disclosure_worker() -> None:

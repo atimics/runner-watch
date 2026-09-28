@@ -21,6 +21,7 @@ from runner_web.issuer_risk import (
     issuer_risk_contexts,
 )
 from runner_web.ratification import summarize
+from runner_web.sec_delistings import notices_read
 
 MAJOR_EXCHANGES = {"NASDAQ", "NYSE", "NYSE AMERICAN", "NYSE MKT", "AMEX"}
 REPORT_DAYS = 135
@@ -87,6 +88,7 @@ def standards(
     delisting_on: date | None,
     today: date,
     filed: dict[str, Any] | None = None,
+    delistings_read: bool = True,
 ) -> dict[str, Any]:
     """Each standard as met, not met or not known, and whether all are met.
 
@@ -117,7 +119,12 @@ def standards(
         else report_day is not None and (today - report_day).days <= window,
         "cash": True if not_burning else None if runway is None else runway >= MIN_RUNWAY_MONTHS,
         "dilution": None if growth is None else growth <= MAX_SHARE_GROWTH_PCT,
-        "trading": halted_on is None and delisting_on is None,
+        # No notice is only known once the 90-day window has been read.
+        "trading": False
+        if halted_on is not None or delisting_on is not None
+        else True
+        if delistings_read
+        else None,
     }
     trading = [
         *([f"halted {_label(halted_on)}"] if halted_on else []),
@@ -143,7 +150,9 @@ def standards(
         if runway is not None
         else "",
         "dilution": f"shares up {growth:.0f}%" if growth is not None else "",
-        "trading": ", ".join(trading),
+        "trading": ", ".join(trading)
+        if trading or delistings_read
+        else "delisting notices not read yet",
     }
     # A lender's lending runs through operating cash flow: cash is not judged.
     return summarize(
@@ -235,6 +244,7 @@ def stock_ratifications(
             if entry.get("filed_at") is None or day.isoformat() > entry["filed_at"]:
                 entry.update(filed_at=day.isoformat(), form=row["form"])
     issuers = issuer_risk_contexts(database, tickers)
+    read = notices_read(database, at)
     _note_missing_sectors(database, companies, at)
     return {
         ticker: standards(
@@ -244,6 +254,7 @@ def stock_ratifications(
             delisting_on=delistings.get(ticker),
             today=at.date(),
             filed=periodic.get(ticker),
+            delistings_read=read,
         )
         for ticker in tickers
     }

@@ -275,6 +275,8 @@ def database(monkeypatch):
             ('GOOD','trading_halt','2026-07-01T14:00:00+00:00');
         INSERT INTO sec_filings VALUES ('DLST','8-K','3.01,9.01','2026-08-01T20:00:00+00:00'),
             ('GOOD','8-K','1.01,9.01','2026-09-01T20:00:00+00:00');
+        INSERT INTO worker_state VALUES ('sec_delisting_sweep',
+            '{"checked_at": "2026-09-27T06:00:00+00:00"}', '2026-09-27T06:00:00+00:00');
         """
     )
     monkeypatch.setattr(
@@ -294,6 +296,23 @@ def test_ratifications_come_from_the_listing_halts_and_filings(database):
     trading = {t: next(s for s in found[t]["standards"] if s["key"] == "trading") for t in found}
     assert trading["HALT"]["detail"] == "halted Sep 20"
     assert trading["DLST"]["detail"] == "delisting notice Aug 1"
+
+
+@pytest.mark.parametrize("swept", [None, "2026-09-25T06:00:00+00:00"])
+def test_no_notice_is_not_known_until_the_window_has_been_read(database, swept):
+    database.execute("DELETE FROM worker_state")
+    if swept:
+        database.execute(
+            "INSERT INTO worker_state VALUES ('sec_delisting_sweep',?,?)",
+            (f'{{"checked_at": "{swept}"}}', swept),
+        )
+
+    found = stock_ratifications(database, [{"ticker": t} for t in ("GOOD", "HALT")], at=AT)
+
+    trading = {t: next(s for s in found[t]["standards"] if s["key"] == "trading") for t in found}
+    assert trading["GOOD"]["met"] is None and found["GOOD"]["ratified"] is False
+    assert trading["GOOD"]["detail"] == "delisting notices not read yet"
+    assert trading["HALT"]["met"] is False  # a halt is known either way
 
 
 def test_8k_items_are_read_from_the_edgar_feed():
