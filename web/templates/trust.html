@@ -122,6 +122,7 @@
       {% endfor %}
     </ol>
     <p class="trust-note">A version's digest is published while it is in force; its full text is published when it is replaced, and never edited. To check one: take the SHA-256 of each covered file, write one line per file, <code>path hash</code>, in path order, and take the SHA-256 of those lines. This page does that for every published version.</p>
+    <p class="trust-note">Every change in an asset's result is recorded with the rules version, its digest and the facts the rules read. Each stock and memecoin page links its record. With the files of that version, once published, <code>ratitrust.reproduce.reproduce(market, facts)</code> gives the same result.</p>
   </section>
 
 </main>

@@ -137,20 +137,72 @@ def safely_record(
         LOG.warning("Ratification records failed for %s", market, exc_info=True)
 
 
+COLUMNS = "id,rules_version,rules_digest,ratified,met,total,result_json,facts_json,recorded_at"
+
+
+def _item(row: Any) -> dict[str, Any]:
+    return {
+        **{key: row[key] for key in ("id", "rules_version", "rules_digest", "met", "total")},
+        "ratified": bool(row["ratified"]),
+        "result": json.loads(row["result_json"]),
+        "facts": json.loads(row["facts_json"]),
+        "recorded_at": row["recorded_at"],
+    }
+
+
 def history(database: Any, market: str, subject: str, limit: int = 50) -> list[dict[str, Any]]:
     rows = database.execute(
-        "SELECT rules_version,rules_digest,ratified,met,total,result_json,facts_json,recorded_at "
-        "FROM ratification_records WHERE market=? AND subject=? "
-        "ORDER BY recorded_at DESC LIMIT ?",
+        f"SELECT {COLUMNS} FROM ratification_records WHERE market=? AND subject=? "
+        "ORDER BY recorded_at DESC, id DESC LIMIT ?",
         (market, subject, limit),
     ).fetchall()
+    return [_item(row) for row in rows]
+
+
+def record(database: Any, market: str, subject: str, record_id: int) -> dict[str, Any] | None:
+    """One record in full: what anyone needs to recompute it with `ratitrust.reproduce`."""
+
+    row = database.execute(
+        f"SELECT {COLUMNS} FROM ratification_records WHERE id=? AND market=? AND subject=?",
+        (record_id, market, subject),
+    ).fetchone()
+    return _item(row) if row else None
+
+
+def _label(value: str) -> str:
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    return f"{moment:%b} {moment.day}, {moment:%H:%M} UTC"
+
+
+def page_history(market: str, subject: str, limit: int = 6) -> list[dict[str, Any]]:
+    """The latest changes for an asset page, newest first, without their facts.
+
+    A page reads this in its own transaction; a failed read shows no history.
+    """
+
+    from runner_web.db import connection
+
+    try:
+        with connection() as database:
+            items = history(database, market, subject, limit=limit)
+    except Exception:
+        LOG.warning("Ratification history unavailable for %s %s", market, subject, exc_info=True)
+        return []
     return [
         {
-            **{key: row[key] for key in ("rules_version", "rules_digest", "met", "total")},
-            "ratified": bool(row["ratified"]),
-            "result": json.loads(row["result_json"]),
-            "facts": json.loads(row["facts_json"]),
-            "recorded_at": row["recorded_at"],
+            "id": item["id"],
+            "ratified": item["ratified"],
+            "met": item["met"],
+            "total": item["total"],
+            "unchecked": item["result"].get("unchecked", 0),
+            "rules_version": item["rules_version"],
+            "rules_digest": item["rules_digest"],
+            "recorded_at": item["recorded_at"],
+            "recorded_label": _label(item["recorded_at"]),
+            "url": f"/api/ratification/{market}/{subject}/{item['id']}.json",
         }
-        for row in rows
+        for item in items
     ]

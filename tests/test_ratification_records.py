@@ -118,3 +118,77 @@ def test_a_recorded_result_reproduces_under_the_rules_that_recorded_it(database)
         record = history(database_, "stock", "SHMD")[0]
     assert record["facts"]["filed"]["forms"] == ["20-F", "6-K"]
     assert reproduce("stock", record["facts"]) == record["result"]
+
+
+def test_an_asset_page_shows_its_state_since_it_was_recorded_and_earlier_changes():
+    from runner_web.market_screens import detail
+    from tests.test_market_screens import render
+
+    history_ = [
+        {
+            "id": 7,
+            "ratified": True,
+            "met": 5,
+            "total": 5,
+            "unchecked": 0,
+            "rules_version": "2.1.0",
+            "rules_digest": "78312512b3ca22a2",
+            "recorded_label": "Sep 28, 09:10 UTC",
+            "url": "/api/ratification/stock/GAU/7.json",
+        },
+        {
+            "id": 3,
+            "ratified": False,
+            "met": 4,
+            "total": 5,
+            "unchecked": 1,
+            "rules_version": "2.0.0",
+            "rules_digest": "cd0357851f936c36",
+            "recorded_label": "Sep 28, 07:33 UTC",
+            "url": "/api/ratification/stock/GAU/3.json",
+        },
+    ]
+    stock = {
+        "ticker": "GAU",
+        "price": 2.0,
+        "ratification": result(),
+        "ratification_history": history_,
+    }
+
+    page = render(detail("stocks", {"current": stock, "ticker": "GAU"}))
+
+    assert "Ratified since Sep 28, 09:10 UTC" in page
+    assert 'RATi Rules</a> 2.1.0 <code title="78312512b3ca22a2">78312512</code>' in page
+    assert 'href="/api/ratification/stock/GAU/7.json" download>Record</a>' in page
+    assert "Sep 28, 07:33 UTC · 4 of 5 met · 2.0.0" in page
+
+
+def test_records_are_served_with_what_reproduces_them(database):
+    from fastapi.testclient import TestClient
+
+    from ratitrust import stock
+    from runner_web import main
+
+    facts = {
+        "exchange": "NYSE",
+        "issuer": {"issuer_data_available": True, "periodic_filed_at": "2026-08-20"},
+        "halted_on": None,
+        "delisting_on": None,
+        "today": AT.date(),
+        "filed": None,
+        "delistings_read": True,
+    }
+    safely_record("stock", {"GAU": (stock.standards(**facts), facts)}, at=AT)
+    main.RATE_LIMITS.clear()
+    client = TestClient(main.app, base_url=main.RUNNERS_ORIGIN)
+
+    listing = client.get("/api/ratification/stock/gau").json()["records"]
+    one = client.get(listing[0]["url"]).json()
+
+    from ratitrust.reproduce import reproduce
+
+    assert one["subject"] == "GAU" and one["rules_version"] == ratitrust.__version__
+    assert reproduce("stock", one["facts"]) == one["result"]
+    assert "ratitrust.reproduce" in one["reproduce"]
+    assert client.get("/api/ratification/stock/GAU/999.json").status_code == 404
+    assert client.get("/api/ratification/sports/X").status_code == 404
