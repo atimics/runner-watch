@@ -75,7 +75,7 @@ Stock scoring and paper Call policy retain their existing contracts.
 
 ## Early reading and tags
 
-Policy: `memecoin-early-v2` (`src/runner_web/memecoin_early.py`). Attention reads
+Policy: `memecoin-early-v3` (`src/runner_web/memecoin_early.py`). Attention reads
 the last 24 hours, so it peaks after a move in either direction. The early
 reading compares the pool's last hour with its own pace over the five hours
 before it, from GeckoTerminal's 1h and 6h windows, while the price has not yet
@@ -118,8 +118,10 @@ liquidity in total, at least $5,000, and still trade at least $1,000 a day. An
 older copy that died loses to the funded original, and a generic word does not
 pull in an unrelated dead coin (live case: "Hold My Glasses", symbol GLASSES,
 no volume, once answered a "Glasses" burst). The original is quoted like any pool and earns up
-to 30 copycat points, enough for SETUP on a burst of three even while its own
-trading is quiet. Every launch in the burst that is not the original is AVOID
+to 30 copycat points. A burst of three gives WATCH while its own trading is
+quiet. SETUP requires at least 30 points, the minimum trading activity, and
+measured volume or buyer pace of at least 1.5 times the earlier window. Every
+launch in the burst that is not the original is AVOID
 ("Copies an older coin's name") and its page names the original by address.
 Without a verified original, nothing is marked. A failed search skips that name
 for the cycle and never fails the refresh.

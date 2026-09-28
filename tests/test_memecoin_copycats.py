@@ -136,7 +136,7 @@ def test_a_failed_search_skips_the_name_without_failing():
     assert originals == {} and cache == {} and searches == 1
 
 
-def test_the_original_sets_up_on_its_copies_and_each_copy_is_avoid():
+def test_the_original_gets_watch_on_its_copies_and_each_copy_is_avoid():
     bursts = copycat_bursts(burst_launches(), AT)
     originals, _, _ = find_originals(
         bursts, {}, download=lambda *_: json.dumps(search_body()).encode(), at=AT, pause=0
@@ -148,7 +148,7 @@ def test_the_original_sets_up_on_its_copies_and_each_copy_is_avoid():
     original, copy = (early_signal(row) for row in rows)
 
     # Its own trading is still quiet; the copies are what point here.
-    assert original["state"] == "setup"
+    assert original["state"] == "watch"
     assert original["reasons"][0] == "3 copycat launches in 24h, 1 in the last hour"
     assert rows[0]["copycats"]["evidence"][0]["source_url"].startswith("https://solscan.io/tx/")
     assert copy["state"] == "avoid"

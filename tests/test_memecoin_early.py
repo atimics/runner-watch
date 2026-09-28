@@ -304,3 +304,37 @@ def test_a_coins_chart_is_coloured_by_its_saved_tags(tmp_path, monkeypatch):
     assert [change["tone"] for change in changes] == tones
     screen = detail("memecoins", {"coin": _board_row("coin"), "states": changes})
     assert [change["tone"] for change in screen["states"]] == tones
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"volume_h1": None, "buyers_h1": None, "liquidity_usd": None},
+        {"volume_h1": 0, "buyers_h1": 0},
+        {},
+    ],
+)
+def test_copycat_burst_has_watch_until_trading_speeds_up(fields):
+    coin = quiet_coin(copycats={"h24": 3, "h1": 1}, **fields)
+    signal = early_signal(coin)
+    assert signal["version"] == "memecoin-early-v3"
+    assert signal["state"] == "watch"
+    assert signal["parts"]["copycats"] == 30
+    assert signal["reasons"][0] == "3 copycat launches in 24h, 1 in the last hour"
+    board = listing("memecoins", [_board_row("copycat", early=signal)])
+    assert board["rows"][0]["tag"] == "WATCH"
+    assert "rank_detail" not in board["rows"][0]
+    assert board["counts"] == {"watch": 1}
+
+
+def test_copycat_burst_with_measured_acceleration_gets_setup():
+    signal = early_signal(waking_coin(copycats={"h24": 3, "h1": 1}))
+    assert signal["state"] == "setup"
+    assert signal["parts"]["copycats"] == 30
+    assert "Volume 4.0× its 6h pace" in signal["reasons"]
+
+
+def test_buyer_share_and_organic_wallets_need_a_measured_pace_for_setup():
+    signal = early_signal(quiet_coin(sellers_h1=0, chain_sentiment_counts={"bullish": 15}))
+    assert signal["score"] == 30
+    assert signal["state"] == "quiet"
