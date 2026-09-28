@@ -8,12 +8,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
 jobs:
   snapshot:
     name: Snapshot production data
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      - run: flyctl volumes snapshots create vol_rnz3gwm5m9em2q1r --app runner-watch-db
+      - run: python3 scripts/backup-database.py --app runner-watch-db
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
