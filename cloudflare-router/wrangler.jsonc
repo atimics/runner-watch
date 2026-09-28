@@ -11,6 +11,10 @@
     {
       "pattern": "sports.rati.chat/*",
       "zone_name": "rati.chat"
+    },
+    {
+      "pattern": "trust.rati.chat/*",
+      "zone_name": "rati.chat"
     }
   ]
 }
