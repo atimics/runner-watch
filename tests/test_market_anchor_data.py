@@ -101,5 +101,5 @@ def test_token_heading_is_its_contract_address_and_the_launch_name_is_marked():
         ],
     )["rows"][0]
     assert item["name"] == address[:6] + "…" + address[-6:]
-    assert item["subtitle"] == "Creator-set: BONK"
+    assert item["subtitle"] == ""
     assert item["contract_address"] == address

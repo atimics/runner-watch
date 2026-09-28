@@ -245,8 +245,9 @@ def test_a_setup_coin_reason_sits_below_its_name(page, width):
     row = page.locator(".ticker").first
     expect(row.locator(".rank-detail")).to_contain_text("Volume 4.0× its 6h pace")
     detail_line = row.locator(".rank-detail")
-    for other in (row.locator(".ticker-name strong"), row.locator(".ticker-name small").first):
-        no_overlap(detail_line, other)
+    # A coin row has no line under its address now: the reason is the only one.
+    expect(row.locator(".ticker-name small:not(.rank-detail)")).to_have_count(0)
+    no_overlap(detail_line, row.locator(".ticker-name strong"))
     # The reason stays inside its row.
     box, line = row.bounding_box(), detail_line.bounding_box()
     assert line["y"] + line["height"] <= box["y"] + box["height"] + 1

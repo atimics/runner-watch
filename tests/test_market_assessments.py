@@ -188,7 +188,7 @@ def test_coin_identity_is_compact():
     address = "A" * 44
     result = row("memecoins", coin(token_address=address, name="solana · " + address))
     assert result["name"] == "AAAAAA…AAAAAA"
-    assert result["subtitle"] == "No launch name recorded"
+    assert result["subtitle"] == ""  # no launch name line under the address
 
 
 def test_coin_assessment_limits_findings_to_latest_three():
