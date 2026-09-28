@@ -6,12 +6,12 @@ own pace over the previous six, and only counts it while the price has not
 yet run and nothing on the chain says the launch is being drained.
 
 New launches copying a coin's name point at it: a verified original earns
-copycat points even before its own trading picks up, and each copy is AVOID.
+copycat points and a WATCH tag while its trading is quiet. Each copy is AVOID.
 
 States use the stock tags: setup (speeding up, price not yet moved),
-running, extended, avoid (drained or staged) and quiet (no tag).
+watch (copycat activity), running, extended, avoid (drained or staged) and quiet.
 
-The weights are a starting heuristic (`memecoin-early-v2`). Each quote saves
+The weights are a starting heuristic (`memecoin-early-v3`). Each quote saves
 its features so they can be tested against what the coin did next.
 """
 
@@ -21,10 +21,11 @@ import math
 from datetime import datetime
 from typing import Any
 
-VERSION = "memecoin-early-v2"
+VERSION = "memecoin-early-v3"
 # Below this the hour's trading is too small to read a pace from.
 MIN_HOUR_VOLUME_USD = 1_000.0
 MIN_HOUR_BUYERS = 10
+MIN_SETUP_PACE = 1.5
 # The last five minutes against the hour: how a coin under an hour old shows pace.
 MIN_M5_VOLUME_USD = 500.0
 MIN_M5_BUYERS = 5
@@ -183,7 +184,7 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
         "buyer_pace": _points(buyer_pace, 35),
         "buyer_share": min(20.0, max(0.0, (buyer_share - 0.5) * 80)),
         "organic_buyers": min(10.0, 2.5 * math.log2(1 + organic)),
-        # A verified burst (three copies in a day) is enough on its own.
+        # A verified burst contributes attention while trading establishes its pace.
         "copycats": min(30.0, 15 * math.log2(1 + copies)),
     }
     score = round(sum(parts.values()), 1)
@@ -194,9 +195,9 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
             f"{copies:.0f} copycat launches in 24h"
             + (f", {recent:.0f} in the last hour" if recent else "")
         )
-    if volume_pace and volume_pace >= 1.5:
+    if volume_pace and volume_pace >= MIN_SETUP_PACE:
         reasons.append(f"Volume {volume_pace:.1f}× its {volume_window} pace")
-    if buyer_pace and buyer_pace >= 1.5:
+    if buyer_pace and buyer_pace >= MIN_SETUP_PACE:
         reasons.append(f"Buyers {buyer_pace:.1f}× their {buyer_window} pace")
     if buyer_share >= 0.55:
         reasons.append(f"{buyer_share:.0%} of traders buying")
@@ -209,13 +210,18 @@ def early_signal(row: dict[str, Any]) -> dict[str, Any]:
     running = (change_h1 is not None and change_h1 >= RUN_H1_PCT) or (
         change_h6 is not None and change_h6 >= RUN_H6_PCT
     )
+    speeding_up = any(
+        pace is not None and pace >= MIN_SETUP_PACE for pace in (volume_pace, buyer_pace)
+    )
     state = (
         "extended"
         if extended
         else "running"
         if running
         else "setup"
-        if score >= 30 and reasons
+        if score >= 30 and active and speeding_up
+        else "watch"
+        if copies >= 3
         else "quiet"
     )
     return {**result, "score": score, "parts": parts, "state": state, "reasons": reasons}
