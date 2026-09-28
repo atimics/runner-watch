@@ -567,7 +567,7 @@ def state_tag(item: dict[str, Any]) -> tuple[str, str, bool]:
         state = str(early.get("state") or "")
         if state == "avoid":
             return "AVOID", "avoid", True
-        if state in {"extended", "running", "setup"}:
+        if state in {"extended", "running", "setup", "watch"}:
             return state.upper(), state, False
         return "", "", False
     rug = str(item.get("rug_level") or "").lower()
