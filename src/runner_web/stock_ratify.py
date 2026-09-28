@@ -13,11 +13,22 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from runner_web.issuer_risk import issuer_risk_contexts
+from runner_web.issuer_risk import (
+    FOREIGN_ANNUAL_FORMS,
+    FOREIGN_FORMS,
+    PERIODIC_FORMS,
+    is_foreign_issuer,
+    issuer_risk_contexts,
+)
 from runner_web.ratification import summarize
 
 MAJOR_EXCHANGES = {"NASDAQ", "NYSE", "NYSE AMERICAN", "NYSE MKT", "AMEX"}
 REPORT_DAYS = 135
+# A foreign private issuer files one annual report (20-F or 40-F), due four
+# months after its fiscal year ends, so consecutive reports can sit up to about
+# sixteen months apart. Interim results arrive on 6-K, which carries no form
+# type we can tell apart from other current reports, so only the annual is read.
+FOREIGN_REPORT_DAYS = 490
 MIN_RUNWAY_MONTHS = 12.0
 MAX_SHARE_GROWTH_PCT = 25.0
 HALT_DAYS = 30
@@ -31,7 +42,14 @@ LABELS = {
 }
 NOTE = (
     "Ratified: meets RATi's five basic standards for a stock. "
+    "Standards are checks on published facts, separate from any Call. "
     "Not an endorsement, a guarantee or advice."
+)
+# A stock that misses a standard must not carry a note that reads as ratified.
+UNRATIFIED_NOTE = (
+    "Not ratified: this stock does not meet all of RATi's five basic standards, "
+    "or one is not checked yet. Standards are checks on published facts, separate "
+    "from any Call. Not an endorsement, a guarantee or advice."
 )
 
 
@@ -46,6 +64,21 @@ def _label(day: date) -> str:
     return f"{day:%b} {day.day}"
 
 
+def _periodic(issuer: dict[str, Any], filed: dict[str, Any] | None) -> tuple[date | None, str]:
+    """The latest periodic report from the financial facts or the filing index.
+
+    Financial facts come from XBRL tags a foreign issuer reporting under IFRS
+    may not use, so the filing index is read too: whichever is later counts.
+    """
+
+    candidates = [
+        (_day(issuer.get("periodic_filed_at")), str(issuer.get("periodic_form") or "")),
+        *(((_day(filed.get("filed_at")), str(filed.get("form") or "")),) if filed else ()),
+    ]
+    known = [(day, form.upper()) for day, form in candidates if day is not None and form]
+    return max(known) if known else (None, "")
+
+
 def standards(
     *,
     exchange: str | None,
@@ -53,11 +86,22 @@ def standards(
     halted_on: date | None,
     delisting_on: date | None,
     today: date,
+    filed: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Each standard as met, not met or not known, and whether all are met."""
+    """Each standard as met, not met or not known, and whether all are met.
+
+    `filed` is the latest periodic filing in the filing index, with the forms
+    the company files (`forms`), which tell a foreign private issuer apart.
+    """
 
     listed = (exchange or "").strip().upper()
-    report_day = _day(issuer.get("periodic_filed_at"))
+    report_day, report_form = _periodic(issuer, filed)
+    foreign = bool(issuer.get("foreign_issuer")) or is_foreign_issuer(
+        set((filed or {}).get("forms") or ())
+    )
+    # Only an annual report counts for a foreign issuer; a 10-Q never arrives.
+    window = FOREIGN_REPORT_DAYS if foreign else REPORT_DAYS
+    filings_known = bool(issuer.get("issuer_data_available")) or report_day is not None
     runway = issuer.get("cash_runway_months")
     operating = issuer.get("operating_cash_flow")
     growth = issuer.get("shares_growth_pct")
@@ -69,8 +113,8 @@ def standards(
         # No financial facts at all means we have not read its filings, not that
         # it has none: unknown rather than not met.
         "filings": None
-        if not issuer.get("issuer_data_available")
-        else report_day is not None and (today - report_day).days <= REPORT_DAYS,
+        if not filings_known
+        else report_day is not None and (today - report_day).days <= window,
         "cash": True if not_burning else None if runway is None else runway >= MIN_RUNWAY_MONTHS,
         "dilution": None if growth is None else growth <= MAX_SHARE_GROWTH_PCT,
         "trading": halted_on is None and delisting_on is None,
@@ -82,10 +126,13 @@ def standards(
     details = {
         "exchange": exchange or "",
         "filings": (
-            f"latest {issuer.get('periodic_form')} filed {_label(report_day)}"
+            f"latest {report_form} filed {_label(report_day)}"
+            + (" · foreign issuer, annual report" if foreign else "")
             if report_day
+            else "foreign issuer · no 20-F or 40-F annual report in its filings"
+            if foreign and filings_known
             else "no quarterly or annual report in its filings"
-            if issuer.get("issuer_data_available")
+            if filings_known
             else ""
         ),
         "cash": "financial company"
@@ -105,6 +152,7 @@ def standards(
         details,
         not_applied={"cash"} if financial else set(),
         note=NOTE,
+        unratified_note=UNRATIFIED_NOTE,
         as_of=today.isoformat(),
     )
 
@@ -171,6 +219,21 @@ def stock_ratifications(
     ).fetchall():
         if (day := _day(row["latest"])) is not None:
             delistings[row["ticker"]] = day
+    periodic: dict[str, dict[str, Any]] = {}
+    report_forms = sorted(PERIODIC_FORMS | FOREIGN_FORMS)
+    form_marks = ",".join("?" for _ in report_forms)
+    for row in database.execute(
+        "SELECT UPPER(ticker) AS ticker,UPPER(form) AS form,MAX(filed_at) AS latest "
+        f"FROM sec_filings WHERE UPPER(form) IN ({form_marks}) "
+        f"AND UPPER(ticker) IN ({marks}) GROUP BY UPPER(ticker),UPPER(form)",
+        (*report_forms, *tickers),
+    ).fetchall():
+        entry = periodic.setdefault(row["ticker"], {"forms": set()})
+        entry["forms"].add(row["form"])
+        # 6-K is a current report: it marks a foreign issuer but is not the report.
+        if row["form"] in PERIODIC_FORMS | FOREIGN_ANNUAL_FORMS and (day := _day(row["latest"])):
+            if entry.get("filed_at") is None or day > entry["filed_at"]:
+                entry.update(filed_at=day.isoformat(), form=row["form"])
     issuers = issuer_risk_contexts(database, tickers)
     _note_missing_sectors(database, companies, at)
     return {
@@ -180,6 +243,7 @@ def stock_ratifications(
             halted_on=halts.get(ticker),
             delisting_on=delistings.get(ticker),
             today=at.date(),
+            filed=periodic.get(ticker),
         )
         for ticker in tickers
     }

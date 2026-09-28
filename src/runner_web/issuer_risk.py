@@ -5,6 +5,10 @@ from datetime import date, timedelta
 from typing import Any
 
 PERIODIC_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
+# Foreign private issuers report annually on 20-F (or 40-F for Canadian issuers
+# under MJDS) and furnish interim results on 6-K; they never file 10-Q or 10-K.
+FOREIGN_ANNUAL_FORMS = {"20-F", "40-F", "20-F/A", "40-F/A"}
+FOREIGN_FORMS = FOREIGN_ANNUAL_FORMS | {"6-K", "6-K/A"}
 # Banks, lenders, insurers and real estate: lending and premiums run through
 # operating cash flow, so a burn-based runway says nothing about them. This is
 # the one place that decides it; the risk check, ratification and Dash all
@@ -57,6 +61,7 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "operating_cash_flow": None,
             "periodic_filed_at": None,
             "periodic_form": None,
+            "foreign_issuer": False,
         }
 
     cash = _value(_latest(rows, "cash"))
@@ -132,12 +137,31 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _latest_periodic(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    reports = [row for row in rows if str(row.get("form") or "").upper() in PERIODIC_FORMS]
+    """The latest quarterly or annual report, domestic or foreign.
+
+    A foreign private issuer's annual 20-F or 40-F is its periodic report; the
+    freshness window for it is decided by the reader (ratification).
+    """
+
+    forms = {str(row.get("form") or "").upper() for row in rows}
+    reports = [
+        row
+        for row in rows
+        if str(row.get("form") or "").upper() in PERIODIC_FORMS | FOREIGN_ANNUAL_FORMS
+    ]
     latest = max(reports, key=lambda row: str(row["filed_at"])) if reports else None
     return {
         "periodic_filed_at": str(latest["filed_at"]) if latest else None,
         "periodic_form": str(latest["form"]).upper() if latest else None,
+        "foreign_issuer": is_foreign_issuer(forms),
     }
+
+
+def is_foreign_issuer(forms: set[str]) -> bool:
+    """Files as a foreign private issuer: 20-F, 40-F or 6-K, and no 10-Q or 10-K."""
+
+    upper = {form.upper() for form in forms}
+    return bool(upper & FOREIGN_FORMS) and not upper & PERIODIC_FORMS
 
 
 def issuer_risk_contexts(database: Any, tickers: list[str]) -> dict[str, dict[str, Any]]:

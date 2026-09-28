@@ -3476,6 +3476,10 @@ def _calls_flash_uncached() -> dict[str, Any]:
             "model_label": current.get("model_label"),
             "state": current.get("state"),
             "hit_rate": current.get("hit_rate"),
+            "hit_rate_interval_95": current.get("hit_rate_interval_95"),
+            "baseline_hit_rate": current.get("baseline_hit_rate"),
+            "baseline_direction": current.get("baseline_direction"),
+            "brier_score": current.get("brier_score"),
             "headline_rate_visible": current.get("headline_rate_visible"),
             "settled": current.get("settled"),
             "hits": current.get("hits"),
@@ -3494,7 +3498,23 @@ def _calls_flash_picks() -> dict[str, Any]:
     )
 
 
+FILING_SENTIMENT_BASIS = (
+    "Filings collected in the past 3 days, by form type. Offerings, late reports, "
+    "proposed sales and insider sales are flagged bearish; no form type is scored "
+    "bullish, so this counts risk flags rather than measuring a balance"
+)
+
+
 def _calls_head_to_head(mine: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    """Both hit rates with their 95% ranges, and Flash against a do-nothing baseline.
+
+    A raw hit rate says little on its own: the range shows how much history sits
+    behind it, and the baseline (always forecasting the more common direction on
+    the same sessions) shows whether the rate is skill or drift.
+    """
+
+    from runner_web.flash_evaluations import _wilson_interval, versus_baseline
+
     your_wins = int(mine.get("wins") or 0)
     your_losses = int(mine.get("losses") or 0)
     your_decisions = your_wins + your_losses
@@ -3504,9 +3524,16 @@ def _calls_head_to_head(mine: dict[str, Any], record: dict[str, Any]) -> dict[st
     your_rate = your_wins / your_decisions if your_decisions else None
     flash_rate = flash_wins / flash_decisions if flash_decisions else None
     flash_rate_visible = bool(record.get("headline_rate_visible") and flash_rate is not None)
+    your_interval = _wilson_interval(your_wins, your_decisions)
+    flash_interval = record.get("hit_rate_interval_95") or _wilson_interval(
+        flash_wins, flash_decisions
+    )
+    baseline_rate = record.get("baseline_hit_rate")
 
     leader: str | None = None
     gap_points: float | None = None
+    # A lead only counts as clear when the two 95% ranges do not overlap.
+    lead_is_clear = False
     if your_rate is not None and flash_rate_visible and flash_rate is not None:
         difference = your_rate - flash_rate
         gap_points = round(abs(difference) * 100, 1)
@@ -3516,6 +3543,10 @@ def _calls_head_to_head(mine: dict[str, Any], record: dict[str, Any]) -> dict[st
             leader = "flash"
         else:
             leader = "even"
+        if your_interval and flash_interval:
+            lead_is_clear = (
+                your_interval[0] > flash_interval[1] or flash_interval[0] > your_interval[1]
+            )
 
     return {
         "you": {
@@ -3524,6 +3555,7 @@ def _calls_head_to_head(mine: dict[str, Any], record: dict[str, Any]) -> dict[st
             "decisions": your_decisions,
             "hit_rate": your_rate,
             "rate_visible": your_rate is not None,
+            "interval_95": your_interval,
         },
         "flash": {
             "wins": flash_wins,
@@ -3531,9 +3563,18 @@ def _calls_head_to_head(mine: dict[str, Any], record: dict[str, Any]) -> dict[st
             "decisions": flash_decisions,
             "hit_rate": flash_rate,
             "rate_visible": flash_rate_visible,
+            "interval_95": flash_interval,
+            "baseline_rate": baseline_rate,
+            "baseline_direction": record.get("baseline_direction"),
+            "versus_baseline": versus_baseline(flash_interval, baseline_rate)
+            if flash_rate_visible
+            else None,
+            "brier_score": record.get("brier_score"),
         },
         "leader": leader,
         "gap_points": gap_points,
+        # Not "clear": Jinja would find the dict's clear() method first.
+        "lead_is_clear": lead_is_clear,
     }
 
 
@@ -4753,6 +4794,9 @@ def _pulse_scoring_inputs(
         sentiment_counts[str(filing["ticker"])] = {
             "bullish": int(filing.pop("bullish_filing_count")),
             "bearish": int(filing.pop("bearish_filing_count")),
+            # Every filing read, neutral ones included, so a reading can say
+            # "1 of 3 filings" rather than "100% bearish".
+            "filings": filing_counts[str(filing["ticker"])],
         }
         event = _intelligence_evidence(filing)
         filings_by_ticker[event["ticker"]] = event
@@ -4987,9 +5031,7 @@ def _pulse_snapshot_score(
         "sentiment_counts": inputs.get("sentiment_counts", {}).get(
             ticker, {"bullish": 0, "bearish": 0}
         ),
-        "sentiment_basis": (
-            "Share of bullish and bearish filing assessments collected in the past 3 days"
-        ),
+        "sentiment_basis": FILING_SENTIMENT_BASIS,
         "rug_score": rug_score,
         "trade_state": trade_state,
         "model_score": 100 * facts["probability_up"] if facts else None,
@@ -9259,9 +9301,7 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
     current["sentiment_counts"] = inputs.get("sentiment_counts", {}).get(
         ticker, {"bullish": 0, "bearish": 0}
     )
-    current["sentiment_basis"] = (
-        "Share of bullish and bearish filing assessments collected in the past 3 days"
-    )
+    current["sentiment_basis"] = FILING_SENTIMENT_BASIS
     if snapshot is not None:
         if inputs["market_rows"]:
             inputs["quote_marks"] = fresh_quotes([ticker])

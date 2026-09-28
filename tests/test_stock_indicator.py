@@ -327,3 +327,28 @@ def test_invalid_or_empty_significant_count_preserves_saved_check_state(count):
         stock_indicator(stock(rug_score=None, significant_risk_factor_count=count))["risk"]
         == "unknown"
     )
+
+
+def test_filing_sentiment_reads_counts_not_a_one_sided_percentage():
+    # Live case: SLNH read "0% bullish, 100% bearish" from one insider sale,
+    # while no filing form type is ever scored bullish.
+    glyph = stock_indicator(
+        {"score": 11.86, "sentiment_counts": {"bullish": 0, "bearish": 1, "filings": 3}}
+    )
+
+    mix = glyph["sentiment_mix"]
+    assert mix["reading"] == "1 of 3 filings flagged bearish, 0 bullish"
+    assert mix["compact"] == "▲0 / ▼1"
+    assert "100% bearish" not in glyph["description"]
+    # Without a filing count (chain evidence, older payloads) the split stays.
+    split = stock_indicator({"score": 50, "sentiment_counts": {"bullish": 1, "bearish": 3}})
+    assert split["sentiment_mix"]["reading"] == "25% bullish, 75% bearish"
+
+
+def test_attention_reads_against_its_scale():
+    glyph = stock_indicator({"score": 11.86})
+
+    assert glyph["description"].startswith("Attention 11.86 of 100 points (low, under 40).")
+    assert stock_indicator({"score": 72})["description"].startswith(
+        "Attention 72 of 100 points (high, 70+)."
+    )

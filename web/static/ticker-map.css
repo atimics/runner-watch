@@ -113,3 +113,4 @@ main:has(.ticker-map),main:has(.token-replay){max-width:1040px}.market-screen:ha
 .cluster-breakdown li>div{min-width:0}.cluster-breakdown a{color:var(--text);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}.cluster-breakdown small{display:block;color:var(--muted);margin-top:5px}.cluster-breakdown strong{font-weight:500;white-space:nowrap;font-variant-numeric:tabular-nums}
 .cluster-worth button{min-height:40px;padding:8px 14px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:20px;font:inherit}.cluster-worth :is(select,button,summary,a):focus-visible{outline:2px solid var(--text);outline-offset:4px}
 @media(max-width:500px){.cluster-heading h2{font-size:18px}.cluster-total{font-size:32px}.cluster-heading{gap:8px}.cluster-heading select{max-width:96px}}
+.map-caption{margin:6px 2px 10px;color:var(--muted);font-size:11.5px}

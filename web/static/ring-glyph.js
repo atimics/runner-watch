@@ -27,8 +27,9 @@
     const bullish = valid ? mix.bullish : null;
     const percent = valid ? Math.round(bullish * 100) : null;
     return {state:valid ? 'available' : 'unknown',bullish,bearish:valid ? 1-bullish : null,
-      reading:valid ? `${percent}% bullish, ${100-percent}% bearish` : 'bullish/bearish split unavailable',
-      compact:valid ? `▲${percent}% / ▼${100-percent}%` : '▲— / ▼—',
+      // The server's reading wins: filing counts read "1 of 3 filings", not "100% bearish".
+      reading:valid ? (typeof mix.reading === 'string' ? mix.reading : `${percent}% bullish, ${100-percent}% bearish`) : 'bullish/bearish split unavailable',
+      compact:valid ? (typeof mix.compact === 'string' ? mix.compact : `▲${percent}% / ▼${100-percent}%`) : '▲— / ▼—',
       basis:typeof mix.basis === 'string' ? mix.basis : 'Saved directional assessments'};
   };
   const metrics = (glyph, small) => {
@@ -112,7 +113,7 @@
     const {cx, cy, outer, radius, width} = metrics(glyph, small);
     graph.dataset.orbitCenter = `${cx},${cy}`;
     drawFace({ringLayer, glyph, geometry:{cx,cy,outer,radius,width}, small, contributions, controls, toneLabel, points, percent, wireControl});
-    const center = svg('g', {role:'button',tabindex:0,class:'map-score-center',...centerAttributes,'aria-label':`${name}, attention ${score === '—' ? 'unavailable' : score + ' points'}. Show attention overview.`});
+    const center = svg('g', {role:'button',tabindex:0,class:'map-score-center',...centerAttributes,'aria-label':`${name}, attention ${score === '—' ? 'unavailable' : score + ' of 100 points'}. Show attention overview.`});
     // Keep the decorative hole outside the overview button. Combining it with
     // the labels creates a disjoint hit target, with an untappable bounding-box
     // center on small rings. The label rectangle is one contiguous target.
@@ -122,5 +123,9 @@
     center.addEventListener('keydown',event => {if (['Enter',' '].includes(event.key)) {event.preventDefault(); overview();}});
     ringLayer.append(center);
   }
-  window.RatiRingGlyph = {metrics, draw, drawFace, readSentiment, riskReading};
+  // The attention index runs 0-100; the band gives the bare number a scale.
+  const attentionReading = (score, band) => score === '—' || score === null || score === undefined
+    ? 'Attention unavailable'
+    : `Attention ${score} of 100 points (${band === 3 ? 'high, 70+' : band === 2 ? 'medium, 40–69' : 'low, under 40'})`;
+  window.RatiRingGlyph = {metrics, draw, drawFace, readSentiment, riskReading, attentionReading};
 })();
