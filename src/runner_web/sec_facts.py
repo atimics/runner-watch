@@ -37,7 +37,26 @@ FACT_TAGS: dict[tuple[str, str], str] = {
     ): "operating_cash_flow",
     ("us-gaap", "NetCashUsedInOperatingActivities"): "operating_cash_flow",
     ("us-gaap", "StockholdersEquity"): "stockholders_equity",
+    # IFRS filers (most foreign private issuers) tag the same facts in ifrs-full.
+    ("ifrs-full", "CashAndCashEquivalents"): "cash",
+    ("ifrs-full", "CurrentAssets"): "assets_current",
+    ("ifrs-full", "CurrentLiabilities"): "liabilities_current",
+    ("ifrs-full", "CurrentBorrowingsAndCurrentPortionOfNoncurrentBorrowings"): "debt_current",
+    ("ifrs-full", "NoncurrentPortionOfNoncurrentBorrowings"): "debt_noncurrent",
+    ("ifrs-full", "Borrowings"): "debt_total",
+    ("ifrs-full", "CashFlowsFromUsedInOperatingActivities"): "operating_cash_flow",
+    ("ifrs-full", "Equity"): "stockholders_equity",
+    ("ifrs-full", "NumberOfSharesOutstanding"): "shares_outstanding",
 }
+# Monetary facts keep the currency they were reported in (ISO 4217, as the
+# SEC's companyfacts API names it); readers must not mix currencies.
+SHARE_UNIT = "shares"
+
+
+def is_currency(unit: str) -> bool:
+    return len(unit) == 3 and unit.isalpha() and unit.isupper()
+
+
 ALLOWED_FORMS = {"10-K", "10-Q", "20-F", "40-F", "6-K", "8-K"}
 
 
@@ -77,7 +96,7 @@ def parse_company_facts(
         if not isinstance(units, dict):
             continue
         for unit, entries in units.items():
-            if unit not in {"USD", "shares"} or not isinstance(entries, list):
+            if (unit != SHARE_UNIT and not is_currency(unit)) or not isinstance(entries, list):
                 continue
             for entry in entries:
                 if not isinstance(entry, dict) or str(entry.get("form") or "") not in ALLOWED_FORMS:

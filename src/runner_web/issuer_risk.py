@@ -48,7 +48,24 @@ def build_issuer_risk_context(rows: list[dict[str, Any]], sic: Any = None) -> di
     return context
 
 
+def _currency(rows: list[dict[str, Any]]) -> str | None:
+    """The currency of the latest monetary fact; older facts in another one are set aside.
+
+    Cash, burn, debt and ratios are only meaningful within one currency. A
+    company that changes its presentation currency is read in the new one.
+    """
+
+    monetary = [row for row in rows if (row.get("unit") or "USD") != "shares"]
+    if not monetary:
+        return None
+    latest = max(monetary, key=lambda row: (str(row["filed_at"]), str(row["period_end"])))
+    return str(latest.get("unit") or "USD")
+
+
 def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if rows:
+        currency = _currency(rows)
+        rows = [row for row in rows if (row.get("unit") or "USD") in {"shares", currency}]
     if not rows:
         return {
             "issuer_data_available": False,
@@ -62,6 +79,7 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "periodic_filed_at": None,
             "periodic_form": None,
             "foreign_issuer": False,
+            "currency": None,
         }
 
     cash = _value(_latest(rows, "cash"))
@@ -123,6 +141,8 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "issuer_data_available": True,
+        # Every monetary figure here is in this currency (ISO 4217).
+        "currency": currency,
         "cash": cash,
         "cash_runway_months": round(runway, 1) if runway is not None else None,
         "shares_growth_pct": round(shares_growth, 1) if shares_growth is not None else None,

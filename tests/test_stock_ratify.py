@@ -252,12 +252,15 @@ def database(monkeypatch):
     connection.executescript(
         """
         CREATE TABLE sec_companies (cik INTEGER, ticker TEXT, name TEXT, exchange TEXT, sic TEXT);
-        CREATE TABLE public_market_events (ticker TEXT, event_type TEXT, event_at TEXT);
+        CREATE TABLE public_market_events (
+            ticker TEXT, event_type TEXT, event_at TEXT, payload_json TEXT DEFAULT '{}'
+        );
         CREATE TABLE sec_filings (ticker TEXT, form TEXT, items TEXT, filed_at TEXT);
         CREATE TABLE worker_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
         INSERT INTO sec_companies VALUES (1,'GOOD','Good Co','Nasdaq','3585'),
             (2,'HALT','Halted Co','NYSE','2834'), (3,'DLST','Delisting Co','Nasdaq',NULL);
-        INSERT INTO public_market_events VALUES ('HALT','trading_halt','2026-09-20T14:00:00+00:00'),
+        INSERT INTO public_market_events(ticker,event_type,event_at) VALUES
+            ('HALT','trading_halt','2026-09-20T14:00:00+00:00'),
             ('GOOD','trading_halt','2026-07-01T14:00:00+00:00');
         INSERT INTO sec_filings VALUES ('DLST','8-K','3.01,9.01','2026-08-01T20:00:00+00:00'),
             ('GOOD','8-K','1.01,9.01','2026-09-01T20:00:00+00:00');

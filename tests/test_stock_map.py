@@ -481,6 +481,9 @@ def test_wallet_portfolio_uses_shared_stock_rows_and_keeps_event_lines(database,
         ("Vanguard Group Inc", "Vanguard Group Inc"),
         ("Fund 7 Partners", "Fund 7 Partners"),
         ("Madonna", "Madonna"),
+        ("Van Der Berg John", "John Van Der Berg"),
+        ("de la Cruz Maria Elena", "Maria Elena de la Cruz"),
+        ("bin Salman Khalid", "Khalid bin Salman"),
     ],
 )
 def test_form_4_names_read_in_natural_order(filed, shown):

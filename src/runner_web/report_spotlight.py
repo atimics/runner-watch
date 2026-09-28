@@ -8,6 +8,8 @@ from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from runner_web.currency import amount as currency_amount
+from runner_web.sec_facts import is_currency
 from runner_web.stock_indicator import stock_indicator
 
 QUOTE_MAX_AGE_SECONDS = 20 * 60
@@ -127,8 +129,10 @@ def freeze_spotlight(
         fact = dict(raw)
         key = fact["concept"]
         value = number(fact["value"])
-        expected_unit = "shares" if key == "shares_outstanding" else "USD"
-        if key in saved_facts or value is None or fact["unit"] != expected_unit:
+        # Any reported currency, shown in that currency; shares only as shares.
+        unit = str(fact["unit"] or "")
+        expected = unit == "shares" if key == "shares_outstanding" else is_currency(unit)
+        if key in saved_facts or value is None or not expected:
             continue
         accession = str(fact["accession"])
         url = (
@@ -179,7 +183,9 @@ def _compact(value: Any, unit: str) -> str:
     amount = number(value)
     if amount is None:
         return "Awaiting data"
-    prefix = ("-" if amount < 0 else "") + ("$" if unit == "USD" else "")
+    if is_currency(unit):
+        return currency_amount(amount, unit, compact=True)
+    prefix = "-" if amount < 0 else ""
     amount = abs(amount)
     for divisor, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
         if abs(amount) >= divisor:

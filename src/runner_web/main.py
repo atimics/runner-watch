@@ -110,6 +110,7 @@ from runner_web.content_notices import (
     notices_for_content,
     report_share_metadata,
 )
+from runner_web.currency import amount as currency_amount
 from runner_web.dash import (
     dash_budget,
     dash_close_call,
@@ -1180,6 +1181,8 @@ templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 
 templates.env.globals["simple_market_detail"] = simple_market_detail
 templates.env.globals["static_version"] = STATIC_VERSION
+# Issuer amounts in their reported currency: {{ value|amount(currency) }}.
+templates.env.filters["amount"] = currency_amount
 app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="static")
 DESKTOP_RENDERER_ROOT = ROOT / "desktop" / "dist" / "renderer"
 if DESKTOP_RENDERER_ROOT.is_dir():

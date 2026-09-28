@@ -151,9 +151,33 @@ while markets are closed.
    first by the sector backfill, five a pass, and a missing code is retried
    after six hours instead of waiting out the 90-day refresh.
 4. Share count up 25% or less over roughly a year.
-5. No trading halt in the last 30 days and no delisting notice (8-K item 3.01)
-   in the last 90. Item numbers are read from the EDGAR feed summary as filings
-   arrive (migration 93), so notices filed before that are not seen.
+5. No trading halt in the last 30 days and no delisting notice in the last 90.
+   A domestic issuer's notice is 8-K item 3.01; item numbers are read from the
+   EDGAR feed summary as filings arrive (migration 93), so notices filed before
+   that are not seen. A foreign issuer reports its notice on 6-K, which has no
+   item numbers: the 6-K's primary document is read as it arrives, and one that
+   reports a deficiency, delisting determination or suspension is marked
+   `listing-notice` (`edgar.is_listing_notice`). "Regained compliance" does not
+   match. 6-Ks filed before this shipped are not seen. Limit up-limit down and
+   market-wide circuit breaker pauses (reason codes LUDP, LUDS, M, MWC*) stop
+   trading because the price moved, not because of the company, and do not
+   count as halts here.
+
+### Which issuers each standard reads
+
+| Standard | US domestic (10-Q/10-K/8-K) | Foreign private issuer (20-F/40-F/6-K) |
+| --- | --- | --- |
+| Listing | NASDAQ, NYSE, NYSE American | Same: this is a US-listing standard |
+| Filings | 10-Q or 10-K within 135 days | 20-F or 40-F within 490 days; interim 6-Ks not read |
+| Cash | us-gaap facts | ifrs-full facts (or us-gaap), in the reporting currency |
+| Dilution | Shares outstanding, year on year | Same, usually from annual 20-F figures; ordinary shares, not ADSs |
+| Trading | Nasdaq halts; 8-K item 3.01 | Nasdaq halts; 6-K listing notices read from text |
+
+Issuer facts keep the currency they were reported in (`issuer_risk`:
+`currency`). Cash, burn, debt and ratios are read within the currency of the
+latest monetary fact, so a company that changed its presentation currency is
+never mixed across two. Amounts are shown with their currency
+(`runner_web.currency.amount`: "€12.0M", "CAD 2.0M").
 
 The board shows a Ratified mark; the stock page lists every standard as met,
 not met, not checked yet, or not applied. "Not applied" (a dash, with the
