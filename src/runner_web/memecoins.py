@@ -36,6 +36,7 @@ from runner_web.memecoin_store import (
     stored_memecoin,
 )
 from runner_web.memecoin_watch import creator_sells, launch_bundles, recent_findings
+from runner_web.ratification_records import safely_record
 
 LOG = logging.getLogger(__name__)
 POOL_QUOTES_URL = "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/"
@@ -548,6 +549,7 @@ def _ratify(
         for address, quote in ((chain or {}).get("prices") or {}).items()
         if quote.get("base_vault")
     }
+    inputs: dict[str, dict[str, Any]] = {}
     try:
         state = ratify_rows(
             rows,
@@ -556,8 +558,18 @@ def _ratify(
             bundled=bundled,
             rpc=rpc,
             at=at,
+            facts=inputs,
         )
         _save_state("memecoin_ratification", state, at)
+        safely_record(
+            "memecoin",
+            {
+                mint: (row["ratification"], inputs[mint])
+                for row in rows
+                if (mint := row.get("token_address")) in inputs
+            },
+            at=at,
+        )
     except Exception:
         LOG.warning("Ratification reads failed", exc_info=True)
         for row in rows:

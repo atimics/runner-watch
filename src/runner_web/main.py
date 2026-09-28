@@ -9842,14 +9842,22 @@ def _ratified_detail(ticker: str) -> dict[str, Any] | None:
 def _with_stock_ratification(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Each stock row with its ratification; a failed check leaves rows as they were."""
 
+    from runner_web.ratification_records import safely_record
     from runner_web.stock_ratify import stock_ratifications
 
+    inputs: dict[str, dict[str, Any]] = {}
+    at = now()
     try:
         with connection() as database:
-            found = stock_ratifications(database, rows, at=now())
+            found = stock_ratifications(database, rows, at=at, facts=inputs)
     except Exception:
         LOG.warning("Stock ratification failed", exc_info=True)
         return rows
+    safely_record(
+        "stock",
+        {ticker: (result, inputs.get(ticker, {})) for ticker, result in found.items()},
+        at=at,
+    )
     return [
         {**row, "ratification": found[ticker]}
         if (ticker := str(row.get("ticker") or "").upper()) in found
