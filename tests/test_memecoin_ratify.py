@@ -26,6 +26,7 @@ def row(**extra):
         "pool_address": POOL,
         "venue": "pool",
         "liquidity_usd": 25_000.0,
+        "real_liquidity_usd": 25_000.0,
         "pool_created_at": (AT - timedelta(days=2)).isoformat(),
         **extra,
     }
@@ -105,7 +106,7 @@ def test_a_pool_on_an_unsupported_dex_is_not_checked_yet():
             "transferHook",
         ),
         ({"venue": "bonding_curve"}, CLEAN, 22.0, False, "pool", "on its bonding curve"),
-        ({"liquidity_usd": 6_000.0}, CLEAN, 22.0, False, "pool", "$6,000 real liquidity"),
+        ({"real_liquidity_usd": 6_000.0}, CLEAN, 22.0, False, "pool", "$6,000 real liquidity"),
         (
             {"pool_created_at": (AT - timedelta(hours=5)).isoformat()},
             CLEAN,

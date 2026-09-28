@@ -1,0 +1,368 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trust.rati.chat/rules.schema.json",
+  "title": "The RATi Rules",
+  "description": "The shape of rules.toml: every standard, its test, the facts it reads and how they are gathered.",
+  "type": "object",
+  "required": [
+    "name",
+    "version",
+    "summary",
+    "meaning",
+    "ratified_when",
+    "states",
+    "assets",
+    "cases"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "meaning": {
+      "type": "string"
+    },
+    "ratified_when": {
+      "type": "string"
+    },
+    "freshness": {
+      "type": "string"
+    },
+    "states": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "counted",
+          "blocks",
+          "meaning"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "label": {
+            "type": "string"
+          },
+          "counted": {
+            "type": "boolean",
+            "description": "Whether the state counts toward the total."
+          },
+          "blocks": {
+            "type": "boolean",
+            "description": "Whether the state stops ratification."
+          },
+          "meaning": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/asset"
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "asset",
+          "standards",
+          "what",
+          "lesson"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "asset": {
+            "$ref": "#/$defs/id"
+          },
+          "standards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/id"
+            }
+          },
+          "what": {
+            "type": "string"
+          },
+          "lesson": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "unit": {
+      "enum": [
+        "USD",
+        "hours",
+        "days",
+        "months",
+        "percent"
+      ]
+    },
+    "labelled": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "clause": {
+      "type": "object",
+      "description": "One condition on a fact. A standard is met when all its clauses hold.",
+      "required": [
+        "fact",
+        "op"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "fact": {
+          "$ref": "#/$defs/id"
+        },
+        "op": {
+          "enum": [
+            "==",
+            ">=",
+            "<=",
+            "in",
+            "none_of",
+            "absent",
+            "none_within",
+            "between"
+          ],
+          "description": "absent: the fact is empty or unset. in / none_of: against a named list. none_within: no event in the last value units. between: inclusive range."
+        },
+        "value": {
+          "type": [
+            "number",
+            "string",
+            "boolean",
+            "array"
+          ]
+        },
+        "unit": {
+          "$ref": "#/$defs/unit"
+        },
+        "list": {
+          "$ref": "#/$defs/id",
+          "description": "The name of a list in this asset's lists."
+        },
+        "unless": {
+          "$ref": "#/$defs/clause",
+          "description": "When this holds, the clause is met without its own test."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "when": {
+          "$ref": "#/$defs/clause",
+          "description": "The clause applies only when this holds; clauses whose condition does not hold are skipped."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "enum": [
+                  "in",
+                  "none_of"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "list"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "enum": [
+                  "==",
+                  ">=",
+                  "<=",
+                  "none_within",
+                  "between"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ]
+          }
+        }
+      ]
+    },
+    "standard": {
+      "type": "object",
+      "required": [
+        "id",
+        "label",
+        "facts",
+        "test"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        },
+        "facts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "test": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/clause"
+          }
+        },
+        "not_applied": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/clause"
+            },
+            {
+              "required": [
+                "reason"
+              ]
+            }
+          ],
+          "description": "When this holds the standard is not applied: shown with the reason, not counted, not blocking."
+        }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "required": [
+        "id",
+        "label",
+        "source"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "refresh": {
+          "type": "string"
+        },
+        "xbrl": {
+          "type": "array",
+          "description": "The XBRL concepts read from SEC company facts, as taxonomy:Concept.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z-]+:[A-Za-z]+$"
+          }
+        }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": [
+        "facts",
+        "label",
+        "note",
+        "standards",
+        "unratified_note"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "standards": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/standard"
+          }
+        },
+        "lists": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/labelled"
+            }
+          }
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "unratified_note": {
+          "type": "string",
+          "description": "Shown instead of the note whenever the asset is not Ratified."
+        }
+      }
+    }
+  }
+}

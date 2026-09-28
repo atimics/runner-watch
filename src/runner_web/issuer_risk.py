@@ -4,23 +4,25 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-PERIODIC_FORMS = {"10-Q", "10-K", "10-Q/A", "10-K/A"}
-# Foreign private issuers report annually on 20-F (or 40-F for Canadian issuers
-# under MJDS) and furnish interim results on 6-K; they never file 10-Q or 10-K.
-FOREIGN_ANNUAL_FORMS = {"20-F", "40-F", "20-F/A", "40-F/A"}
-FOREIGN_FORMS = FOREIGN_ANNUAL_FORMS | {"6-K", "6-K/A"}
-# Banks, lenders, insurers and real estate: lending and premiums run through
-# operating cash flow, so a burn-based runway says nothing about them. This is
-# the one place that decides it; the risk check, ratification and Dash all
-# read the result.
-FINANCIAL_SIC = range(6000, 6800)
+# The forms and the financial-company range are the RATi Rules' own: one
+# place decides them, and the risk check, ratification and Dash read it.
+from ratitrust.stock import (
+    FINANCIAL_SIC,
+    FOREIGN_ANNUAL_FORMS,
+    FOREIGN_FORMS,
+    PERIODIC_FORMS,
+    is_financial,
+    is_foreign_issuer,
+)
 
-
-def is_financial(sic: Any) -> bool:
-    try:
-        return int(str(sic).strip()) in FINANCIAL_SIC
-    except (TypeError, ValueError):
-        return False
+__all__ = [
+    "FINANCIAL_SIC",
+    "FOREIGN_ANNUAL_FORMS",
+    "FOREIGN_FORMS",
+    "PERIODIC_FORMS",
+    "is_financial",
+    "is_foreign_issuer",
+]
 
 
 def _latest(rows: list[dict[str, Any]], concept: str) -> dict[str, Any] | None:
@@ -155,13 +157,6 @@ def _latest_periodic(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "periodic_form": str(latest["form"]).upper() if latest else None,
         "foreign_issuer": is_foreign_issuer(forms),
     }
-
-
-def is_foreign_issuer(forms: set[str]) -> bool:
-    """Files as a foreign private issuer: 20-F, 40-F or 6-K, and no 10-Q or 10-K."""
-
-    upper = {form.upper() for form in forms}
-    return bool(upper & FOREIGN_FORMS) and not upper & PERIODIC_FORMS
 
 
 def issuer_risk_contexts(database: Any, tickers: list[str]) -> dict[str, dict[str, Any]]:

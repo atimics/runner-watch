@@ -1,0 +1,379 @@
+# The RATi Rules, as data. The rule code reads its thresholds, lists and labels
+# from this file, so what is published here is what runs. The shape is checked
+# against rules.schema.json.
+
+name = "The RATi Rules"
+version = "2.0.0"
+summary = "The standards a stock or memecoin must meet to be Ratified."
+meaning = """\
+Ratified means the asset meets RATi's basic standards on the facts RATi could \
+read at the time. It is not an endorsement, a guarantee, advice, or an audit \
+opinion.\
+"""
+ratified_when = "Every applicable standard is met."
+freshness = "A mark is shown only on a current reading; a stale quote shows none."
+
+# Each standard reaches one of these states.
+[[states]]
+id = "met"
+label = "Met"
+counted = true
+blocks = false
+meaning = "The fact was read and the standard holds."
+
+[[states]]
+id = "not_met"
+label = "Not met"
+counted = true
+blocks = true
+meaning = "The fact was read and the standard does not hold."
+
+[[states]]
+id = "not_checked"
+label = "Not checked yet"
+counted = true
+blocks = true
+meaning = "The fact could not be read or is not supported yet. Missing data never passes."
+
+[[states]]
+id = "not_applied"
+label = "Not applied"
+counted = false
+blocks = false
+meaning = "The standard does not fit this asset. Shown with its reason and left out of the count."
+
+# ---------------------------------------------------------------- memecoins
+
+[assets.memecoin]
+label = "Memecoins"
+note = "Ratified: meets RATi's nine basic standards for a memecoin. Standards are checks on chain facts, separate from any Call. Not an endorsement, a guarantee or advice."
+unratified_note = "Not ratified: this memecoin does not meet all of RATi's nine basic standards, or one is not checked yet. Standards are checks on chain facts, separate from any Call. Not an endorsement, a guarantee or advice."
+
+[[assets.memecoin.standards]]
+id = "mint_authority"
+label = "Mint authority revoked"
+why = "Nobody can print more tokens."
+facts = ["mint"]
+test = [{ fact = "mint_authority", op = "absent" }]
+
+[[assets.memecoin.standards]]
+id = "freeze_authority"
+label = "Freeze authority revoked"
+why = "Nobody can freeze holders' tokens."
+facts = ["mint"]
+test = [{ fact = "freeze_authority", op = "absent" }]
+
+[[assets.memecoin.standards]]
+id = "token_features"
+label = "No risky token features"
+why = "Each lets someone tax, block, seize or pause holders. Pump's metadata extensions are not risky."
+facts = ["mint"]
+test = [{ fact = "token_extensions", op = "none_of", list = "risky_extensions" }]
+
+[[assets.memecoin.standards]]
+id = "pool"
+label = "Graduated pool with $10K+ real liquidity"
+why = "Real liquidity is twice the quote side actually in the pool (SOL or a stablecoin, at its dollar price), on every DEX, without the virtual reserve carried from a bonding curve. A pool's own quoted liquidity is not used: it values the coin at the coin's own price. A coin still on its curve does not qualify. Not checked yet when the quote side cannot be read."
+facts = ["liquidity"]
+test = [
+  { fact = "venue", op = "==", value = "pool" },
+  { fact = "real_liquidity", op = ">=", value = 10000, unit = "USD" },
+]
+
+[[assets.memecoin.standards]]
+id = "age"
+label = "24 hours since its pool opened"
+why = "A coin must survive its first day."
+facts = ["pool_age"]
+test = [{ fact = "pool_age", op = ">=", value = 24, unit = "hours" }]
+
+[[assets.memecoin.standards]]
+id = "record"
+label = "No launch bundle, creator selling or liquidity pull"
+why = "A bundle is three or more wallets taking 10% or more of supply in the launch slot or the next. Creator selling is a drop of 1% or more in the creator's own token balance. A bundle stays on the record for a week; the others for 24 hours."
+facts = ["launch_bundle", "creator_selling", "liquidity_pull"]
+test = [{ fact = "risk_flags", op = "none_of", list = "risk_kinds" }]
+
+[[assets.memecoin.standards]]
+id = "holders"
+label = "Top 10 holders own 30% or less"
+why = "Accounts held by a known pool or bonding curve are left out. Supply under any other program counts: a creator can hold it under a program of their own. An unreadable owner counts. When fewer than ten wallets appear among a full listing of 20, each missing one counts at the smallest listed balance. When every listed account is a pool and the listing is not full, no wallet can be read: not checked yet, never 0%."
+facts = ["largest_holders"]
+test = [{ fact = "top10_share", op = "<=", value = 30, unit = "percent" }]
+
+[[assets.memecoin.standards]]
+id = "holder_count"
+label = "At least 100 holders"
+why = "A holder is an owner with a balance. One page of 1,000 token accounts is read; a full page is a lower bound, which is enough."
+facts = ["holder_count"]
+test = [{ fact = "holder_count", op = ">=", value = 100 }]
+
+[[assets.memecoin.standards]]
+id = "liquidity_lock"
+label = "Pool liquidity burned or locked"
+why = "The pool's own count of liquidity tokens issued, against the liquidity-token mint's supply. Read for PumpSwap (Pump burns a graduated pool's) and Raydium CPMM. Other DEXes, and liquidity held in a lock program, are not checked yet."
+facts = ["liquidity_tokens"]
+test = [{ fact = "lp_tokens_left", op = "<=", value = 10, unit = "percent" }]
+
+[assets.memecoin.lists]
+# Token-2022 features that let someone tax, block, seize or pause holders.
+risky_extensions = [
+  { id = "transferFeeConfig", label = "transfer fee" },
+  { id = "transferHook", label = "transfer hook" },
+  { id = "permanentDelegate", label = "permanent delegate" },
+  { id = "pausableConfig", label = "pausing" },
+  { id = "defaultAccountState", label = "default-frozen accounts" },
+  { id = "nonTransferable", label = "non-transferable" },
+  { id = "confidentialTransferMint", label = "confidential transfers" },
+]
+# The risk factors that put a coin's record in question.
+risk_kinds = [
+  { id = "synchronized_buys", label = "launch bundle" },
+  { id = "creator_sell", label = "creator selling" },
+  { id = "liquidity_withdrawal", label = "liquidity pulled" },
+]
+# Pools and curves hold supply for everyone, so their accounts are left out of
+# the top holders, but only when the owning address belongs to one of these.
+pool_programs = [
+  { id = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA", label = "PumpSwap" },
+  { id = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", label = "Pump bonding curves" },
+  { id = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", label = "Raydium AMM v4" },
+  { id = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C", label = "Raydium CPMM" },
+  { id = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK", label = "Raydium CLMM" },
+  { id = "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj", label = "Raydium LaunchLab" },
+  { id = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc", label = "Orca Whirlpools" },
+  { id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo", label = "Meteora DLMM" },
+  { id = "Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB", label = "Meteora DAMM v1" },
+  { id = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG", label = "Meteora DAMM v2" },
+]
+# Pool authorities with no account of their own to show a program.
+pool_authorities = [
+  { id = "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1", label = "Raydium AMM v4" },
+  { id = "GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL", label = "Raydium CPMM" },
+]
+
+[assets.memecoin.params]
+# getTokenLargestAccounts lists this many accounts.
+largest_listed = 20
+# Token accounts read for the holder count.
+holder_page = 1000
+
+# How each fact is gathered. The RATi service gathers them and records the
+# rules version and the facts used beside every result.
+[[assets.memecoin.facts]]
+id = "liquidity"
+label = "Price, real liquidity"
+source = "PumpSwap and Pump: the pool's own accounts on Solana (vaults and virtual quote reserve; bonding-curve reserves), read through Helius. Other DEXes: the quote amount DexScreener reports for the pool"
+refresh = "Every five-minute cycle"
+
+[[assets.memecoin.facts]]
+id = "mint"
+label = "Mint and freeze authority, extensions, supply"
+source = "The mint account (jsonParsed)"
+refresh = "Read until clean, then kept: a revoked authority cannot return and extensions are fixed at creation"
+
+[[assets.memecoin.facts]]
+id = "pool_age"
+label = "Pool age"
+source = "Pool creation time"
+refresh = "Every cycle"
+
+[[assets.memecoin.facts]]
+id = "launch_bundle"
+label = "Launch bundle"
+source = "The bonding curve's signatures back to the launch, then the transactions in the launch slot and the next"
+refresh = "Once per coin, kept a week"
+
+[[assets.memecoin.facts]]
+id = "creator_selling"
+label = "Creator selling"
+source = "The creator's token account, compared cycle to cycle"
+refresh = "Every cycle"
+
+[[assets.memecoin.facts]]
+id = "liquidity_pull"
+label = "Liquidity pull"
+source = "Liquidity withdrawals in RATi's sampled chain events"
+refresh = "As sampled"
+
+[[assets.memecoin.facts]]
+id = "largest_holders"
+label = "Largest holders"
+source = "getTokenLargestAccounts, each account's owner, and the program behind each program-address owner"
+refresh = "Every six hours, only for coins passing the pool, age and record standards"
+
+[[assets.memecoin.facts]]
+id = "holder_count"
+label = "Holder count"
+source = "Helius getTokenAccounts for the mint: one page of up to 1,000 accounts"
+refresh = "Every six hours, only for coins passing everything else"
+
+[[assets.memecoin.facts]]
+id = "liquidity_tokens"
+label = "Liquidity tokens"
+source = "The pool account's issued count and the liquidity-token mint's supply"
+refresh = "Every cycle for candidates"
+
+# ------------------------------------------------------------------- stocks
+
+[assets.stock]
+label = "Stocks"
+note = "Ratified: meets RATi's five basic standards for a stock. Standards are checks on published facts, separate from any Call. Not an endorsement, a guarantee or advice."
+unratified_note = "Not ratified: this stock does not meet all of RATi's five basic standards, or one is not checked yet. Standards are checks on published facts, separate from any Call. Not an endorsement, a guarantee or advice."
+
+[[assets.stock.standards]]
+id = "exchange"
+label = "Listed on NASDAQ, NYSE or NYSE American"
+why = "Not OTC."
+facts = ["listing"]
+test = [{ fact = "exchange", op = "in", list = "major_exchanges" }]
+
+[[assets.stock.standards]]
+id = "filings"
+label = "Up to date with SEC filings"
+why = "A 10-Q or 10-K (or amendment) filed in the last 135 days. A foreign private issuer (files 20-F, 40-F or 6-K and never a 10-Q or 10-K) reports once a year, due four months after its year ends, so its 20-F or 40-F must be from the last 490 days; its 6-Ks are not read as reports. Not checked yet when RATi has neither the company's financial facts nor a report in its filing index."
+facts = ["periodic_report"]
+test = [
+  { fact = "days_since_periodic_report", op = "<=", value = 135, unit = "days", when = { fact = "foreign_issuer", op = "==", value = false } },
+  { fact = "days_since_annual_report", op = "<=", value = 490, unit = "days", when = { fact = "foreign_issuer", op = "==", value = true } },
+]
+
+[[assets.stock.standards]]
+id = "cash"
+label = "12+ months of cash, or not burning cash"
+why = "Cash runway at the current operating burn."
+facts = ["financials", "listing"]
+test = [{ fact = "cash_runway", op = ">=", value = 12, unit = "months", unless = { fact = "operating_cash_flow", op = ">=", value = 0, unit = "USD" } }]
+not_applied = { fact = "sic", op = "between", value = [6000, 6799], reason = "Banks, lenders, insurers and real estate: their lending runs through operating cash flow, so a burn-based runway says nothing about them." }
+
+[[assets.stock.standards]]
+id = "dilution"
+label = "Share count up 25% or less in a year"
+why = "Dilution, over about a year."
+facts = ["financials"]
+test = [{ fact = "share_growth", op = "<=", value = 25, unit = "percent" }]
+
+[[assets.stock.standards]]
+id = "trading"
+label = "No halt in 30 days and no delisting notice in 90"
+why = "A delisting notice is an 8-K item 3.01. No notice is known only once the last 90 days of notices have been read: until then, not checked yet."
+facts = ["halts", "delisting_notices"]
+test = [
+  { fact = "trading_halt", op = "none_within", value = 30, unit = "days" },
+  { fact = "delisting_notice", op = "none_within", value = 90, unit = "days" },
+]
+
+[assets.stock.lists]
+periodic_forms = [
+  { id = "10-Q", label = "Quarterly report" },
+  { id = "10-K", label = "Annual report" },
+  { id = "10-Q/A", label = "Quarterly report, amended" },
+  { id = "10-K/A", label = "Annual report, amended" },
+]
+foreign_annual_forms = [
+  { id = "20-F", label = "Foreign private issuer annual report" },
+  { id = "40-F", label = "Canadian issuer annual report (MJDS)" },
+  { id = "20-F/A", label = "20-F, amended" },
+  { id = "40-F/A", label = "40-F, amended" },
+]
+foreign_current_forms = [
+  { id = "6-K", label = "Foreign private issuer current report" },
+  { id = "6-K/A", label = "6-K, amended" },
+]
+major_exchanges = [
+  { id = "NASDAQ", label = "Nasdaq" },
+  { id = "NYSE", label = "NYSE" },
+  { id = "NYSE AMERICAN", label = "NYSE American" },
+  { id = "NYSE MKT", label = "NYSE American (former name)" },
+  { id = "AMEX", label = "NYSE American (former name)" },
+]
+
+[assets.stock.params]
+# A sweep of delisting notices older than this no longer vouches for the window.
+delisting_sweep_fresh_hours = 36
+
+[[assets.stock.facts]]
+id = "listing"
+label = "Exchange, SIC code"
+source = "SEC company tickers and submissions"
+
+[[assets.stock.facts]]
+id = "periodic_report"
+label = "Latest periodic report"
+source = "SEC XBRL company facts and the EDGAR filing index; whichever is later"
+
+[[assets.stock.facts]]
+id = "financials"
+label = "Cash, operating cash flow, shares outstanding"
+source = "SEC XBRL company facts"
+xbrl = [
+  "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+  "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+  "us-gaap:NetCashProvidedByUsedInOperatingActivities",
+  "us-gaap:NetCashUsedInOperatingActivities",
+  "dei:EntityCommonStockSharesOutstanding",
+  "us-gaap:CommonStockSharesOutstanding",
+]
+
+[[assets.stock.facts]]
+id = "halts"
+label = "Halts"
+source = "Nasdaq trade halt feed"
+
+[[assets.stock.facts]]
+id = "delisting_notices"
+label = "Delisting notices"
+source = "EDGAR full-text search for 8-K and 8-K/A filings whose items include 3.01, over the last 90 days, and the EDGAR current feed as filings arrive"
+refresh = "Twice a day"
+
+# -------------------------------------------------------------- worked cases
+# These shaped the rules and are kept as tests.
+
+[[cases]]
+name = "NPC"
+asset = "memecoin"
+standards = ["holders", "holder_count"]
+what = "22 holders and $19M liquidity, ratified under an earlier draft because its supply sat in pools and every program-owned account was left out."
+lesson = "Leave out known pools only, and require 100 holders."
+
+[[cases]]
+name = "Hold My Glasses (GLASSES)"
+asset = "memecoin"
+standards = []
+what = "No trading; answered a \"Glasses\" copycat burst by symbol alone."
+lesson = "Not a ratification rule, but the same lesson: a name or symbol never identifies a coin."
+
+[[cases]]
+name = "RWT (Redwood Trust)"
+asset = "stock"
+standards = ["cash"]
+what = "A REIT, SIC 6798, read as \"0 months of cash\" because its lending runs through operating cash flow."
+lesson = "Cash runway is not applied to financial companies."
+
+[[cases]]
+name = "KLXE"
+asset = "stock"
+standards = []
+what = "Met every company standard but failed a momentum evidence check whenever markets were closed."
+lesson = "That check is not a RATi Rule."
+
+[[cases]]
+name = "J9PVhNvG…"
+asset = "memecoin"
+standards = ["record"]
+what = "Five wallets bought the whole bonding curve (79.3% of supply) in the launch slot."
+lesson = "A launch bundle."
+
+[[cases]]
+name = "Quant (QNT copycat)"
+asset = "memecoin"
+standards = ["pool", "holders"]
+what = "A QNT/USDC pool on Raydium CLMM quoted $941M of liquidity, with $47.54 of USDC in it, and 18 holders whose supply all sat in pools, read as top 10 holding 0%."
+lesson = "Real liquidity is the quote side on every DEX, and a listing of nothing but pools is not checked, never 0%."
+
+[[cases]]
+name = "p(doom)"
+asset = "memecoin"
+standards = ["holder_count"]
+what = "Met every other standard, but its holder count was never read: the free lookup was refused by a rate limit every cycle."
+lesson = "Missing data blocked it, as it should; the count is now read where it can be."
