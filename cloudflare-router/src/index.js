@@ -1,5 +1,5 @@
 const UPSTREAM_HOST = "runner-watch-ratimics.fly.dev";
-const PUBLIC_HOSTS = new Set(["runners.rati.chat", "sports.rati.chat"]);
+const PUBLIC_HOSTS = new Set(["runners.rati.chat", "sports.rati.chat", "trust.rati.chat"]);
 
 export default {
   async fetch(request, env) {

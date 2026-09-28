@@ -138,6 +138,37 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     assert all(uptime_lines.count(command) == 1 for command in uptime_commands)
 
 
+def test_every_edge_host_is_routed_and_known_to_the_app() -> None:
+    """A host the Worker accepts must have a route, and the app must trust its
+    forwarded host, or it is served under the wrong origin."""
+
+    import re
+
+    from runner_web import main
+
+    root = Path(__file__).parents[1]
+    worker = (root / "cloudflare-router/src/index.js").read_text()
+    routes = json.loads((root / "cloudflare-router/wrangler.jsonc").read_text())["routes"]
+    hosts = set(
+        re.findall(r'"([a-z]+\.rati\.chat)"', worker.split("PUBLIC_HOSTS", 1)[1].split(";", 1)[0])
+    )
+
+    assert "trust.rati.chat" in hosts
+    assert {route["pattern"].split("/", 1)[0] for route in routes} == hosts
+    import tomllib
+
+    production = tomllib.loads((root / "fly.toml").read_text())["env"]
+    app_hosts = {
+        main._origin_host(production.get(name) or default)
+        for name, default in (
+            ("RUNNERS_ORIGIN", ""),
+            ("SPORTS_ORIGIN", "https://sports.rati.chat"),
+            ("TRUST_ORIGIN", "https://trust.rati.chat"),
+        )
+    }
+    assert hosts <= app_hosts
+
+
 def test_generated_image_cards_are_rate_limited(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
