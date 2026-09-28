@@ -88,7 +88,17 @@ def rules_record() -> dict[str, Any]:
         record["methodology_text"] = record["files"].get("METHODOLOGY.md", "")
         revealed.append(record)
     revealed.sort(key=lambda record: [int(part) for part in record["version"].split(".")])
-    return {"current": current, "revealed": list(reversed(revealed))}
+    revealed.reverse()
+    # The rules shown are the current version's when it is revealed, else the
+    # newest revealed one, which the page says is not the version in force.
+    shown = next(
+        (record for record in revealed if current and record["version"] == current["version"]),
+        None,
+    )
+    sealed = shown is None
+    if shown is None:
+        shown = next((record for record in revealed if record.get("rules")), None)
+    return {"current": current, "revealed": revealed, "shown": shown, "sealed": sealed}
 
 
 def parsed_rules(text: str | None) -> dict[str, Any] | None:
@@ -103,11 +113,21 @@ def parsed_rules(text: str | None) -> dict[str, Any] | None:
     for asset in (rules.get("assets") or {}).values():
         facts = {fact["id"]: fact for fact in asset.get("facts") or []}
         lists = asset.get("lists") or {}
+        used: set[str] = set()
         for standard in asset.get("standards") or []:
+            clauses = [*standard["test"], standard.get("not_applied") or {}]
             standard["tests"] = [describe_clause(clause, lists) for clause in standard["test"]]
             if standard.get("not_applied"):
                 standard["not_applied_text"] = describe_clause(standard["not_applied"], lists)
             standard["sources"] = [facts[name] for name in standard["facts"] if name in facts]
+            standard["lists_used"] = {
+                clause["list"]: lists[clause["list"]]
+                for clause in clauses
+                if clause.get("list") in lists
+            }
+            used |= set(standard["lists_used"])
+        # Lists no test names directly, such as the pools left out of the top holders.
+        asset["other_lists"] = {name: items for name, items in lists.items() if name not in used}
     return rules
 
 
