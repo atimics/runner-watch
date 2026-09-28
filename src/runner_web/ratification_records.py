@@ -41,6 +41,16 @@ def rules_digest() -> str:
     return hashlib.sha256(manifest.encode()).hexdigest()
 
 
+def _json(value: Any) -> str:
+    """Dates as ISO text and sets as sorted lists, so `ratitrust.reproduce` reads them."""
+
+    return json.dumps(
+        value,
+        default=lambda item: sorted(item) if isinstance(item, set | frozenset) else str(item),
+        sort_keys=True,
+    )
+
+
 def fingerprint(result: dict[str, Any]) -> str:
     state = [
         ratitrust.__version__,
@@ -92,8 +102,8 @@ def record_results(
                 1 if result.get("ratified") else 0,
                 int(result.get("met") or 0),
                 int(result.get("total") or 0),
-                json.dumps(result, default=str, sort_keys=True),
-                json.dumps(facts, default=str, sort_keys=True),
+                _json(result),
+                _json(facts),
                 at.isoformat(),
             ),
         )

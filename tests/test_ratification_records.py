@@ -95,3 +95,26 @@ def test_a_ratified_page_read_leaves_a_record(database, monkeypatch):
 def _fake(rows, facts):
     facts["KLXE"] = {"exchange": "Nasdaq"}
     return {"KLXE": result()}
+
+
+def test_a_recorded_result_reproduces_under_the_rules_that_recorded_it(database):
+    from datetime import date
+
+    from ratitrust import stock
+    from ratitrust.reproduce import reproduce
+
+    facts = {
+        "exchange": "Nasdaq",
+        "issuer": {"issuer_data_available": True, "periodic_filed_at": "2026-04-28"},
+        "halted_on": None,
+        "delisting_on": date(2026, 8, 1),
+        "today": AT.date(),
+        "filed": {"filed_at": "2026-04-28", "form": "20-F", "forms": {"20-F", "6-K"}},
+        "delistings_read": True,
+    }
+    safely_record("stock", {"SHMD": (stock.standards(**facts), facts)}, at=AT)
+
+    with db.connection() as database_:
+        record = history(database_, "stock", "SHMD")[0]
+    assert record["facts"]["filed"]["forms"] == ["20-F", "6-K"]
+    assert reproduce("stock", record["facts"]) == record["result"]

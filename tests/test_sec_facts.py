@@ -142,3 +142,63 @@ def test_the_risk_check_no_longer_calls_a_lender_a_raise_risk() -> None:
     runway = "treasury runway is under 3 months; raise risk is critical"
     assert runway in reasons("3585")
     assert runway not in reasons("6798")
+
+
+def test_an_ifrs_filer_is_read_in_its_own_currency() -> None:
+    # Live shape: BLDP files a 40-F with ifrs-full facts in its reporting currency.
+    def entry(val, end, accn, start=None):
+        item = {"val": val, "end": end, "filed": "2026-03-10", "accn": accn, "form": "40-F"}
+        return {**item, "start": start} if start else item
+
+    payload = {
+        "cik": 1453015,
+        "facts": {
+            "ifrs-full": {
+                "CashAndCashEquivalents": {
+                    "units": {"CAD": [entry(90_000_000, "2025-12-31", "a")]}
+                },
+                "CashFlowsFromUsedInOperatingActivities": {
+                    "units": {"CAD": [entry(-60_000_000, "2025-12-31", "a", start="2025-01-01")]}
+                },
+                "NumberOfSharesOutstanding": {
+                    "units": {
+                        "shares": [
+                            entry(300_000_000, "2025-12-31", "a"),
+                            {**entry(250_000_000, "2024-12-31", "b"), "filed": "2025-03-10"},
+                        ]
+                    }
+                },
+            },
+            # A currency outside IFRS facts is still not read.
+            "us-gaap": {
+                "CashAndCashEquivalentsAtCarryingValue": {
+                    "units": {"EUR": [entry(1, "2025-12-31", "c")]}
+                }
+            },
+        },
+    }
+
+    facts = parse_company_facts(payload, collected_at=datetime(2026, 9, 28, tzinfo=UTC))
+    rows = [
+        {
+            "concept": fact.concept,
+            "value": fact.value,
+            "unit": fact.unit,
+            "period_start": fact.period_start.isoformat() if fact.period_start else None,
+            "period_end": fact.period_end.isoformat(),
+            "filed_at": fact.filed_at.isoformat(),
+            "form": fact.form,
+        }
+        for fact in facts
+    ]
+    context = build_issuer_risk_context(rows, sic="3690")
+
+    assert {fact.source_tag for fact in facts} == {
+        "ifrs-full:CashAndCashEquivalents",
+        "ifrs-full:CashFlowsFromUsedInOperatingActivities",
+        "ifrs-full:NumberOfSharesOutstanding",
+    }
+    assert 17.9 <= context["cash_runway_months"] <= 18.1  # CAD over CAD
+    assert context["shares_growth_pct"] == 20.0
+    assert context["reporting_currency"] == "CAD"
+    assert context["cash"] is None  # never shown as dollars
