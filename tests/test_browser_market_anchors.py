@@ -292,5 +292,5 @@ def test_the_trust_page_fits_on_a_phone(page, width):
     page.set_viewport_size(dict(width=width, height=844))
     open_html(page, html)
     expect(page.locator(".trust-digest").first).to_be_visible()
-    expect(page.locator(".trust-form button")).to_be_visible()
+    expect(page.locator(".trust-standard").first).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")

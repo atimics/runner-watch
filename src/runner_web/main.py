@@ -22,7 +22,7 @@ from datetime import date as calendar_date
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -3022,22 +3022,14 @@ def roadmap_page(
     )
 
 
-def _trust_home(request: Request) -> str:
-    """trust.rati.chat serves the page at its root; elsewhere it is /trust."""
-
-    return "/" if _request_host(request) == _origin_host(TRUST_ORIGIN) else "/trust"
-
-
 @app.get("/trust", response_class=HTMLResponse)
 def trust_page(
     request: Request,
     runner_session: str | None = Cookie(default=None),
 ) -> HTMLResponse:
-    from runner_web.trust import GITHUB_LOGIN, MESSAGES, rules_record
+    from runner_web.trust import rules_record
 
     enforce_rate(request, "trust", limit=120, seconds=60)
-    requested = request.query_params.get("requested", "")
-    error = request.query_params.get("error", "")
     return templates.TemplateResponse(
         request=request,
         name="trust.html",
@@ -3046,9 +3038,6 @@ def trust_page(
             runner_session,
             trust=rules_record(),
             nav_product="trust",
-            requested=requested if GITHUB_LOGIN.fullmatch(requested) else "",
-            already=request.query_params.get("already") == "1",
-            error=MESSAGES.get(error, ""),
         ),
     )
 
@@ -3069,33 +3058,6 @@ def trust_rules_file(request: Request) -> Response:
         raise HTTPException(status_code=404, detail="Not published")
     media = "application/schema+json" if name.endswith(".json") else "application/toml"
     return Response(text, media_type=f"{media}; charset=utf-8")
-
-
-@app.post("/trust/access")
-async def trust_access_request(request: Request) -> RedirectResponse:
-    """A request to read the private rules, from a GitHub account that looks real."""
-
-    from runner_web.trust import check_github_account, record_access_request
-
-    require_origin(request)
-    enforce_rate(request, "trust-access", limit=5, seconds=3600)
-    form = parse_qs((await request.body())[:4096].decode("utf-8", "replace"))
-    login = (form.get("github") or [""])[0]
-    reason = (form.get("reason") or [""])[0]
-    home = _trust_home(request)
-    account = await run_in_threadpool(check_github_account, login)
-    if not account["ok"]:
-        return RedirectResponse(f"{home}?{urlencode({'error': account['code']})}#access", 303)
-    with connection() as database:
-        new = record_access_request(
-            database,
-            account,
-            reason=reason,
-            ip_hash=client_ip_hash(_request_client_ip(request), RATE_LIMIT_HASH_KEY),
-            at=now(),
-        )
-    query = {"requested": account["login"], **({} if new else {"already": "1"})}
-    return RedirectResponse(f"{home}?{urlencode(query)}#access", 303)
 
 
 @app.get("/api/trust/access-requests")
