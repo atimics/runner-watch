@@ -33,6 +33,7 @@
     {% endif %}
     <p>{{ current.hits }} hits · {{ current.misses }} misses · {{ current.no_calls }} no calls · {{ current.pending }} pending</p>
     <p>{{ current.distinct_tickers }} tickers · {{ current.distinct_trading_days }} trading days{% if current.hit_rate_interval_95 %} · 95% range {{ '%.0f'|format(current.hit_rate_interval_95[0] * 100) }}–{{ '%.0f'|format(current.hit_rate_interval_95[1] * 100) }}%{% endif %}</p>
+    {% if current.headline_rate_visible and current.baseline_hit_rate is not none %}<p data-versus-baseline="{{ current.versus_baseline }}">Baseline {{ '%.0f'|format(current.baseline_hit_rate * 100) }}%: always forecasting {{ current.baseline_direction }} on the same sessions · {% if current.versus_baseline == 'above' %}the 95% range is above it{% elif current.versus_baseline == 'below' %}the 95% range is below it{% else %}not yet distinguishable from it{% endif %}{% if current.brier_score is not none %} · Brier {{ '%.3f'|format(current.brier_score) }} (0.250 is a coin flip){% endif %}</p>{% endif %}
     {% if not current.headline_rate_visible %}<aside>Building record. The headline percentage appears after {{ record.contract.headline_sample }} settled forecasts.</aside>{% endif %}
   </section>
   {% endif %}

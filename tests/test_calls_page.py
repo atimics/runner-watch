@@ -167,17 +167,51 @@ def test_calls_head_to_head_compares_rates_with_sample_sizes() -> None:
         },
     )
 
-    assert comparison["you"] == {
+    assert {key: comparison["you"][key] for key in comparison["you"] if key != "interval_95"} == {
         "wins": 2,
         "losses": 2,
         "decisions": 4,
         "hit_rate": 0.5,
         "rate_visible": True,
     }
+    low, high = comparison["you"]["interval_95"]
+    assert low < 0.5 < high
     assert comparison["flash"]["decisions"] == 17
     assert comparison["flash"]["hit_rate"] == 8 / 17
     assert comparison["leader"] == "you"
     assert comparison["gap_points"] == 2.9
+    # 4 Calls against 17 forecasts: far too few to call the lead clear.
+    assert comparison["lead_is_clear"] is False
+
+
+def test_calls_head_to_head_holds_flash_to_a_baseline() -> None:
+    # Live case: 29-29 over 58 graded forecasts, while most sessions closed down.
+    record = {
+        "hits": 29,
+        "misses": 29,
+        "headline_rate_visible": True,
+        "baseline_hit_rate": 0.55,
+        "baseline_direction": "down",
+    }
+
+    flash = web_main._calls_head_to_head({"wins": 0, "losses": 0}, record)["flash"]
+
+    low, high = flash["interval_95"]
+    assert round(low, 2) == 0.38 and round(high, 2) == 0.62
+    assert flash["versus_baseline"] == "unclear"
+    assert (
+        web_main._calls_head_to_head({}, {**record, "hits": 50, "misses": 8})["flash"][
+            "versus_baseline"
+        ]
+        == "above"
+    )
+
+
+def test_flash_baseline_is_the_better_constant_forecast() -> None:
+    from runner_web.flash_evaluations import baseline
+
+    assert baseline(58, 20, 32) == {"baseline_hit_rate": 0.5517, "baseline_direction": "down"}
+    assert baseline(0, 0, 0) == {"baseline_hit_rate": None, "baseline_direction": None}
 
 
 def test_calls_head_to_head_waits_for_flash_headline_sample() -> None:
@@ -235,6 +269,8 @@ def test_calls_page_renders_direct_hit_rate_comparison(tmp_path, monkeypatch) ->
     assert "4 graded Calls · all markets" in html
     assert "17 graded stock forecasts" in html
     assert "You lead</b> by 2.9 percentage points." in html
+    assert "The 95% ranges overlap, so this is not yet a clear difference." in html
+    assert "95% range" in html
 
 
 def test_my_calls_redirects_signed_in_users_to_calls(tmp_path, monkeypatch) -> None:

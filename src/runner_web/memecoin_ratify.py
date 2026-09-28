@@ -101,7 +101,13 @@ LABELS = {
 }
 NOTE = (
     "Ratified: meets RATi's nine basic standards for a memecoin. "
+    "Standards are checks on chain facts, separate from any Call. "
     "Not an endorsement, a guarantee or advice."
+)
+UNRATIFIED_NOTE = (
+    "Not ratified: this memecoin does not meet all of RATi's nine basic standards, "
+    "or one is not checked yet. Standards are checks on chain facts, separate "
+    "from any Call. Not an endorsement, a guarantee or advice."
 )
 
 
@@ -339,7 +345,14 @@ def standards(
         "holder_count": f"{holder_count:,} holders" if holder_count is not None else "",
         "liquidity_lock": _lock_detail(lock),
     }
-    return summarize(LABELS, results, details, note=NOTE, as_of=at.isoformat())
+    return summarize(
+        LABELS,
+        results,
+        details,
+        note=NOTE,
+        unratified_note=UNRATIFIED_NOTE,
+        as_of=at.isoformat(),
+    )
 
 
 def _lock_detail(lock: dict[str, Any] | None) -> str:

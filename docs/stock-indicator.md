@@ -135,8 +135,13 @@ while markets are closed.
 
 1. Listed on NASDAQ, NYSE or NYSE American (not OTC), from the SEC listing map.
 2. Up to date with SEC filings: a 10-Q or 10-K (or amendment) filed in the last
-   135 days, from the financial facts behind the issuer risk context. Foreign
-   issuers filing 20-F and 6-K do not meet this yet.
+   135 days. A foreign private issuer (files 20-F, 40-F or 6-K and never 10-Q or
+   10-K) is held to its own schedule instead: a 20-F or 40-F annual report filed
+   in the last 490 days (twelve months between fiscal years plus the four-month
+   filing deadline). Interim 6-K reports are not told apart from other 6-Ks, so
+   only the annual report is read. The latest report is taken from the financial
+   facts or the filing index, whichever is later, because IFRS filers may not
+   use the XBRL tags the facts are read from.
 3. At least 12 months of cash at the current operating burn, or not burning
    cash (operating cash flow zero or positive). Not applied to banks, lenders,
    insurers and real estate (SIC 6000-6799), whose lending runs through

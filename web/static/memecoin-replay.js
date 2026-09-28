@@ -49,7 +49,7 @@
     const panel = $('selection'); panel.replaceChildren();
     // Only what was measured: a reading that is unavailable is left out, not announced.
     const reading = [
-      score === '—' ? null : `Attention ${score} points`,
+      score === '—' ? null : window.RatiRingGlyph.attentionReading(score, glyph.band),
       glyph.sentimentMix.state === 'available' ? `Chain evidence tone: ${glyph.sentimentMix.reading}` : null,
       glyph.risk === 'unknown' ? null : window.RatiRingGlyph.riskReading(glyph.risk),
     ].filter(Boolean);

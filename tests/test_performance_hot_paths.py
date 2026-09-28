@@ -322,7 +322,8 @@ def test_sentiment_counts_share_the_bounded_filing_window_on_board_and_detail(
                 (tone, updated, accession),
             )
     inputs = main._pulse_scoring_inputs(at=at)
-    assert inputs["sentiment_counts"] == {"ONE": {"bullish": 2, "bearish": 1}}
+    # "filings" counts every filing in the window, neutral included.
+    assert inputs["sentiment_counts"] == {"ONE": {"bullish": 2, "bearish": 1, "filings": 4}}
     scored = main._pulse_snapshot_score(inputs["market_rows"][0], inputs)
     detail = main.ticker_detail_data("ONE")
     summary = main._ticker_summary("ONE")
@@ -339,4 +340,5 @@ def test_sentiment_counts_share_the_bounded_filing_window_on_board_and_detail(
     assert main.ticker_detail_data("OTHER")["current"]["sentiment_counts"] == {
         "bullish": 0,
         "bearish": 1,
+        "filings": 1,
     }

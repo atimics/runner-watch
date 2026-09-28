@@ -687,7 +687,7 @@ def classify_filing(form: str, ownership: OwnershipSummary | None = None) -> dic
     rules = (
         (("S-1", "S-3", "424B", "POS AM"), "Offering or dilution filing", "risk", 82),
         (("EFFECT",), "Registration became effective", "risk", 72),
-        (("NT 10-Q", "NT 10-K"), "Late periodic report", "risk", 76),
+        (("NT 10-Q", "NT 10-K", "NT 20-F"), "Late periodic report", "risk", 76),
         (("144",), "Proposed security sale", "risk", 62),
         (
             ("SC 13D", "SCHEDULE 13D"),

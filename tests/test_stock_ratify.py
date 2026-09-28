@@ -72,6 +72,126 @@ def test_one_failing_standard_withholds_it(changes, failing, detail):
     assert standard["met"] is False and standard["detail"] == detail
 
 
+def test_a_foreign_issuer_is_held_to_its_annual_20f():
+    # Live case: SHMD (SCHMID Group N.V.) files 20-F and 6-K, never 10-Q or 10-K,
+    # and read "no quarterly or annual report in its filings".
+    foreign = {
+        **HEALTHY,
+        "periodic_filed_at": "2026-04-28",
+        "periodic_form": "20-F",
+        "foreign_issuer": True,
+    }
+
+    result = rated(issuer=foreign)
+
+    filings = next(s for s in result["standards"] if s["key"] == "filings")
+    assert filings["met"] is True
+    assert filings["detail"] == "latest 20-F filed Apr 28 · foreign issuer, annual report"
+    # The same filing age fails a domestic company, whose window is 135 days.
+    domestic = rated(issuer={**HEALTHY, "periodic_filed_at": "2026-04-28"})
+    assert next(s for s in domestic["standards"] if s["key"] == "filings")["met"] is False
+
+
+def test_a_foreign_issuer_found_only_in_the_filing_index_is_read():
+    # IFRS filers may carry no us-gaap facts: the filing index still shows the 20-F.
+    issuer = {**HEALTHY, "periodic_filed_at": None, "periodic_form": None}
+    filed = {"filed_at": "2026-03-30", "form": "20-F", "forms": {"20-F", "6-K"}}
+
+    filings = next(
+        s for s in rated(issuer=issuer, filed=filed)["standards"] if s["key"] == "filings"
+    )
+
+    assert filings["met"] is True and filings["detail"].startswith("latest 20-F filed Mar 30")
+
+
+def test_a_stale_20f_does_not_meet_the_standard():
+    filed = {"filed_at": "2025-04-30", "form": "20-F", "forms": {"20-F", "6-K"}}
+    issuer = {**HEALTHY, "periodic_filed_at": None, "periodic_form": None}
+
+    filings = next(
+        s for s in rated(issuer=issuer, filed=filed)["standards"] if s["key"] == "filings"
+    )
+
+    assert filings["met"] is False
+
+
+def test_a_foreign_issuer_with_only_current_reports_names_the_missing_annual():
+    issuer = {**HEALTHY, "periodic_filed_at": None, "periodic_form": None}
+    filed = {"forms": {"6-K"}}
+
+    filings = next(
+        s for s in rated(issuer=issuer, filed=filed)["standards"] if s["key"] == "filings"
+    )
+
+    assert filings["met"] is False
+    assert filings["detail"] == "foreign issuer · no 20-F or 40-F annual report in its filings"
+
+
+def test_issuer_facts_from_a_20f_mark_a_foreign_issuer():
+    from runner_web.issuer_risk import build_issuer_risk_context
+
+    rows = [
+        {
+            "concept": "shares_outstanding",
+            "value": 43_000_000,
+            "period_start": None,
+            "period_end": "2025-12-31",
+            "filed_at": "2026-04-28",
+            "form": "20-F",
+        }
+    ]
+
+    context = build_issuer_risk_context(rows)
+
+    assert context["foreign_issuer"] is True
+    assert (context["periodic_form"], context["periodic_filed_at"]) == ("20-F", "2026-04-28")
+
+
+def test_only_a_ratified_stock_carries_the_ratified_note():
+    assert rated()["note"].startswith("Ratified:")
+    failing = rated(halted_on=date(2026, 9, 25))
+    assert failing["note"].startswith("Not ratified:")
+    assert "meets RATi" not in failing["note"]
+    # Unchecked is not met: it blocks and it does not count.
+    unknown = rated(issuer={})
+    assert unknown["ratified"] is False and unknown["note"].startswith("Not ratified:")
+    assert unknown["met"] == sum(s["met"] is True for s in unknown["standards"])
+
+
+def test_a_failing_card_never_shows_the_ratified_note():
+    from runner_web.market_screens import detail
+    from tests.test_market_screens import render
+
+    stock = {"ticker": "SHMD", "price": 4.6, "ratification": rated(halted_on=TODAY)}
+
+    page = render(detail("stocks", {"current": stock, "ticker": "SHMD"}))
+
+    assert "Ratified: meets" not in page
+    assert "Not ratified:" in page
+    assert '<li class="standard-unmet">' in page
+
+
+def test_a_foreign_issuer_20f_is_read_from_sec_filings(database, monkeypatch):
+    database.executescript(
+        """
+        INSERT INTO sec_companies VALUES (5,'SHMD','SCHMID Group N.V.','Nasdaq','3559');
+        INSERT INTO sec_filings VALUES ('SHMD','20-F','','2026-04-28T20:00:00+00:00'),
+            ('SHMD','6-K','','2026-09-10T20:00:00+00:00');
+        """
+    )
+    # Facts read, but none of them from a periodic report: the IFRS case.
+    no_report = {**HEALTHY, "periodic_filed_at": None, "periodic_form": None}
+    monkeypatch.setattr(
+        stock_ratify, "issuer_risk_contexts", lambda _db, tickers: dict.fromkeys(tickers, no_report)
+    )
+
+    found = stock_ratifications(database, [{"ticker": "SHMD"}], at=AT)
+
+    filings = next(s for s in found["SHMD"]["standards"] if s["key"] == "filings")
+    assert filings["met"] is True
+    assert filings["detail"] == "latest 20-F filed Apr 28 · foreign issuer, annual report"
+
+
 def test_a_company_not_burning_cash_meets_the_cash_standard():
     issuer = {**HEALTHY, "cash_runway_months": None, "operating_cash_flow": 4_000_000.0}
 
@@ -283,3 +403,19 @@ def test_a_failed_priority_lookup_is_retried_after_six_hours(sector_db):
 
     assert 930236 not in soon.asked
     assert later.asked[0] == 930236
+
+
+def test_an_unchecked_standard_reads_as_its_own_state_and_the_call_is_labelled():
+    from runner_web.market_screens import detail
+    from tests.test_market_screens import render
+
+    issuer = {**HEALTHY, "cash_runway_months": None, "operating_cash_flow": None}
+    stock = {"ticker": "SHMD", "price": 4.6, "ratification": rated(issuer=issuer)}
+
+    page = render(detail("stocks", {"current": stock, "ticker": "SHMD"}))
+
+    assert "Standards · 4 of 5 met · 1 not checked yet" in page
+    assert '<li class="standard-unknown"><span aria-hidden="true">?</span>' in page
+    assert "<em>not checked yet</em>, so not met" in page
+    assert 'class="standards-scope">Facts, not a Call' in page
+    assert '<span class="state-chip-source">Call</span>' in page

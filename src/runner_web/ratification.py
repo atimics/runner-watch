@@ -17,12 +17,21 @@ def summarize(
     *,
     not_applied: set[str] = frozenset(),  # type: ignore[assignment]
     note: str,
+    unratified_note: str,
     as_of: str,
 ) -> dict[str, Any]:
+    """`note` is shown only when every standard is met; otherwise `unratified_note`.
+
+    A failing or unchecked subject must never carry text that reads as ratified.
+    """
+
     applicable = [key for key in labels if key not in not_applied]
+    ratified = all(results[key] is True for key in applicable)
     return {
-        "ratified": all(results[key] is True for key in applicable),
+        "ratified": ratified,
         "met": sum(results[key] is True for key in applicable),
+        # Not checked yet: missing data. It blocks and is never counted as met.
+        "unchecked": sum(results[key] is None for key in applicable),
         "total": len(applicable),
         "not_applied": len(labels) - len(applicable),
         "standards": [
@@ -35,6 +44,6 @@ def summarize(
             }
             for key in labels
         ],
-        "note": note,
+        "note": note if ratified else unratified_note,
         "as_of": as_of,
     }
