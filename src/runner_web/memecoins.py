@@ -61,6 +61,9 @@ ORIGINAL_SLOTS = 10
 SEARCHED_SLOTS = 20
 SEARCHED_DAYS = 7
 SEARCH_QUEUE_LOCK_ID = 728416204
+SEARCH_MISSES = 3
+SEARCH_DEAD_HOURS = 24
+SEARCH_CHECKED_KEPT = 500
 # Graduated pools, bonding curves, originals and searched coins are quoted in one pass.
 MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS + ORIGINAL_SLOTS + SEARCHED_SLOTS
 SOLANA_ADDRESS = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
@@ -291,24 +294,51 @@ def _save_state(key: str, value: Any, at: datetime) -> None:
         )
 
 
+def _state_dict(database: Any, key: str) -> dict[str, Any]:
+    saved = database.execute("SELECT value FROM worker_state WHERE key=?", (key,)).fetchone()
+    try:
+        value = json.loads(saved["value"]) if saved else {}
+    except (ValueError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _write_state(database: Any, key: str, value: Any, at: datetime) -> None:
+    database.execute(
+        "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at "
+        "WHERE worker_state.updated_at<=excluded.updated_at",
+        (key, json.dumps(value, allow_nan=False), at.isoformat()),
+    )
+
+
 def _search_queue(database: Any) -> dict[str, str]:
     """The searched addresses and when each was asked for; empty if unreadable."""
 
-    saved = database.execute(
-        "SELECT value FROM worker_state WHERE key='memecoin_searched'"
-    ).fetchone()
-    try:
-        queue = json.loads(saved["value"]) if saved else {}
-    except (ValueError, TypeError):
-        return {}
-    return queue if isinstance(queue, dict) else {}
+    return _state_dict(database, "memecoin_searched")
+
+
+def _lock_search_state(database: Any) -> None:
+    if database.backend == "postgres":
+        database.execute("SELECT pg_advisory_xact_lock(?)", (SEARCH_QUEUE_LOCK_ID,))
+
+
+def _is_dead(checked: Any, current: datetime) -> bool:
+    """An address the worker looked up several times and never found a pool for."""
+
+    if not isinstance(checked, dict) or int(checked.get("misses") or 0) < SEARCH_MISSES:
+        return False
+    when = _time(checked.get("at"))
+    return when is not None and (current - when).total_seconds() < SEARCH_DEAD_HOURS * 3600
 
 
 def request_memecoin(address: str, *, at: datetime | None = None) -> bool:
     """Queue an address someone searched for; the worker quotes it next cycle.
 
     Only the address is kept, so the web request makes no outside call. The
-    newest requests keep their place when the queue is full.
+    newest requests keep their place when the queue is full. An address the
+    worker has already failed to find is not queued again for a day, and asking
+    twice does not renew an address's place.
     """
 
     address = address.strip()
@@ -318,19 +348,42 @@ def request_memecoin(address: str, *, at: datetime | None = None) -> bool:
     with connection() as database:
         # Read and write in one transaction, one request at a time, so two
         # searches at the same moment cannot drop each other's address.
-        if database.backend == "postgres":
-            database.execute("SELECT pg_advisory_xact_lock(?)", (SEARCH_QUEUE_LOCK_ID,))
+        _lock_search_state(database)
+        checked = _state_dict(database, "memecoin_checked")
+        if _is_dead(checked.get(address), current):
+            return False
         queue = _search_queue(database)
+        if address in queue:
+            return True
+        checked.pop(address, None)
         queue[address] = current.isoformat()
         newest = sorted(queue.items(), key=lambda item: item[1], reverse=True)[:SEARCHED_SLOTS]
-        database.execute(
-            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value,"
-            "updated_at=excluded.updated_at "
-            "WHERE worker_state.updated_at<=excluded.updated_at",
-            ("memecoin_searched", json.dumps(dict(newest), allow_nan=False), current.isoformat()),
-        )
+        _write_state(database, "memecoin_searched", dict(newest), current)
+        _write_state(database, "memecoin_checked", checked, current)
     return True
+
+
+def _record_search_results(missed: set[str], found: set[str], *, at: datetime) -> None:
+    """Count a miss for each address with no pool, and drop the ones given up on.
+
+    A dead address leaves the queue and is remembered, so it stops using a slot
+    and a lookup. One that trades is forgotten from the record.
+    """
+
+    with connection() as database:
+        _lock_search_state(database)
+        checked = _state_dict(database, "memecoin_checked")
+        queue = _search_queue(database)
+        for address in found:
+            checked.pop(address, None)
+        for address in missed:
+            entry = checked.get(address) if isinstance(checked.get(address), dict) else {}
+            checked[address] = {"misses": int(entry.get("misses") or 0) + 1, "at": at.isoformat()}
+            if checked[address]["misses"] >= SEARCH_MISSES:
+                queue.pop(address, None)
+        recent = sorted(checked.items(), key=lambda item: str(item[1].get("at")), reverse=True)
+        _write_state(database, "memecoin_searched", queue, at)
+        _write_state(database, "memecoin_checked", dict(recent[:SEARCH_CHECKED_KEPT]), at)
 
 
 def _searched_pools(
@@ -392,6 +445,11 @@ def _searched_pools(
     except Exception:
         LOG.warning("Searched coin lookup failed", exc_info=True)
         return [], True
+    hits = {item["token_address"] for item in found}
+    try:
+        _record_search_results(set(addresses) - hits, hits, at=at)
+    except Exception:
+        LOG.warning("Searched coin results were not recorded", exc_info=True)
     return found, True
 
 

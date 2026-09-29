@@ -711,3 +711,36 @@ def test_the_search_queue_keeps_the_newest_addresses(market_db):
             ).fetchone()["value"]
         )
     assert set(saved) == set(addresses[2:])
+
+
+def test_an_address_with_no_pool_is_dropped_after_three_misses_and_not_queued_again(market_db):
+    start = datetime(2026, 9, 28, 12, tzinfo=UTC)
+    junk = "J" + "1" * 43
+    real = "R" + "2" * 43
+    assert memecoins.request_memecoin(junk, at=start)
+    assert memecoins.request_memecoin(real, at=start)
+    # Asking again does not renew its place.
+    assert memecoins.request_memecoin(junk, at=start + timedelta(minutes=1))
+
+    def queue():
+        with connection() as database:
+            return memecoins._search_queue(database)
+
+    assert queue()[junk] == start.isoformat()
+    for cycle in range(memecoins.SEARCH_MISSES):
+        assert junk in queue()
+        memecoins._record_search_results(
+            {junk}, {real}, at=start + timedelta(minutes=5 * (cycle + 1))
+        )
+    assert junk not in queue()
+    # The address that trades is forgotten from the record, not counted.
+    with connection() as database:
+        checked = memecoins._state_dict(database, "memecoin_checked")
+    assert real not in checked and checked[junk]["misses"] == memecoins.SEARCH_MISSES
+
+    later = start + timedelta(hours=1)
+    assert not memecoins.request_memecoin(junk, at=later)
+    assert junk not in queue()
+    after = start + timedelta(hours=memecoins.SEARCH_DEAD_HOURS + 1)
+    assert memecoins.request_memecoin(junk, at=after)
+    assert junk in queue()
