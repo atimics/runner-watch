@@ -245,12 +245,6 @@ def attach_call(story_id: str, call_id: str, *, connection: Any = None) -> bool:
     return _attach_link(story_id, "call", call_id, connection=connection)
 
 
-def attach_follow(story_id: str, follow_id: str, *, connection: Any = None) -> bool:
-    """Link one explicit follow (arrives with #242) to the story."""
-
-    return _attach_link(story_id, "follow", follow_id, connection=connection)
-
-
 def _attach_link(story_id: str, kind: str, link_id: str, *, connection: Any) -> bool:
     if connection is None:
         with database_module.connection() as opened:
@@ -267,19 +261,6 @@ def _attach_link(story_id: str, kind: str, link_id: str, *, connection: Any) -> 
         (story_id, kind, clean, _now()),
     )
     return bool(getattr(cursor, "rowcount", 0))
-
-
-def story_links(story_id: str) -> dict[str, list[str]]:
-    with database_module.connection() as database:
-        rows = database.execute(
-            "SELECT link_kind,link_id FROM ticker_story_links WHERE story_id=? "
-            "ORDER BY created_at,link_id",
-            (story_id,),
-        ).fetchall()
-    links: dict[str, list[str]] = {"call": [], "follow": []}
-    for row in rows:
-        links.setdefault(str(row["link_kind"]), []).append(str(row["link_id"]))
-    return links
 
 
 def stories_by_subject(market: str, subject_keys: list[str]) -> dict[str, list[dict[str, Any]]]:

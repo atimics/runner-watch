@@ -3297,12 +3297,6 @@ def _rate_history_points(
     )
 
 
-def _rate_history(
-    outcomes: list[tuple[str, bool]], current_record: tuple[int, int] | None = None
-) -> list[float]:
-    return [point["rate"] for point in _rate_history_points(outcomes, current_record)]
-
-
 def _american_profit(odds: int | None) -> float | None:
     if odds is None or odds == 0:
         return None

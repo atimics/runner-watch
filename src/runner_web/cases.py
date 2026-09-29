@@ -137,19 +137,6 @@ def get_case(user_id: str, public_id: str) -> dict[str, Any] | None:
     return _public_case(row) if row else None
 
 
-def latest_case_for_ticker(user_id: str, ticker: str) -> dict[str, Any] | None:
-    with connection() as db:
-        row = db.execute(
-            """
-            SELECT public_id FROM thesis_cases
-            WHERE user_id=? AND ticker=? AND status='active'
-            ORDER BY updated_at DESC LIMIT 1
-            """,
-            (user_id, ticker),
-        ).fetchone()
-    return get_case(user_id, str(row["public_id"])) if row else None
-
-
 def list_cases(
     user_id: str,
     *,

@@ -416,12 +416,6 @@ def _ticker_card_png(
     return buffer.getvalue()
 
 
-def _tone_word(value: float | None) -> str:
-    if value is None:
-        return "flat"
-    return "up" if value > 0 else "down" if value < 0 else "flat"
-
-
 def _draw_ticker_badge(
     draw: Any, current: dict[str, Any], *, right: int, top: int
 ) -> tuple[int, int, int, int] | None:

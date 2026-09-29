@@ -364,18 +364,6 @@ def calls_from_rows(
     return [_call(row, marks.get(str(row["ticker"]))) for row in rows]
 
 
-def caller_calls(
-    caller_handle: str,
-    *,
-    current_prices: dict[str, float | None] | None = None,
-    limit: int = 200,
-) -> list[dict[str, Any]] | None:
-    rows = caller_call_rows(caller_handle, limit=limit)
-    if rows is None:
-        return None
-    return calls_from_rows(rows, current_prices)
-
-
 def call_stats(calls: list[dict[str, Any]]) -> dict[str, Any]:
     returns = [float(item["return_pct"]) for item in calls if item.get("return_pct") is not None]
     closed = [item for item in calls if item["status"] == "closed"]
