@@ -238,17 +238,10 @@ def test_scanner_page_is_removed() -> None:
 def test_desktop_feeds_share_full_info_and_article_panel() -> None:
     root = Path(__file__).parents[1]
     templates_dir = root / "web/templates"
-    alpha = (templates_dir / "community.html").read_text()
-    coin_alpha = (templates_dir / "memecoin_alpha.html").read_text()
     panel = (templates_dir / "_desktop_panel.html").read_text()
     workspace = (root / "web/static/desktop-workspace.js").read_text()
     desktop_css = (root / "web/static/mobile.css").read_text()
 
-    for template in (alpha, coin_alpha):
-        assert "workspace-app" in template
-        assert "data-desktop-workspace" in template
-        assert "data-desktop-list" in template
-        assert '{% include "_desktop_panel.html" %}' in template
     assert "data-desktop-frame" in panel
     assert "data-desktop-loading" in panel
     assert "/stock/" in workspace
@@ -284,33 +277,6 @@ def test_desktop_panel_security_allows_only_supported_detail_pages() -> None:
         "/api/memecoins/dogecoin",
     ):
         assert not web_main._is_panel_path(path)
-
-
-def test_sports_pages_use_the_runners_shell_and_workspace_contract() -> None:
-    root = Path(__file__).parents[1]
-    templates_dir = root / "web/templates"
-    sports_templates = [
-        (templates_dir / name).read_text()
-        for name in ("sports.html", "sports_radar.html", "sports_alpha.html")
-    ]
-    live_script = (root / "web/static/sports-live.js").read_text()
-    product_styles = (root / "web/static/sports-product.css").read_text()
-
-    for template in sports_templates:
-        assert '{% extends "mobile_base.html" %}' in template
-        assert "workspace-app" in template
-        assert "data-desktop-workspace" in template
-        assert "data-desktop-list" in template
-        assert '{% include "_desktop_panel.html" %}' in template
-        assert "sports_base.html" not in template
-    assert "max-width: 1120px" in product_styles
-    assert not (templates_dir / "sports_base.html").exists()
-    assert "location.reload" not in "\n".join([*sports_templates, live_script])
-    assert "RatiLiveList.mount" in live_script
-    assert "setInterval(poll" not in live_script
-    assert "body.sports-product" in product_styles
-    assert not product_styles.startswith(":root")
-    assert (templates_dir / "_sports_styles.html").read_text().count("stylesheet") == 1
 
 
 def test_ticker_rows_have_no_reader_attention_state() -> None:

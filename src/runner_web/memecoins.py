@@ -64,6 +64,8 @@ SEARCH_QUEUE_LOCK_ID = 728416204
 SEARCH_MISSES = 3
 SEARCH_DEAD_HOURS = 24
 SEARCH_CHECKED_KEPT = 500
+SEARCH_BURST_SECONDS = 300
+SEARCH_BURST_LIMITS = {"web": 10, "dash": 5}
 # Graduated pools, bonding curves, originals and searched coins are quoted in one pass.
 MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS + ORIGINAL_SLOTS + SEARCHED_SLOTS
 SOLANA_ADDRESS = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
@@ -332,13 +334,15 @@ def _is_dead(checked: Any, current: datetime) -> bool:
     return when is not None and (current - when).total_seconds() < SEARCH_DEAD_HOURS * 3600
 
 
-def request_memecoin(address: str, *, at: datetime | None = None) -> bool:
+def request_memecoin(address: str, *, at: datetime | None = None, source: str = "web") -> bool:
     """Queue an address someone searched for; the worker quotes it next cycle.
 
     Only the address is kept, so the web request makes no outside call. The
     newest requests keep their place when the queue is full. An address the
     worker has already failed to find is not queued again for a day, and asking
-    twice does not renew an address's place.
+    twice does not renew an address's place. Each source (the web board, Dash)
+    may add only a few new addresses in five minutes, so a flood cannot push
+    real requests out of the queue.
     """
 
     address = address.strip()
@@ -355,6 +359,17 @@ def request_memecoin(address: str, *, at: datetime | None = None) -> bool:
         queue = _search_queue(database)
         if address in queue:
             return True
+        adds = _state_dict(database, "memecoin_search_adds")
+        recent = [
+            when
+            for when in adds.get(source, [])
+            if (moment := _time(when)) is not None
+            and 0 <= (current - moment).total_seconds() < SEARCH_BURST_SECONDS
+        ]
+        if len(recent) >= SEARCH_BURST_LIMITS.get(source, SEARCH_BURST_LIMITS["web"]):
+            return False
+        adds[source] = [*recent, current.isoformat()]
+        _write_state(database, "memecoin_search_adds", adds, current)
         checked.pop(address, None)
         queue[address] = current.isoformat()
         newest = sorted(queue.items(), key=lambda item: item[1], reverse=True)[:SEARCHED_SLOTS]

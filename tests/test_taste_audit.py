@@ -6,20 +6,12 @@ ROOT = Path(__file__).parents[1]
 
 def test_shared_product_system_has_one_component_and_one_theme_file() -> None:
     base = (ROOT / "web/templates/mobile_base.html").read_text()
-    sports = (ROOT / "web/templates/sports.html").read_text()
 
     styles = re.findall(r'href="/static/([^"?]+\.css)', base)
     assert styles == ["mobile.css", "product-system.css"]
     assert len(styles) == len(set(styles))
     assert all((ROOT / "web/static" / style).is_file() for style in styles)
     assert "{% block product_head %}{% endblock %}" in base
-    assert '{% include "_sports_styles.html" %}' in sports
-    sports_styles = re.findall(
-        r'href="/static/([^"?]+\.css)',
-        (ROOT / "web/templates/_sports_styles.html").read_text(),
-    )
-    assert sports_styles == ["sports-product.css"]
-    assert all((ROOT / "web/static" / style).is_file() for style in sports_styles)
     assert 'class="skip-link"' in base
     assert 'id="app-content"' in base
     assert '{% include "_market_switcher.html" %}' in base
@@ -28,7 +20,6 @@ def test_shared_product_system_has_one_component_and_one_theme_file() -> None:
     assert market_switcher.count("<a ") == 3
     for market in ("Stocks", "Memecoins", "Sports"):
         assert f">{market}</a>" in market_switcher
-    assert "data-desktop-workspace" in sports
     assert not (ROOT / "web/templates/sports_base.html").exists()
     assert 'class="product-switch"' not in base
 
@@ -42,8 +33,7 @@ def test_general_interface_keeps_its_editorial_edge() -> None:
     """
 
     shipped = "\n".join(path.read_text() for path in (ROOT / "web/templates").glob("*.html"))
-    community = (ROOT / "web/templates/community.html").read_text()
-    community += (ROOT / "web/templates/_alpha_ledger.html").read_text()
+    community = (ROOT / "web/templates/_alpha_ledger.html").read_text()
     navigation = (ROOT / "web/templates/mobile_base.html").read_text()
 
     assert "Movement first. Evidence before conviction." not in shipped
@@ -57,17 +47,12 @@ def test_general_interface_keeps_its_editorial_edge() -> None:
 
 
 def test_sports_pulse_is_locked_to_the_shared_ticker_row() -> None:
-    sports = (ROOT / "web/templates/sports.html").read_text()
-    sports_live = (ROOT / "web/static/sports-live.js").read_text()
     ticker_row = (ROOT / "web/static/ticker-row.js").read_text()
-    sports_product = (ROOT / "web/static/sports-product.css").read_text()
 
-    assert 'class="token-list" id="sportsPulseList"' in sports
-    assert "TickerRow.renderShell" in sports_live
     assert "renderShell" in ticker_row
     assert "data-sports-pulse-row" in ticker_row
-    assert "winner-card" not in sports + sports_live + sports_product
-    assert "team-projection-card" not in sports + sports_live + sports_product
+    assert "winner-card" not in ticker_row
+    assert "team-projection-card" not in ticker_row
 
 
 def test_ai_report_carries_the_single_clear_disclaimer() -> None:

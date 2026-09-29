@@ -744,3 +744,24 @@ def test_an_address_with_no_pool_is_dropped_after_three_misses_and_not_queued_ag
     after = start + timedelta(hours=memecoins.SEARCH_DEAD_HOURS + 1)
     assert memecoins.request_memecoin(junk, at=after)
     assert junk in queue()
+
+
+def test_a_burst_of_new_addresses_from_one_source_cannot_flood_the_queue(market_db):
+    start = datetime(2026, 9, 29, 12, tzinfo=UTC)
+
+    def address(number: int) -> str:
+        return "B" + "abcdefghijkmnopqrstuvwxyz"[number % 25] + "1" * 42
+
+    dash_limit = memecoins.SEARCH_BURST_LIMITS["dash"]
+    for number in range(dash_limit):
+        assert memecoins.request_memecoin(address(number), at=start, source="dash")
+    assert not memecoins.request_memecoin(address(20), at=start, source="dash")
+    # An address already queued is still accepted, and the web board has its own allowance.
+    assert memecoins.request_memecoin(address(0), at=start, source="dash")
+    assert memecoins.request_memecoin(address(21), at=start, source="web")
+    with connection() as database:
+        queue = memecoins._search_queue(database)
+    assert address(20) not in queue and address(21) in queue
+    # Five minutes later Dash may add again.
+    later = start + timedelta(seconds=memecoins.SEARCH_BURST_SECONDS + 1)
+    assert memecoins.request_memecoin(address(20), at=later, source="dash")
