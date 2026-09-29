@@ -21,8 +21,8 @@ from datetime import UTC, datetime, timedelta
 from datetime import date as calendar_date
 from datetime import time as clock_time
 from pathlib import Path
-from typing import Any, Literal
-from urllib.parse import quote, unquote, urlencode, urlparse
+from typing import Any
+from urllib.parse import unquote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -327,6 +327,13 @@ from runner_web.sports import (
     sports_team_profile,
     validate_sports_ai_forecast,
 )
+from runner_web.sports_routes import (
+    SportsPickPayload as SportsPickPayload,
+)
+from runner_web.sports_routes import (
+    SportsRouteDependencies,
+    create_sports_routes,
+)
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.telegram import (
     _api_call as telegram_api_call,
@@ -423,6 +430,10 @@ from runner_web.telegram_chat import (
 )
 from runner_web.telegram_chat import (
     spend_engagement as telegram_spend_engagement,
+)
+from runner_web.telegram_routes import (
+    TelegramRouteDependencies,
+    create_telegram_routes,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 from runner_web.wallet_registry import WALLET_ID
@@ -2736,11 +2747,6 @@ class ReportSignal(BaseModel):
     reason: str = Field(min_length=3, max_length=240)
 
 
-class SportsPickPayload(BaseModel):
-    selection: Literal["home", "away"]
-    expected_odds: int | None = Field(default=None, strict=True)
-
-
 class ClientErrorReport(BaseModel):
     kind: str = Field(default="error", max_length=40)
     message: str = Field(min_length=1, max_length=500)
@@ -3105,40 +3111,31 @@ def roadmap_api(request: Request) -> dict[str, Any]:
 
 
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
-TELEGRAM_WEBHOOK_MAX_BYTES = 1_048_576
-
-
-@app.post("/telegram/webhook")
-async def telegram_webhook(request: Request) -> JSONResponse:
-    """Take one update from Telegram and store it for the chat worker.
-
-    This answers quickly and does no thinking, because Telegram retries anything
-    it is not answered promptly and a slow handler turns into duplicate replies.
-    The secret header is the only thing standing between this public path and
-    anyone posting forged updates, so an unset secret closes the door entirely.
-    """
-
-    if not TELEGRAM_WEBHOOK_SECRET:
-        raise HTTPException(404, "Not found")
-    supplied = request.headers.get("x-telegram-bot-api-secret-token", "")
-    if not secrets.compare_digest(supplied, TELEGRAM_WEBHOOK_SECRET):
-        raise HTTPException(404, "Not found")
-    raw = await request.body()
-    if len(raw) > TELEGRAM_WEBHOOK_MAX_BYTES:
-        raise HTTPException(413, "Update too large")
-    try:
-        payload = json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(400, "Malformed update") from exc
-    if not isinstance(payload, dict):
-        raise HTTPException(400, "Malformed update")
-    await run_in_threadpool(_store_telegram_update, payload)
-    return JSONResponse({"ok": True})
 
 
 def _store_telegram_update(payload: dict[str, Any]) -> None:
     with connection() as database:
         telegram_record_update(database, payload)
+
+
+telegram_routes = create_telegram_routes(
+    TelegramRouteDependencies(
+        templates=templates,
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        webhook_secret=lambda: TELEGRAM_WEBHOOK_SECRET,
+        store_update=lambda payload: _store_telegram_update(payload),
+        run_in_threadpool=lambda *args, **kwargs: run_in_threadpool(*args, **kwargs),
+        runners_origin=lambda: RUNNERS_ORIGIN,
+    )
+)
+app.include_router(telegram_routes.router)
+telegram_webhook = telegram_routes.telegram_webhook
+telegram_announcements_page = telegram_routes.telegram_announcements_page
+telegram_announcements_api = telegram_routes.telegram_announcements_api
+publish_signal = telegram_routes.publish_signal
+signal_page = telegram_routes.signal_page
+signal_card = telegram_routes.signal_card
+report_signal = telegram_routes.report_signal
 
 
 @app.get("/api/market-clock")
@@ -8666,17 +8663,6 @@ def sports_board_response(
     )
 
 
-@app.get("/sports", response_class=HTMLResponse)
-def sports_home(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-    view: str = "signals",
-) -> RedirectResponse:
-    _ = request, runner_session, league, view
-    return RedirectResponse(f"{SPORTS_ORIGIN}/", status_code=307)
-
-
 def sports_radar_response(
     request: Request,
     runner_session: str | None,
@@ -8703,16 +8689,6 @@ def sports_radar_response(
             ),
         ),
     )
-
-
-@app.get("/sports/radar", response_class=HTMLResponse)
-def sports_radar_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=changed", status_code=307)
 
 
 def _invalidate_sports_alpha_data() -> None:
@@ -8764,330 +8740,90 @@ def sports_alpha_response(
     )
 
 
-@app.get("/alpha", response_class=HTMLResponse)
-def alpha_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse("/?view=calls", status_code=307)
-
-
-@app.get("/api/alpha")
-def alpha_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 24,
-) -> Response:
-    if product_for_request(request) == "sports":
-        enforce_rate(request, "sports-alpha", limit=120, seconds=60)
-        return _conditional_json_response(request, _sports_alpha_data(league, limit))
-    enforce_rate(request, "alpha", limit=120, seconds=60)
-    return _conditional_json_response(request, alpha_board_data())
-
-
-@app.get("/sports/alpha", response_class=HTMLResponse)
-def sports_alpha_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
-
-
-@app.get("/receipts", response_class=HTMLResponse)
-def sports_receipts_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> Response:
-    _ = runner_session, league
-    if product_for_request(request) == "sports":
-        return RedirectResponse("/?view=calls", status_code=307)
-    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
-
-
-@app.get("/sports/receipts", response_class=HTMLResponse)
-def sports_receipts_legacy_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
-
-
-@app.get("/api/sports/pulse")
-def sports_pulse_api(
-    request: Request,
-    league: str = "all",
-    view: str = "signals",
-    limit: int = 30,
-) -> Response:
-    enforce_rate(request, "sports-pulse", limit=120, seconds=60)
-    return _conditional_json_response(
-        request,
-        _public_sports_pulse_data(league, view, limit)["pulse"],
-    )
-
-
-@app.get("/api/sports/golf")
-def sports_golf_api(request: Request, limit: int = 6) -> Response:
-    enforce_rate(request, "sports-golf", limit=120, seconds=60)
-    return _conditional_json_response(request, _public_golf_data(limit))
-
-
-@app.get("/api/sports/radar")
-def sports_radar_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 40,
-) -> Response:
-    enforce_rate(request, "sports-radar", limit=120, seconds=60)
-    return _conditional_json_response(
-        request,
-        _public_sports_radar_data(league, limit)["radar"],
-    )
-
-
-@app.get("/api/sports/alpha")
-def sports_alpha_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 24,
-) -> Response:
-    enforce_rate(request, "sports-alpha", limit=120, seconds=60)
-    return _conditional_json_response(request, _sports_alpha_data(league, limit))
-
-
-@app.get("/api/sports/stats")
-def sports_stats_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 24,
-) -> JSONResponse:
-    enforce_rate(request, "sports-stats", limit=120, seconds=60)
-    return JSONResponse(sports_alpha(league, limit))
-
-
-@app.get("/api/slate")
-@app.get("/api/sports/slate")
-def sports_slate_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 80,
-) -> JSONResponse:
-    enforce_rate(request, "sports-slate", limit=120, seconds=60)
-    return JSONResponse(sports_slate(league, limit))
-
-
-@app.get("/sports/game/{event_id}", response_class=HTMLResponse)
-def sports_game_legacy_page(event_id: str) -> RedirectResponse:
-    return RedirectResponse(_sports_game_location(event_id), status_code=307)
-
-
-def _sports_game_location(event_id: str) -> str:
-    if event_id.startswith("golf:"):
-        with connection() as database:
-            event = database.execute(
-                "SELECT id FROM sports_golf_events WHERE id=?", (event_id,)
-            ).fetchone()
-    else:
-        event = sports_event(event_id)
-    if not event:
-        raise HTTPException(404, "Game not found")
-    canonical_id = quote(str(event["id"]), safe=":")
-    return f"{SPORTS_ORIGIN}/game/{canonical_id}"
-
-
-@app.get("/team/{provider}/{league}/{team_id}", response_class=HTMLResponse)
-def sports_team_page(
-    provider: str,
-    league: str,
-    team_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> Response:
-    profile = sports_team_profile(provider, league, team_id)
-    if profile is None:
-        raise HTTPException(404, "Team not found")
-    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
-        return RedirectResponse(f"{SPORTS_ORIGIN}{request.url.path}", status_code=307)
-    return templates.TemplateResponse(
-        request,
-        "sports_entity.html",
-        page_context(
-            request,
-            runner_session,
-            nav_product="sports",
-            screen={"market": "sports", "kind": "profile", "query": ""},
-            profile=profile,
+sports_routes = create_sports_routes(
+    SportsRouteDependencies(
+        templates=templates,
+        sports_origin=lambda: SPORTS_ORIGIN,
+        app_origin=lambda: APP_ORIGIN,
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        product_for_request=lambda *args, **kwargs: product_for_request(*args, **kwargs),
+        _conditional_json_response=lambda *args, **kwargs: _conditional_json_response(
+            *args, **kwargs
+        ),
+        _sports_alpha_data=lambda *args, **kwargs: _sports_alpha_data(*args, **kwargs),
+        alpha_board_data=lambda *args, **kwargs: alpha_board_data(*args, **kwargs),
+        _public_sports_pulse_data=lambda *args, **kwargs: _public_sports_pulse_data(
+            *args, **kwargs
+        ),
+        _public_golf_data=lambda *args, **kwargs: _public_golf_data(*args, **kwargs),
+        _public_sports_radar_data=lambda *args, **kwargs: _public_sports_radar_data(
+            *args, **kwargs
+        ),
+        sports_alpha=lambda *args, **kwargs: sports_alpha(*args, **kwargs),
+        sports_slate=lambda *args, **kwargs: sports_slate(*args, **kwargs),
+        connection=lambda *args, **kwargs: connection(*args, **kwargs),
+        sports_event=lambda *args, **kwargs: sports_event(*args, **kwargs),
+        sports_team_profile=lambda *args, **kwargs: sports_team_profile(*args, **kwargs),
+        sports_player_profile=lambda *args, **kwargs: sports_player_profile(*args, **kwargs),
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        golf_event=lambda *args, **kwargs: golf_event(*args, **kwargs),
+        simple_market_detail=lambda *args, **kwargs: simple_market_detail(*args, **kwargs),
+        golf_market_context=lambda *args, **kwargs: golf_market_context(*args, **kwargs),
+        _public_screen_data=lambda *args, **kwargs: _public_screen_data(*args, **kwargs),
+        current_user=lambda *args, **kwargs: current_user(*args, **kwargs),
+        sports_pick_for_user=lambda *args, **kwargs: sports_pick_for_user(*args, **kwargs),
+        sports_call_reward=lambda *args, **kwargs: sports_call_reward(*args, **kwargs),
+        comments_for_subject=lambda *args, **kwargs: comments_for_subject(*args, **kwargs),
+        daily_report_for_sports_game=lambda *args, **kwargs: daily_report_for_sports_game(
+            *args, **kwargs
+        ),
+        comment_count_for_subject=lambda *args, **kwargs: comment_count_for_subject(
+            *args, **kwargs
+        ),
+        _flash_provider_ready=lambda *args, **kwargs: _flash_provider_ready(*args, **kwargs),
+        _flash_report_action=lambda *args, **kwargs: _flash_report_action(*args, **kwargs),
+        latest_commission=lambda *args, **kwargs: latest_commission(*args, **kwargs),
+        _sports_report_key=lambda *args, **kwargs: _sports_report_key(*args, **kwargs),
+        require_origin=lambda *args, **kwargs: require_origin(*args, **kwargs),
+        require_user=lambda *args, **kwargs: require_user(*args, **kwargs),
+        _require_research_route=lambda *args, **kwargs: _require_research_route(*args, **kwargs),
+        _create_research_commission=lambda *args, **kwargs: _create_research_commission(
+            *args, **kwargs
+        ),
+        _enqueue_created_research_report=lambda *args, **kwargs: _enqueue_created_research_report(
+            *args, **kwargs
+        ),
+        _commission_api_payload=lambda *args, **kwargs: _commission_api_payload(*args, **kwargs),
+        run_in_threadpool=lambda *args, **kwargs: run_in_threadpool(*args, **kwargs),
+        create_sports_pick=lambda *args, **kwargs: create_sports_pick(*args, **kwargs),
+        _invalidate_public_screen_data=lambda *args, **kwargs: _invalidate_public_screen_data(
+            *args, **kwargs
+        ),
+        _invalidate_sports_alpha_data=lambda *args, **kwargs: _invalidate_sports_alpha_data(
+            *args, **kwargs
         ),
     )
-
-
-@app.get("/player/{provider}/{league}/{player_id}", response_class=HTMLResponse)
-def sports_player_page(
-    provider: str,
-    league: str,
-    player_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> Response:
-    profile = sports_player_profile(provider, league, player_id)
-    if profile is None:
-        raise HTTPException(404, "Player not found")
-    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
-        return RedirectResponse(f"{SPORTS_ORIGIN}{request.url.path}", status_code=307)
-    return templates.TemplateResponse(
-        request,
-        "sports_entity.html",
-        page_context(
-            request,
-            runner_session,
-            nav_product="sports",
-            screen={"market": "sports", "kind": "profile", "query": ""},
-            profile=profile,
-        ),
-    )
-
-
-@app.get("/game/{event_id}", response_class=HTMLResponse)
-def sports_game_page(
-    event_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> Response:
-    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
-        return RedirectResponse(_sports_game_location(event_id), status_code=307)
-    if event_id.startswith("golf:"):
-        golf = golf_event(event_id)
-        if golf is None:
-            raise HTTPException(404, "Game not found")
-        return templates.TemplateResponse(
-            request,
-            "sports_golf_detail.html",
-            page_context(
-                request,
-                runner_session,
-                nav_product="sports",
-                screen=simple_market_detail(
-                    "sports",
-                    golf,
-                    outcome=request.query_params.get("outcome", ""),
-                    contract=request.query_params.get("contract", ""),
-                ),
-                golf=golf,
-                golf_context=golf_market_context(golf),
-            ),
-        )
-    public_data = _public_screen_data(
-        "sports-game",
-        event_id,
-        lambda: {"event": sports_event(event_id)},
-    )
-    event = public_data.get("event")
-    if not event:
-        raise HTTPException(404, "Game not found")
-    user = current_user(runner_session)
-    user_id = str(user["id"]) if user else None
-    my_pick = sports_pick_for_user(user_id, event_id) if user_id else None
-    quote = event.get("paper_odds") or {}
-    pick_rewards = {
-        "away": sports_call_reward(quote.get("away_odds")),
-        "home": sports_call_reward(quote.get("home_odds")),
-    }
-    comments = comments_for_subject("sports_game", event_id, current_user_id=user_id)
-    latest_report = daily_report_for_sports_game(event_id, user_id)
-    sports_path_prefix = ""
-    return templates.TemplateResponse(
-        request=request,
-        name="simple_sports_detail.html",
-        context=page_context(
-            request,
-            runner_session,
-            resolved_user=user,
-            event=event,
-            my_pick=my_pick,
-            pick_rewards=pick_rewards,
-            comments=comments,
-            comment_count=comment_count_for_subject("sports_game", event_id),
-            comment_generation_enabled=_flash_provider_ready(),
-            latest_commission=latest_report,
-            flash_report=_flash_report_action(
-                user_id=user_id,
-                latest_report=latest_report,
-                latest_attempt=latest_commission(user_id, _sports_report_key(event_id))
-                if user_id
-                else None,
-                start_url=f"/api/research/game/{event_id}",
-                login_url=f"/login?next={sports_path_prefix}/game/{event_id}",
-                sports_event=event,
-            ),
-            active_tab="pulse",
-            nav_product="sports",
-            sports_path_prefix=sports_path_prefix,
-        ),
-    )
-
-
-@app.post("/api/research/game/{event_id}")
-@app.post("/api/sports/games/{event_id}/research")
-async def commission_sports_research_api(
-    event_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "commission-sports-research", limit=20, seconds=3600, subject=user["id"])
-    if not sports_event(event_id):
-        raise HTTPException(404, "Game not found")
-    _require_research_route(str(user["id"]))
-    report, created = await run_in_threadpool(
-        _create_research_commission,
-        str(user["id"]),
-        _sports_report_key(event_id),
-    )
-    if created:
-        report = await _enqueue_created_research_report(report, str(user["id"]))
-    payload = _commission_api_payload(report, str(user["id"]))
-    payload["created"] = created
-    return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
-
-
-@app.post("/api/calls/game/{event_id}")
-@app.post("/api/picks/{event_id}")
-@app.post("/api/sports/picks/{event_id}")
-def create_sports_pick_api(
-    event_id: str,
-    payload: SportsPickPayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "sports-pick", limit=20, seconds=60, subject=str(user["id"]))
-    try:
-        pick = create_sports_pick(
-            str(user["id"]),
-            event_id,
-            payload.selection,
-            **(
-                {"expected_odds": payload.expected_odds}
-                if payload.expected_odds is not None
-                else {}
-            ),
-        )
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    _invalidate_public_screen_data("sports-game", event_id)
-    _invalidate_sports_alpha_data()
-    if pick.get("caller_handle"):
-        _invalidate_public_screen_data("caller", str(pick["caller_handle"]))
-    return JSONResponse(pick, status_code=201)
+)
+app.include_router(sports_routes.router)
+sports_home = sports_routes.sports_home
+sports_radar_page = sports_routes.sports_radar_page
+alpha_page = sports_routes.alpha_page
+alpha_api = sports_routes.alpha_api
+sports_alpha_page = sports_routes.sports_alpha_page
+sports_receipts_page = sports_routes.sports_receipts_page
+sports_receipts_legacy_page = sports_routes.sports_receipts_legacy_page
+sports_pulse_api = sports_routes.sports_pulse_api
+sports_golf_api = sports_routes.sports_golf_api
+sports_radar_api = sports_routes.sports_radar_api
+sports_alpha_api = sports_routes.sports_alpha_api
+sports_stats_api = sports_routes.sports_stats_api
+sports_slate_api = sports_routes.sports_slate_api
+sports_game_legacy_page = sports_routes.sports_game_legacy_page
+sports_team_page = sports_routes.sports_team_page
+sports_player_page = sports_routes.sports_player_page
+sports_game_page = sports_routes.sports_game_page
+commission_sports_research_api = sports_routes.commission_sports_research_api
+create_sports_pick_api = sports_routes.create_sports_pick_api
 
 
 @app.get("/api/pulse")
@@ -13036,20 +12772,6 @@ def dispatch_release_announcement() -> dict[str, Any]:
         TELEGRAM_ALERT_DISPATCH_LOCK.release()
 
 
-@app.get("/telegram/announcements", response_class=HTMLResponse)
-def telegram_announcements_page(request: Request):
-    return templates.TemplateResponse(
-        request, "telegram_announcements.html", page_context(request, None, resolved_user=None)
-    )
-
-
-@app.get("/api/telegram/announcements")
-def telegram_announcements_api(_access: None = Depends(require_operations_access)):
-    from runner_web.telegram_outbox import announcement_history
-
-    return JSONResponse(announcement_history(), headers={"Cache-Control": "no-store"})
-
-
 def _spawn_telegram_dispatch(*, scan_run_id: str | None = None) -> None:
     """Run the channel dispatch off the calling thread when the feature is on."""
 
@@ -13425,32 +13147,6 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         },
         "warnings": scan_warnings[:4],
     }
-
-
-@app.post("/api/signals")
-def publish_signal() -> None:
-
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
-
-
-@app.get("/s/{public_id}", response_class=HTMLResponse)
-def signal_page(
-    public_id: str,
-) -> RedirectResponse:
-    _ = public_id
-    return RedirectResponse(f"{RUNNERS_ORIGIN}/community", status_code=308)
-
-
-@app.get("/s/{public_id}/card.png")
-def signal_card(public_id: str) -> None:
-    _ = public_id
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
-
-
-@app.post("/api/signals/{public_id}/report")
-def report_signal(public_id: str) -> None:
-    _ = public_id
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
 
 
 CALLER_BOARD_DAYS = 7
