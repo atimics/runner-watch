@@ -10,20 +10,7 @@ import urllib.request
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from runner_web.llm_routing import LLMRouteError, call_chat_completions
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: Any,
-        code: int,
-        msg: str,
-        headers: Any,
-        newurl: str,
-    ) -> None:
-        return None
+from runner_web.llm_routing import LLMRouteError, NoRedirect, call_chat_completions
 
 
 def _cloud_origin(value: str) -> str:
@@ -60,7 +47,7 @@ def _cloud_json(
         },
         method="POST",
     )
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(NoRedirect)
     with opener.open(request, timeout=timeout) as response:
         result = json.load(response)
     if not isinstance(result, dict):

@@ -57,7 +57,9 @@ class LLMRouteError(RuntimeError):
         self.diagnostics = diagnostics or {}
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects, so a request cannot be sent somewhere the caller did not choose."""
+
     def redirect_request(
         self,
         req: urllib.request.Request,
@@ -197,7 +199,7 @@ def _request_json(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(NoRedirect)
     try:
         with opener.open(request, timeout=timeout) as response:
             declared_size = int(response.headers.get("Content-Length") or 0)

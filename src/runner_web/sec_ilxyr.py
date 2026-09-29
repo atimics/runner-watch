@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from runner_web.llm_routing import NoRedirect
+
 MAX_RESPONSE_BYTES = 1024 * 1024
 PROJECT_ID = "project://runner-watch/feral-7b-sec"
 RELEASE_REQUIREMENT = "missing://qwen-sec/full-corpus-release"
@@ -24,19 +26,6 @@ MATERIALIZATION_REQUIREMENT = "missing://qwen-sec/materialization"
 class PublicationResult:
     receipt: dict[str, Any]
     registry: dict[str, Any] | None
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(
-        self,
-        req: urllib.request.Request,
-        fp: Any,
-        code: int,
-        msg: str,
-        headers: Any,
-        newurl: str,
-    ) -> None:
-        return None
 
 
 def _canonical_json(value: Any) -> str:
@@ -117,7 +106,7 @@ def _post_json(
         },
         method="POST",
     )
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = urllib.request.build_opener(NoRedirect)
     try:
         with opener.open(request, timeout=timeout) as response:
             declared = int(response.headers.get("Content-Length") or 0)
