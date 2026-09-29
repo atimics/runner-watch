@@ -3335,23 +3335,6 @@ def community_page(
     return RedirectResponse("/?view=calls", status_code=307)
 
 
-def community(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    board = alpha_board_data()
-    return templates.TemplateResponse(
-        request=request,
-        name="community.html",
-        context=page_context(
-            request,
-            runner_session,
-            board=board,
-            active_tab=BOARD_VIEW_TABS["calls"],
-        ),
-    )
-
-
 @app.get("/api/alpha/comments")
 def alpha_comments_api(request: Request) -> JSONResponse:
     enforce_rate(request, "alpha-comments", limit=120, seconds=60)
@@ -7733,7 +7716,6 @@ memecoin_transaction_evidence = memecoin_routes.memecoin_transaction_evidence
 memecoin_charts_api = memecoin_routes.memecoin_charts_api
 memecoins_api = memecoin_routes.memecoins_api
 memecoin_alpha_redirect = memecoin_routes.memecoin_alpha_redirect
-memecoin_alpha_page = memecoin_routes.memecoin_alpha_page
 memecoin_calls_api = memecoin_routes.memecoin_calls_api
 memecoin_detail_api = memecoin_routes.memecoin_detail_api
 memecoin_replay_api = memecoin_routes.memecoin_replay_api
@@ -8113,34 +8095,6 @@ def sports_board_response(
     )
 
 
-def sports_radar_response(
-    request: Request,
-    runner_session: str | None,
-    league: str = "all",
-) -> HTMLResponse:
-    selected_league = league if league in SPORTS_LEAGUES else "all"
-    sports_path_prefix = ""
-    public_data = _public_sports_radar_data(selected_league)
-    return templates.TemplateResponse(
-        request=request,
-        name="sports_radar.html",
-        context=page_context(
-            request,
-            runner_session,
-            radar=public_data["radar"],
-            active_tab="radar",
-            nav_product="sports",
-            sports_path_prefix=sports_path_prefix,
-            detail_panel_label="Selected matchup change and evidence",
-            detail_panel_mark="RS",
-            detail_panel_title="Open a Radar event",
-            detail_panel_copy=(
-                "Read the changed line, live score, context, and receipt in one place."
-            ),
-        ),
-    )
-
-
 def _invalidate_sports_alpha_data() -> None:
     for league in ("all", *SPORTS_LEAGUES):
         _invalidate_public_screen_data("sports-alpha", league)
@@ -8161,33 +8115,6 @@ def _sports_alpha_data(league: str = "all", limit: int = 24) -> dict[str, Any]:
         "calls": list(base.get("calls") or [])[:result_limit],
         "contenders": list(base.get("contenders") or [])[:result_limit],
     }
-
-
-def sports_alpha_response(
-    request: Request,
-    runner_session: str | None,
-    league: str = "all",
-) -> HTMLResponse:
-    selected_league = league if league in SPORTS_LEAGUES else "all"
-    sports_path_prefix = ""
-    return templates.TemplateResponse(
-        request=request,
-        name="sports_alpha.html",
-        context=page_context(
-            request,
-            runner_session,
-            board=_sports_alpha_data(selected_league),
-            active_tab="alpha",
-            nav_product="sports",
-            sports_path_prefix=sports_path_prefix,
-            detail_panel_label="Selected winner, odds, stats, and Alpha",
-            detail_panel_mark="RS",
-            detail_panel_title="Open a winner",
-            detail_panel_copy=(
-                "Read the odds history, stats, evidence, and public Calls in one place."
-            ),
-        ),
-    )
 
 
 sports_routes = create_sports_routes(

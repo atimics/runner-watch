@@ -84,9 +84,6 @@ def test_sports_does_not_accept_or_publish_human_written_comments() -> None:
         (ROOT / "web/templates" / name).read_text()
         for name in (
             "simple_sports_detail.html",
-            "sports.html",
-            "sports_radar.html",
-            "sports_alpha.html",
             "_sports_game_decision.html",
         )
     )

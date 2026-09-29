@@ -138,7 +138,6 @@ def _inline_static_assets(html: str) -> str:
         "desktop-workspace.js": (ROOT / "web/static/desktop-workspace.js").read_text(),
         "live-list.js": (ROOT / "web/static/live-list.js").read_text(),
         "ticker-row.js": (ROOT / "web/static/ticker-row.js").read_text(),
-        "sports-live.js": (ROOT / "web/static/sports-live.js").read_text(),
         "content-notices.js": (ROOT / "web/static/content-notices.js").read_text(),
         "flash-report.js": (ROOT / "web/static/flash-report.js").read_text(),
         "flash-comments.js": (ROOT / "web/static/flash-comments.js").read_text(),
@@ -178,16 +177,6 @@ def _rendered_pulse(monkeypatch, payload: dict[str, Any]) -> str:
         },
     )
     return _inline_static_assets(web_main.home(_request(), None).body.decode())
-
-
-def _rendered_radar(monkeypatch, payload: dict[str, Any]) -> str:
-    monkeypatch.setattr(
-        web_main,
-        "_public_sports_radar_data",
-        lambda *_args, **_kwargs: {"radar": payload},
-    )
-    response = web_main.sports_radar_response(_request("/radar"), None)
-    return _inline_static_assets(response.body.decode())
 
 
 def _rendered_game_detail(latest_commission: dict[str, Any] | None = None) -> str:
@@ -474,38 +463,6 @@ def test_sports_list_empty_state_is_simple(page: Page, monkeypatch) -> None:
     assert errors == []
 
 
-def test_sports_radar_applies_changes_without_reloading_or_losing_detail(
-    page: Page, monkeypatch
-) -> None:
-    old = _event("radar-game", "AWY", "HME")
-    changed = {**old, "radar_value": 4.4}
-    page.set_viewport_size({"width": 1280, "height": 800})
-    html = _rendered_radar(monkeypatch, _radar(old))
-    errors = _load(page, html, [], [_radar(changed)])
-    frame = page.locator("[data-desktop-frame]")
-    original_detail = frame.get_attribute("src")
-
-    page.evaluate("window.sportsRadarLive.poll()")
-
-    refresh = page.locator("#sportsRadarRefresh")
-    assert refresh.is_visible()
-    assert refresh.text_content() == "Radar updated"
-    assert frame.get_attribute("src") == original_detail
-    assert "+2.1pp" in page.locator(".radar-value").text_content()
-
-    refresh.click()
-
-    assert "+4.4pp" in page.locator(".radar-value").text_content()
-    assert frame.get_attribute("src") == original_detail
-    assert page.locator(".radar-mark").first.evaluate(
-        "node => ({"
-        "radius: getComputedStyle(node).borderRadius, "
-        "rightRule: getComputedStyle(node).borderRightWidth"
-        "})"
-    ) == {"radius": "0px", "rightRule": "1px"}
-    assert errors == []
-
-
 def test_sports_list_opens_a_single_detail_screen(page: Page, monkeypatch) -> None:
     errors = _load(page, _rendered_pulse(monkeypatch, _pulse(_event("game-1", "ONE", "TWO"))), [])
     page.locator(".ticker").click()
@@ -566,45 +523,4 @@ def test_sports_refresh_keeps_keyboard_focus_on_a_ticker(page: Page, monkeypatch
     page.get_by_role("combobox").focus()
     page.clock.fast_forward(60000)
     expect(page.get_by_role("heading", name="A quiet moment")).to_be_visible()
-    assert errors == []
-
-
-def test_sports_alpha_opens_its_leader_in_the_shared_detail_pane(page: Page, monkeypatch) -> None:
-    board = {
-        "rows": [
-            {
-                "href": "/game/alpha-game",
-                "coin_tone": "0",
-                "coin_label": "AWY",
-                "ticker": "AWY",
-                "company": "Away Club",
-                "price_label": "+120",
-                "change_tone": "up",
-                "change_label": "+4",
-                "active_calls": 3,
-                "total_calls": 5,
-                "odds_label": "+120",
-                "pulse_label": "Lean",
-                "rank": 1,
-            }
-        ],
-        "calls": [],
-        "contenders": [],
-        "active_calls": 3,
-        "total_calls": 5,
-        "league": "all",
-        "leagues": [{"key": "mlb", "name": "MLB"}],
-    }
-    monkeypatch.setattr(web_main, "_sports_alpha_data", lambda *_args, **_kwargs: board)
-    page.set_viewport_size({"width": 1280, "height": 800})
-    response = web_main.sports_alpha_response(_request("/alpha"), None)
-    html = _inline_static_assets(response.body.decode())
-    errors = _load(page, html, [])
-
-    assert page.locator("[data-desktop-frame]").get_attribute("src") == "/game/alpha-game"
-    assert (
-        page.locator('a[href="/game/alpha-game"][data-desktop-default]')
-        .get_attribute("class")
-        .endswith("desktop-panel-selected")
-    )
     assert errors == []

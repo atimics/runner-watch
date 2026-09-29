@@ -118,8 +118,7 @@ def test_trade_pages_use_ranked_alpha_and_pulse_radar() -> None:
     shipped = "\n".join(path.read_text() for path in (root / "web/templates").glob("*.html"))
     flash_action = (root / "web/templates/_flash_report_action.html").read_text()
     flash_script = (root / "web/static/flash-report.js").read_text()
-    alpha = (root / "web/templates/community.html").read_text()
-    alpha += (root / "web/templates/_alpha_ledger.html").read_text()
+    alpha = (root / "web/templates/_alpha_ledger.html").read_text()
     navigation = (root / "web/templates/mobile_base.html").read_text()
     app_source = (root / "src/runner_web/main.py").read_text()
 
