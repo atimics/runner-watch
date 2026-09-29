@@ -1,7 +1,6 @@
 """Participant identity records: entities, references, claims, resolutions.
 
-Implements the persistence contract in
-docs/research/pseudonymous-identity-design.md (backlog #248). An entity is the
+Stores the identities behind the market map's wallets and actors. An entity is the
 stable description of a person, organization or provisional group; references
 are the observed wallets, identifiers and names attached to it; claims are the
 dated statements between them. Each record keeps an opaque ID that stays fixed
