@@ -11337,6 +11337,7 @@ auth_routes = create_auth_routes(
         registration_invite_codes=lambda: REGISTRATION_INVITE_CODES,
         session_cookie=SESSION_COOKIE,
         cookie_domain=COOKIE_DOMAIN,
+        cookie_secure=lambda: COOKIE_SECURE,
     )
 )
 app.include_router(auth_routes.router)

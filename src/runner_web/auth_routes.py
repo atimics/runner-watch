@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import uuid
 from collections.abc import Callable
@@ -43,6 +44,9 @@ class RegisterOptionsPayload(BaseModel):
     invite_code: str = Field(default="", max_length=200)
 
 
+LOG = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class AuthRouteDependencies:
     templates: Jinja2Templates
@@ -71,6 +75,7 @@ class AuthRouteDependencies:
     registration_invite_codes: Callable[[], tuple[str, ...]]
     session_cookie: str
     cookie_domain: str | None
+    cookie_secure: Callable[[], bool]
 
 
 @dataclass(frozen=True)
@@ -239,7 +244,8 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
                 require_user_verification=True,
             )
         except Exception as exc:
-            raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
+            LOG.warning("Passkey verification failed", exc_info=True)
+            raise HTTPException(400, "Passkey verification failed.") from exc
         response = JSONResponse({"ok": True, "redirect": "/"})
         transports = payload.credential.get("response", {}).get("transports", [])
         with dependencies.connection() as db:
@@ -280,6 +286,14 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
             {"flow_token": flow_token, "options": json.loads(options_to_json(options))}
         )
 
+    def require_active_account(user_id: str) -> None:
+        """Refuse a session for an account that is not active (for example, half-registered)."""
+
+        with dependencies.connection() as db:
+            row = db.execute("SELECT status FROM users WHERE id=?", (user_id,)).fetchone()
+        if not row or row["status"] != "active":
+            raise HTTPException(403, "This account is not active.")
+
     @router.post("/api/auth/login/verify")
     def login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
         dependencies.require_origin(request)
@@ -303,12 +317,14 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
                 require_user_verification=True,
             )
         except Exception as exc:
-            raise HTTPException(400, f"Passkey login failed: {exc}") from exc
+            LOG.warning("Passkey login failed", exc_info=True)
+            raise HTTPException(400, "Passkey login failed.") from exc
         with dependencies.connection() as db:
             db.execute(
                 "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
                 (verification.new_sign_count, dependencies.iso(), credential_id),
             )
+        require_active_account(passkey["user_id"])
         response = JSONResponse({"ok": True, "redirect": "/"})
         dependencies.create_session(passkey["user_id"], response)
         return response
@@ -356,12 +372,14 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
                 require_user_verification=True,
             )
         except Exception as exc:
-            raise HTTPException(400, f"Legacy passkey login failed: {exc}") from exc
+            LOG.warning("Legacy passkey login failed", exc_info=True)
+            raise HTTPException(400, "Legacy passkey login failed.") from exc
         with dependencies.connection() as db:
             db.execute(
                 "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
                 (verification.new_sign_count, dependencies.iso(), credential_id),
             )
+        require_active_account(passkey["user_id"])
         response = JSONResponse({"ok": True, "redirect": "/settings/passkey?migrate=1"})
         dependencies.create_session(passkey["user_id"], response)
         return response
@@ -449,7 +467,8 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
                 require_user_verification=True,
             )
         except Exception as exc:
-            raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
+            LOG.warning("Passkey verification failed", exc_info=True)
+            raise HTTPException(400, "Passkey verification failed.") from exc
         with dependencies.connection() as db:
             db.execute(
                 "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
@@ -509,7 +528,8 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
                 require_user_verification=True,
             )
         except Exception as exc:
-            raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
+            LOG.warning("Passkey verification failed", exc_info=True)
+            raise HTTPException(400, "Passkey verification failed.") from exc
         transports = payload.credential.get("response", {}).get("transports", [])
         with dependencies.connection() as db:
             db.execute(
@@ -549,7 +569,12 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
                 )
         response = JSONResponse({"ok": True, "redirect": "/"})
         response.delete_cookie(
-            dependencies.session_cookie, path="/", domain=dependencies.cookie_domain
+            dependencies.session_cookie,
+            path="/",
+            domain=dependencies.cookie_domain,
+            secure=dependencies.cookie_secure(),
+            httponly=True,
+            samesite="lax",
         )
         return response
 
