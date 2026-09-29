@@ -60,6 +60,7 @@ ORIGINAL_SLOTS = 10
 # Coins people searched for by address that we were not tracking.
 SEARCHED_SLOTS = 20
 SEARCHED_DAYS = 7
+SEARCH_QUEUE_LOCK_ID = 728416204
 # Graduated pools, bonding curves, originals and searched coins are quoted in one pass.
 MAX_QUOTED_POOLS = POOL_SLOTS + CURVE_SLOTS + ORIGINAL_SLOTS + SEARCHED_SLOTS
 SOLANA_ADDRESS = re.compile(r"[1-9A-HJ-NP-Za-km-z]{32,44}")
@@ -290,6 +291,19 @@ def _save_state(key: str, value: Any, at: datetime) -> None:
         )
 
 
+def _search_queue(database: Any) -> dict[str, str]:
+    """The searched addresses and when each was asked for; empty if unreadable."""
+
+    saved = database.execute(
+        "SELECT value FROM worker_state WHERE key='memecoin_searched'"
+    ).fetchone()
+    try:
+        queue = json.loads(saved["value"]) if saved else {}
+    except (ValueError, TypeError):
+        return {}
+    return queue if isinstance(queue, dict) else {}
+
+
 def request_memecoin(address: str, *, at: datetime | None = None) -> bool:
     """Queue an address someone searched for; the worker quotes it next cycle.
 
@@ -302,17 +316,20 @@ def request_memecoin(address: str, *, at: datetime | None = None) -> bool:
         return False
     current = at or datetime.now(UTC)
     with connection() as database:
-        saved = database.execute(
-            "SELECT value FROM worker_state WHERE key='memecoin_searched'"
-        ).fetchone()
-    try:
-        queue = json.loads(saved["value"]) if saved else {}
-    except (ValueError, TypeError):
-        queue = {}
-    queue = queue if isinstance(queue, dict) else {}
-    queue[address] = current.isoformat()
-    newest = sorted(queue.items(), key=lambda item: item[1], reverse=True)[:SEARCHED_SLOTS]
-    _save_state("memecoin_searched", dict(newest), current)
+        # Read and write in one transaction, one request at a time, so two
+        # searches at the same moment cannot drop each other's address.
+        if database.backend == "postgres":
+            database.execute("SELECT pg_advisory_xact_lock(?)", (SEARCH_QUEUE_LOCK_ID,))
+        queue = _search_queue(database)
+        queue[address] = current.isoformat()
+        newest = sorted(queue.items(), key=lambda item: item[1], reverse=True)[:SEARCHED_SLOTS]
+        database.execute(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value,"
+            "updated_at=excluded.updated_at "
+            "WHERE worker_state.updated_at<=excluded.updated_at",
+            ("memecoin_searched", json.dumps(dict(newest), allow_nan=False), current.isoformat()),
+        )
     return True
 
 
@@ -322,15 +339,9 @@ def _searched_pools(
     """The busiest pool of each searched address, in one lookup; empty on failure."""
 
     with connection() as database:
-        saved = database.execute(
-            "SELECT value FROM worker_state WHERE key='memecoin_searched'"
-        ).fetchone()
-    try:
-        queue = json.loads(saved["value"]) if saved else {}
-    except (ValueError, TypeError):
-        queue = {}
+        queue = _search_queue(database)
     wanted = {}
-    for address, requested in (queue if isinstance(queue, dict) else {}).items():
+    for address, requested in queue.items():
         when = _time(requested)
         if (
             when is not None
