@@ -307,8 +307,6 @@ from runner_web.sports import (
     LEAGUES as SPORTS_LEAGUES,
 )
 from runner_web.sports import (
-    PUBLIC_SPORT_KEYS,
-    PUBLIC_SPORTS,
     create_sports_pick,
     golf_event,
     golf_market_context,
@@ -2733,18 +2731,6 @@ async def security_headers(request: Request, call_next: Any) -> Response:
         elapsed_ms,
     )
     return response
-
-
-class PublishSignal(BaseModel):
-    snapshot_id: str
-    thesis: str = Field(min_length=8, max_length=500)
-    horizon: str = Field(pattern="^(intraday|swing|watch)$")
-    invalidation: str = Field(min_length=3, max_length=240)
-    disclosure: str = Field(min_length=3, max_length=240)
-
-
-class ReportSignal(BaseModel):
-    reason: str = Field(min_length=3, max_length=240)
 
 
 class ClientErrorReport(BaseModel):
@@ -7946,16 +7932,6 @@ def _simple_board_response(
     )
 
 
-def _market_map_response(
-    request: Request,
-    runner_session: str | None,
-    domain: str,
-) -> HTMLResponse:
-    if domain == "coin":
-        return memecoins_board_response(request, runner_session, "map")
-    return runners_board_response(request, runner_session, "map")
-
-
 SPORTS_PULSE_EVENT_FIELDS = (
     "id",
     "away_abbreviation",
@@ -8107,45 +8083,6 @@ def _public_sports_radar_data(league: str = "all", limit: int = 40) -> dict[str,
     )
     radar = cached["radar"]
     return {"radar": {**radar, "events": radar["events"][:result_limit]}}
-
-
-def sports_home_response(
-    request: Request,
-    runner_session: str | None,
-    league: str = "all",
-    view: str = "signals",
-) -> HTMLResponse:
-    selected_sport = league if league in PUBLIC_SPORT_KEYS else "all"
-    selected_league = selected_sport if selected_sport in SPORTS_LEAGUES else "all"
-    sports_path_prefix = ""
-    public_data = (
-        _public_sports_pulse_data(selected_league, view)
-        if selected_sport != "golf"
-        else {"pulse": {}, "pick_stats": {}}
-    )
-    golf = _public_golf_data() if selected_sport in {"all", "golf"} else None
-    return templates.TemplateResponse(
-        request=request,
-        name="sports.html",
-        context=page_context(
-            request,
-            runner_session,
-            pulse=public_data["pulse"],
-            golf=golf,
-            pick_stats=public_data["pick_stats"],
-            selected_sport=selected_sport,
-            sports_nav=PUBLIC_SPORTS,
-            show_golf=selected_sport in {"all", "golf"},
-            show_team=selected_sport != "golf",
-            active_tab="pulse",
-            nav_product="sports",
-            sports_path_prefix=sports_path_prefix,
-            detail_panel_label="Selected matchup odds, evidence, and public Calls",
-            detail_panel_mark="RS",
-            detail_panel_title="Open a matchup",
-            detail_panel_copy="Read the model, market price, context, and receipt in one place.",
-        ),
-    )
 
 
 def sports_board_response(
@@ -8655,10 +8592,6 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
             and _recent_observation(snapshot["quote_time"], maximum_age=timedelta(hours=2))
         ),
     }
-
-
-def _chart_points(frame: pd.DataFrame | None) -> list[dict[str, Any]]:
-    return _serialize_chart_frame(frame, max_points=100)
 
 
 def _serialize_chart_frame(frame: pd.DataFrame | None, *, max_points: int) -> list[dict[str, Any]]:
@@ -9557,65 +9490,6 @@ def _radar_market_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
             "coin_tone": _coin_tone(ticker),
         }
     return summaries
-
-
-def _radar_social_summaries(tickers: list[str]) -> dict[str, dict[str, Any]]:
-    requested = list(dict.fromkeys(str(ticker).upper() for ticker in tickers))[:40]
-    if not requested:
-        return {}
-    placeholders = ",".join("?" for _ in requested)
-    cutoff = iso(now() - timedelta(hours=24))
-    with connection() as db:
-        comments = db.execute(
-            f"""
-            SELECT ticker,COUNT(*) AS comment_count,
-                   COUNT(DISTINCT user_id) AS participant_count,
-                   MAX(created_at) AS latest_comment_at
-            FROM ticker_comments
-            WHERE subject_kind='stock' AND ticker IN ({placeholders})
-              AND status='public' AND created_at>=?
-            GROUP BY ticker
-            """,
-            (*requested, cutoff),
-        ).fetchall()
-        calls = db.execute(
-            f"""
-            SELECT ticker,COUNT(DISTINCT user_id) AS call_count
-            FROM community_calls
-            WHERE ticker IN ({placeholders}) AND status='active'
-            GROUP BY ticker
-            """,
-            requested,
-        ).fetchall()
-    output = {
-        ticker: {
-            "comments_24h": 0,
-            "participants_24h": 0,
-            "calls": 0,
-            "latest_comment_at": None,
-        }
-        for ticker in requested
-    }
-    for row in comments:
-        item = output[str(row["ticker"])]
-        item.update(
-            {
-                "comments_24h": int(row["comment_count"] or 0),
-                "participants_24h": int(row["participant_count"] or 0),
-                "latest_comment_at": row["latest_comment_at"],
-            }
-        )
-    for row in calls:
-        item = output[str(row["ticker"])]
-        item["calls"] = int(row["call_count"] or 0)
-    for item in output.values():
-        parts: list[str] = []
-        if item["comments_24h"]:
-            parts.append(f"{item['comments_24h']} comments today")
-        if item["calls"]:
-            parts.append(f"{item['calls']} open Calls")
-        item["label"] = " · ".join(parts) or "No community activity yet"
-    return output
 
 
 def _radar_base_data_uncached() -> list[dict[str, Any]]:

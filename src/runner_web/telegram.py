@@ -489,24 +489,6 @@ def _join_blocks(blocks, limit=MAX_MESSAGE_CHARS):
     return "\n\n".join(kept)
 
 
-def _truncate_md(text, limit=MAX_MESSAGE_CHARS):
-    """Cut an assembled message to the Telegram limit on a block boundary.
-
-    Callers hand us text that already fits; this is the guard for the ones that
-    do not. A blind slice can end on a half-written escape, so drop back to the
-    last blank line, and failing that trim the dangling backslash.
-    """
-
-    if len(text) <= limit:
-        return text
-    cut = text[:limit]
-    boundary = cut.rfind("\n\n")
-    if boundary > 0:
-        return cut[:boundary]
-    trimmed = cut.rstrip(chr(92))
-    return cut[: len(trimmed) + (len(cut) - len(trimmed)) // 2 * 2]
-
-
 def send_post(
     config, text, *, preview_url="", parse_mode="MarkdownV2", opener=None, allow_fallback=False
 ):

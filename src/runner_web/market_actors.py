@@ -489,19 +489,6 @@ def _subject_payload(subject_kind: str, subject_key: str, labels: dict[str, str]
     }
 
 
-def public_relationship(market: str, direction: Any) -> str:
-    """Describe saved evidence without promoting a wallet inference to ownership."""
-    if market == "memecoins":
-        return "Possible wallet activity · observed"
-    return {
-        "mixed": "Reported purchases and sales · filed",
-        "buy": "Reported purchase · filed",
-        "sell": "Reported sale · filed",
-        "own": "Reported ownership · filed",
-        "hold": "Reported holding · filed",
-    }.get(str(direction), "Public filing · filed")
-
-
 def market_actor_map(domain: str, *, at: datetime | None = None) -> dict[str, Any]:
     domain = "coin" if str(domain).casefold() == "coin" else "stock"
     with connection() as db:
