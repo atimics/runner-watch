@@ -126,9 +126,12 @@ def test_deployment_does_not_trust_forwarded_headers_from_every_peer() -> None:
     assert "wrangler@4.127.1 deploy" in deploy_workflow
     deploy_lines = deploy_workflow.splitlines()
     uptime_lines = uptime_workflow.splitlines()
+    # The deploy checks both hosts side by side, and fails if either check fails.
     deploy_commands = (
-        "          scripts/smoke-production https://runners.rati.chat",
-        "          scripts/smoke-production https://sports.rati.chat",
+        "          scripts/smoke-production https://runners.rati.chat &",
+        "          scripts/smoke-production https://sports.rati.chat &",
+        '          wait "$runners" || status=1',
+        '          wait "$sports" || status=1',
     )
     uptime_commands = (
         "      - run: scripts/smoke-production https://runners.rati.chat",
