@@ -248,30 +248,6 @@ def _request_json(
     return result
 
 
-def probe_openai_compatible(
-    base_url: str,
-    *,
-    api_key: str | None = None,
-    allow_local: bool = False,
-    timeout: int = 10,
-) -> dict[str, Any]:
-    base = normalize_openai_base_url(base_url, allow_local=allow_local)
-    result = _request_json(
-        f"{base}/models",
-        method="GET",
-        api_key=api_key,
-        body=None,
-        timeout=timeout,
-    )
-    models = result.get("data")
-    model_ids = (
-        [str(item.get("id"))[:160] for item in models if isinstance(item, dict) and item.get("id")]
-        if isinstance(models, list)
-        else []
-    )
-    return {"ok": True, "models": model_ids[:100]}
-
-
 def call_chat_completions(
     base_url: str,
     body: dict[str, Any],

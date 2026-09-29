@@ -59,10 +59,6 @@ TRAIN_INTERVAL_SECONDS = max(
 SEED = 20260920
 
 
-def _sigmoid(value: np.ndarray) -> np.ndarray:
-    return 1.0 / (1.0 + np.exp(-np.clip(value, -30, 30)))
-
-
 def _clip(value: float, low: float = -1.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 

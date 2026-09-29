@@ -1,13 +1,15 @@
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 from pytest import MonkeyPatch
 from starlette.requests import Request
+from webauthn.helpers import bytes_to_base64url
 
-from runner_web import db
+from runner_web import auth_routes, db
 from runner_web import main as web_main
 from runner_web.db import connection, init_db
 from runner_web.main import (
@@ -262,3 +264,96 @@ def test_sensitive_actions_require_recent_passkey_authentication(
             (timestamp.isoformat(), token_hash(raw_token)),
         )
     require_recent_auth(raw_token)
+
+
+def _passkey_user(tmp_path: Path, monkeypatch: MonkeyPatch, status: str) -> bytes:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / f"login-{status}.db")
+    init_db()
+    credential_id = b"credential-" + status.encode()
+    timestamp = datetime.now(UTC).isoformat()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("login-user", "login_user", "Login User", status, timestamp),
+        )
+        database.execute(
+            "INSERT INTO passkeys(credential_id,user_id,public_key,sign_count,created_at) "
+            "VALUES(?,?,?,?,?)",
+            (credential_id, "login-user", b"key", 0, timestamp),
+        )
+    return credential_id
+
+
+def _finish(credential_id: bytes) -> auth_routes.PasskeyFinish:
+    token = save_challenge("login", b"challenge")
+    return auth_routes.PasskeyFinish(
+        flow_token=token,
+        credential={"id": bytes_to_base64url(credential_id)},
+    )
+
+
+def _accept_any_passkey(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        auth_routes,
+        "verify_authentication_response",
+        lambda **_: SimpleNamespace(new_sign_count=1),
+    )
+
+
+def test_login_is_refused_for_an_account_that_is_not_active(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    credential_id = _passkey_user(tmp_path, monkeypatch, "pending")
+    _accept_any_passkey(monkeypatch)
+
+    with pytest.raises(HTTPException) as refused:
+        web_main.login_verify(_finish(credential_id), request("POST", "/api/auth/login/verify"))
+
+    assert refused.value.status_code == 403
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_login_starts_a_session_for_an_active_account(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    credential_id = _passkey_user(tmp_path, monkeypatch, "active")
+    _accept_any_passkey(monkeypatch)
+
+    response = web_main.login_verify(
+        _finish(credential_id), request("POST", "/api/auth/login/verify")
+    )
+
+    assert response.status_code == 200
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+
+
+def test_failed_passkey_login_does_not_return_the_internal_error(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    credential_id = _passkey_user(tmp_path, monkeypatch, "active")
+
+    def fail(**_: object) -> None:
+        raise ValueError("internal detail: expected challenge abc123")
+
+    monkeypatch.setattr(auth_routes, "verify_authentication_response", fail)
+
+    with pytest.raises(HTTPException) as failed:
+        web_main.login_verify(_finish(credential_id), request("POST", "/api/auth/login/verify"))
+
+    assert failed.value.status_code == 400
+    assert "abc123" not in str(failed.value.detail)
+
+
+def test_logout_clears_the_cookie_with_the_flags_it_was_set_with(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "logout.db")
+    monkeypatch.setattr(web_main, "COOKIE_SECURE", True)
+    init_db()
+
+    response = web_main.logout(request("POST", "/api/auth/logout"), runner_session=None)
+
+    cookie = response.headers["set-cookie"].lower()
+    assert "secure" in cookie and "httponly" in cookie and "samesite=lax" in cookie

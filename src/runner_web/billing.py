@@ -71,80 +71,6 @@ def _period_end(subscription: Any) -> str | None:
     return _iso_from_timestamp(value)
 
 
-def _format_amount(unit_amount: Any, currency: Any) -> str | None:
-    try:
-        amount = int(unit_amount)
-    except (TypeError, ValueError):
-        return None
-    code = str(currency or "").lower()
-    if code in {"jpy", "krw"}:
-        major = f"{amount:,}"
-    else:
-        major = f"{amount / 100:,.2f}".removesuffix(".00")
-    prefix = {"cad": "CA$", "usd": "$", "eur": "€", "gbp": "£"}.get(code)
-    return f"{prefix}{major}" if prefix else f"{major} {code.upper()}".strip()
-
-
-def price_summary(config: BillingConfig | None = None) -> dict[str, Any]:
-    config = config or billing_config()
-    fallback = {
-        "id": config.pro_price_id or None,
-        "name": "Runner Watch Pro",
-        "amount": None,
-        "interval": None,
-        "available": config.checkout_ready,
-    }
-    if not config.secret_key or not config.pro_price_id:
-        return fallback
-    stripe.api_key = config.secret_key
-    try:
-        price = stripe.Price.retrieve(config.pro_price_id, expand=["product"])
-    except stripe.StripeError:
-        return fallback
-    product = _get(price, "product", {})
-    recurring = _get(price, "recurring", {}) or {}
-    interval = _get(recurring, "interval")
-    interval_count = int(_get(recurring, "interval_count", 1) or 1)
-    interval_label = None
-    if interval:
-        interval_label = (
-            f"every {interval_count} {interval}s" if interval_count > 1 else f"per {interval}"
-        )
-    return {
-        "id": str(_get(price, "id") or config.pro_price_id),
-        "name": str(_get(product, "name") or "Runner Watch Pro"),
-        "amount": _format_amount(_get(price, "unit_amount"), _get(price, "currency")),
-        "interval": interval_label,
-        "available": config.checkout_ready,
-    }
-
-
-def billing_account(user: dict[str, Any] | None) -> dict[str, Any]:
-    status = str((user or {}).get("stripe_subscription_status") or "none")
-    plan = str((user or {}).get("plan") or "free")
-    return {
-        "plan": plan,
-        "plan_label": "Pro" if plan == "subscriber" else "Free",
-        "status": status,
-        "status_label": {
-            "active": "Active",
-            "trialing": "Trial",
-            "past_due": "Payment needs attention",
-            "unpaid": "Payment needs attention",
-            "paused": "Paused",
-            "canceled": "Canceled",
-            "incomplete": "Checkout incomplete",
-            "incomplete_expired": "Checkout expired",
-            "pending": "Waiting for Stripe",
-        }.get(status, "Free"),
-        "has_access": status in ACCESS_STATUSES or plan == "subscriber",
-        "needs_action": status in CUSTOMER_ACTION_STATUSES,
-        "customer_id": (user or {}).get("stripe_customer_id"),
-        "current_period_end": (user or {}).get("stripe_current_period_end"),
-        "cancel_at_period_end": bool((user or {}).get("stripe_cancel_at_period_end")),
-    }
-
-
 def create_checkout_session(user: dict[str, Any], app_origin: str) -> str:
     config = billing_config()
     if not config.checkout_ready:
@@ -167,22 +93,6 @@ def create_checkout_session(user: dict[str, Any], app_origin: str) -> str:
     url = str(_get(session, "url") or "")
     if not url:
         raise RuntimeError("Stripe did not return a Checkout URL")
-    return url
-
-
-def create_portal_session(user: dict[str, Any], app_origin: str) -> str:
-    config = billing_config()
-    customer_id = str(user.get("stripe_customer_id") or "").strip()
-    if not config.portal_ready or not customer_id:
-        raise RuntimeError("Stripe customer portal is not available")
-    stripe.api_key = config.secret_key
-    session = stripe.billing_portal.Session.create(
-        customer=customer_id,
-        return_url=f"{app_origin}/billing",
-    )
-    url = str(_get(session, "url") or "")
-    if not url:
-        raise RuntimeError("Stripe did not return a portal URL")
     return url
 
 
