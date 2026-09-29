@@ -229,6 +229,7 @@ from runner_web.privacy import (
     delete_user_content,
     delete_user_data,
     export_user_data,
+    prune_personal_data,
     user_data_summary,
 )
 from runner_web.process_memory import (
@@ -938,6 +939,7 @@ def _start_worker_tasks(
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
+        asyncio.create_task(privacy_prune_worker(), name="privacy-prune"),
         asyncio.create_task(case_monitor_worker(), name="case-monitor"),
         asyncio.create_task(kol_worker(), name="kol"),
         asyncio.create_task(memecoin_worker(), name="memecoins"),
@@ -5506,6 +5508,21 @@ async def report_release_worker() -> None:
         except Exception:
             LOG.exception("Expired report release failed")
         await asyncio.sleep(30)
+
+
+async def privacy_prune_worker() -> None:
+    """Once a day, delete rows the privacy policy says must not be kept."""
+
+    await asyncio.sleep(120)
+    while True:
+        try:
+            deleted = await run_in_threadpool(prune_personal_data)
+            LOG.info("Privacy pruning removed %s", {k: v for k, v in deleted.items() if v})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("Privacy pruning failed")
+        await asyncio.sleep(86400)
 
 
 def daily_report_for_ticker(
@@ -11194,6 +11211,7 @@ auth_routes = create_auth_routes(
         registration_invite_codes=lambda: REGISTRATION_INVITE_CODES,
         session_cookie=SESSION_COOKIE,
         cookie_domain=COOKIE_DOMAIN,
+        cookie_secure=lambda: COOKIE_SECURE,
     )
 )
 app.include_router(auth_routes.router)

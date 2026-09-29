@@ -47,6 +47,7 @@ BASE_REQUIRED_WORKER_NAMES = frozenset(
         "massive-backfill",
         "research-jobs",
         "report-release",
+        "privacy-prune",
         "case-monitor",
         "kol",
         "memecoins",

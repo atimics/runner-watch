@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pytest import MonkeyPatch
@@ -410,9 +410,7 @@ def test_pruning_removes_old_stripe_events_and_abandoned_signups_only(
     assert deleted["stripe_webhook_events"] == 1
     assert deleted["pending_users"] == 1
     with connection() as database:
-        events = {
-            r["event_id"] for r in database.execute("SELECT event_id FROM stripe_webhook_events")
-        }
+        events = {r["event_id"] for r in database.execute("SELECT event_id FROM stripe_webhook_events")}
         users = {r["id"] for r in database.execute("SELECT id FROM users")}
     assert events == {"new-event"}
     assert users == {"just-started", "member"}
