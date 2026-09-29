@@ -7,6 +7,7 @@ import pytest
 
 from runner_web import db, memecoins
 from runner_web import helius_discovery as helius
+from runner_web.db import connection
 from runner_web.memecoin_integrity import SELL, creator_trades
 
 AT = datetime(2026, 9, 8, 17, tzinfo=UTC)
@@ -543,6 +544,32 @@ def test_a_failed_search_lookup_keeps_the_refresh(database, monkeypatch):
     )
 
     assert result["status"] == "ok"
+
+
+def test_a_searched_address_with_no_pool_is_given_up_on_but_a_failed_lookup_is_not(database):
+    junk = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
+    memecoins.request_memecoin(junk, at=AT - timedelta(minutes=1))
+
+    def empty(url, timeout):
+        return b'{"data":[],"included":[]}'
+
+    def failing(url, timeout):
+        raise HTTPError(url, 429, "Too Many Requests", {}, io.BytesIO(b""))
+
+    def queued():
+        with connection() as database:
+            return junk in memecoins._search_queue(database)
+
+    memecoins._searched_pools(set(), download=failing, at=AT)
+    assert memecoins._searched_pools(set(), download=empty, at=AT) == ([], True)
+    with connection() as database:
+        assert memecoins._state_dict(database, "memecoin_checked")[junk]["misses"] == 1
+    for cycle in range(1, memecoins.SEARCH_MISSES):
+        assert queued()
+        memecoins._searched_pools(set(), download=empty, at=AT + timedelta(minutes=5 * cycle))
+    assert not queued()
+    # With nothing left to look up, the worker makes no call at all.
+    assert memecoins._searched_pools(set(), download=failing, at=AT) == ([], False)
 
 
 def test_graduations_are_read_every_third_run_within_the_same_pages(database):
