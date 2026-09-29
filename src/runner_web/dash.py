@@ -1006,7 +1006,7 @@ def coin_detail(query: str) -> dict[str, Any]:
         ][:10]
         # An address not on the board is queued, as a board search would: the
         # worker quotes it next cycle, so Dash can say it is being looked up.
-        requested = looks_like_address(wanted) and request_memecoin(wanted)
+        requested = looks_like_address(wanted) and request_memecoin(wanted, source="dash")
         return {
             "known": False,
             "query": query,
