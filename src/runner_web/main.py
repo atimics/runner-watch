@@ -436,6 +436,10 @@ from runner_web.telegram_chat import (
 from runner_web.telegram_chat import (
     spend_engagement as telegram_spend_engagement,
 )
+from runner_web.telegram_routes import (
+    TelegramRouteDependencies,
+    create_telegram_routes,
+)
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 from runner_web.wallet_registry import WALLET_ID
 from runner_web.wallet_registry import register_people as register_wallet_people
@@ -3126,40 +3130,31 @@ def roadmap_api(request: Request) -> dict[str, Any]:
 
 
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
-TELEGRAM_WEBHOOK_MAX_BYTES = 1_048_576
-
-
-@app.post("/telegram/webhook")
-async def telegram_webhook(request: Request) -> JSONResponse:
-    """Take one update from Telegram and store it for the chat worker.
-
-    This answers quickly and does no thinking, because Telegram retries anything
-    it is not answered promptly and a slow handler turns into duplicate replies.
-    The secret header is the only thing standing between this public path and
-    anyone posting forged updates, so an unset secret closes the door entirely.
-    """
-
-    if not TELEGRAM_WEBHOOK_SECRET:
-        raise HTTPException(404, "Not found")
-    supplied = request.headers.get("x-telegram-bot-api-secret-token", "")
-    if not secrets.compare_digest(supplied, TELEGRAM_WEBHOOK_SECRET):
-        raise HTTPException(404, "Not found")
-    raw = await request.body()
-    if len(raw) > TELEGRAM_WEBHOOK_MAX_BYTES:
-        raise HTTPException(413, "Update too large")
-    try:
-        payload = json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(400, "Malformed update") from exc
-    if not isinstance(payload, dict):
-        raise HTTPException(400, "Malformed update")
-    await run_in_threadpool(_store_telegram_update, payload)
-    return JSONResponse({"ok": True})
 
 
 def _store_telegram_update(payload: dict[str, Any]) -> None:
     with connection() as database:
         telegram_record_update(database, payload)
+
+
+telegram_routes = create_telegram_routes(
+    TelegramRouteDependencies(
+        templates=templates,
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        webhook_secret=lambda: TELEGRAM_WEBHOOK_SECRET,
+        store_update=lambda payload: _store_telegram_update(payload),
+        run_in_threadpool=lambda *args, **kwargs: run_in_threadpool(*args, **kwargs),
+        runners_origin=lambda: RUNNERS_ORIGIN,
+    )
+)
+app.include_router(telegram_routes.router)
+telegram_webhook = telegram_routes.telegram_webhook
+telegram_announcements_page = telegram_routes.telegram_announcements_page
+telegram_announcements_api = telegram_routes.telegram_announcements_api
+publish_signal = telegram_routes.publish_signal
+signal_page = telegram_routes.signal_page
+signal_card = telegram_routes.signal_card
+report_signal = telegram_routes.report_signal
 
 
 @app.get("/api/market-clock")
@@ -13450,20 +13445,6 @@ def dispatch_release_announcement() -> dict[str, Any]:
         TELEGRAM_ALERT_DISPATCH_LOCK.release()
 
 
-@app.get("/telegram/announcements", response_class=HTMLResponse)
-def telegram_announcements_page(request: Request):
-    return templates.TemplateResponse(
-        request, "telegram_announcements.html", page_context(request, None, resolved_user=None)
-    )
-
-
-@app.get("/api/telegram/announcements")
-def telegram_announcements_api(_access: None = Depends(require_operations_access)):
-    from runner_web.telegram_outbox import announcement_history
-
-    return JSONResponse(announcement_history(), headers={"Cache-Control": "no-store"})
-
-
 def _spawn_telegram_dispatch(*, scan_run_id: str | None = None) -> None:
     """Run the channel dispatch off the calling thread when the feature is on."""
 
@@ -13839,32 +13820,6 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         },
         "warnings": scan_warnings[:4],
     }
-
-
-@app.post("/api/signals")
-def publish_signal() -> None:
-
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
-
-
-@app.get("/s/{public_id}", response_class=HTMLResponse)
-def signal_page(
-    public_id: str,
-) -> RedirectResponse:
-    _ = public_id
-    return RedirectResponse(f"{RUNNERS_ORIGIN}/community", status_code=308)
-
-
-@app.get("/s/{public_id}/card.png")
-def signal_card(public_id: str) -> None:
-    _ = public_id
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
-
-
-@app.post("/api/signals/{public_id}/report")
-def report_signal(public_id: str) -> None:
-    _ = public_id
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
 
 
 CALLER_BOARD_DAYS = 7
