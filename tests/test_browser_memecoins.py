@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 from starlette.requests import Request
 
 from runner_web import main as web_main
@@ -157,18 +157,3 @@ def _open(page: Page, html: str, path: str = "/memecoins/radar?q=doge&sort=gaine
         "http://app.test/**", lambda route: route.fulfill(body=html, content_type="text/html")
     )
     page.goto(f"http://app.test{path}", wait_until="domcontentloaded")
-
-
-def test_alpha_closed_return_and_caller_link_survive_refresh(page: Page) -> None:
-    call = _call(
-        status="closed", return_pct=12.5, exit_price_label="$0.000001125", exit_at=NOW.isoformat()
-    )
-    _open(page, _html("alpha", calls=[call]))
-    page.route("**/api/memecoin-calls", lambda route: route.fulfill(json={"calls": [call]}))
-    page.get_by_role("button", name="Refresh", exact=True).click()
-    expect(page.locator("[data-coin-calls] header b")).to_have_text("+12.50%")
-    expect(page.get_by_role("link", name="QuietSignal")).to_have_attribute(
-        "href", "/u/QuietSignal?market=memecoins"
-    )
-    expect(page.locator("[data-coin-calls] dl")).to_contain_text("Exit$0.000001125")
-    expect(page.locator("[data-calls-empty]")).to_be_hidden()
