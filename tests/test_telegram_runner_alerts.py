@@ -821,9 +821,7 @@ def test_each_segment_is_its_own_message_with_its_own_card(
     assert web_main.dispatch_telegram_posts()["status"] == "empty"
 
 
-def test_halt_events_reach_the_channel_once(
-    alert_environment, monkeypatch: MonkeyPatch
-) -> None:
+def test_halt_events_reach_the_channel_once(alert_environment, monkeypatch: MonkeyPatch) -> None:
     """Halt Desk: the already-written event formatter finally has inventory."""
 
     sent: list[str] = []

@@ -1002,9 +1002,7 @@ def test_wallet_page_shares_main_stock_rows_and_shows_filing_history(
     expect(wheel.locator('[data-sentiment-side="bullish"]')).to_have_attribute("data-share", "0.75")
     expect(wheel.locator('[data-sentiment-side="bearish"]')).to_have_attribute("data-share", "0.25")
     uso_label = page.locator('[data-entity-stock="USO"] .map-sentiment-label')
-    expect(uso_label).to_have_text(
-        "▲75% / ▼25%"
-    )
+    expect(uso_label).to_have_text("▲75% / ▼25%")
     expect(page.locator('[data-entity-stock="CDTG"] .map-sentiment-label')).to_have_text("▲— / ▼—")
     expect(uso_label).to_have_css("opacity", "0")
     if score == 24 and has_holdings:
@@ -1197,9 +1195,7 @@ def test_patterned_map_preserves_slice_hit_targets_and_high_contrast_readings(
     expect(glyph.locator("path.map-risk-dot")).to_have_attribute("data-risk-shape", "diamond")
     if forced == "active":
         marker = glyph.locator(".map-risk-dot").evaluate("el => getComputedStyle(el).fill")
-        ink = glyph.locator(".map-pattern-line").first.evaluate(
-            "el => getComputedStyle(el).stroke"
-        )
+        ink = glyph.locator(".map-pattern-line").first.evaluate("el => getComputedStyle(el).stroke")
         assert marker != ink
         expect(glyph.locator(".map-center-text")).to_have_css("fill", marker)
         expect(glyph.locator(".map-center-score")).to_have_css("fill", marker)

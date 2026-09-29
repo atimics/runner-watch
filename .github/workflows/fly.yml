@@ -34,6 +34,7 @@ jobs:
       - run: cargo test --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: cargo build --locked --manifest-path rust/stonks-ranker/Cargo.toml
       - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
       - run: |
           for script in web/static/*.js cloudflare-router/src/*.js; do
             node --check "$script"

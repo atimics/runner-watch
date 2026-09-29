@@ -116,9 +116,7 @@ def test_training_learns_a_signal_and_beats_the_baseline():
     assert result["status"] == "trained"
     metrics = result["metrics"]
     assert metrics["sign_accuracy"] > metrics["baseline_sign_accuracy"]
-    prediction = gap_ranker.direction_for_model(
-        {"weights": result["weights"]}, [1.0, 0.0]
-    )
+    prediction = gap_ranker.direction_for_model({"weights": result["weights"]}, [1.0, 0.0])
     assert 0.5 < prediction <= 1.0
 
 

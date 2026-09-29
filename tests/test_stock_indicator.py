@@ -52,7 +52,11 @@ def test_four_angles_use_uncapped_post_freshness_contributions():
         stock(
             score=100,
             score_components={
-                "market": 80, "sec_event": 12, "news": 6, "social_search": 8, "cluster": 8
+                "market": 80,
+                "sec_event": 12,
+                "news": 6,
+                "social_search": 8,
+                "cluster": 8,
             },
         )
     )

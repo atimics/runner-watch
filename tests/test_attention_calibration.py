@@ -15,18 +15,33 @@ def cohort():
     for day in range(10):
         date = (NOW - timedelta(days=20 - day)).date().isoformat()
         rid = f"run-{day}"
-        runs.append({"id": rid, "model_sha256": artifact()["sha256"],
-                     "policy": attention.POLICY_VERSION,
-                     "contract_json": calibration._canonical(CONTRACT).decode(),
-                     "day": date, "status": "recorded", "expected_rows": 3,
-                     "deadline_at": (NOW - timedelta(days=20 - day)).isoformat(),
-                     "evidence_as_of": date, "saved_at": date})
-        for index, p in enumerate((.15, .45, .85)):
-            rows.append({"run_id": rid, "ticker": f"T{index}",
-                         "snapshot_id": f"snapshot-{day}-{index}",
-                         "reason": "learned", "probability": p,
-                         "outcome_status": "resolved", "target": index % 2,
-                         "outcome_json": "{}"})
+        runs.append(
+            {
+                "id": rid,
+                "model_sha256": artifact()["sha256"],
+                "policy": attention.POLICY_VERSION,
+                "contract_json": calibration._canonical(CONTRACT).decode(),
+                "day": date,
+                "status": "recorded",
+                "expected_rows": 3,
+                "deadline_at": (NOW - timedelta(days=20 - day)).isoformat(),
+                "evidence_as_of": date,
+                "saved_at": date,
+            }
+        )
+        for index, p in enumerate((0.15, 0.45, 0.85)):
+            rows.append(
+                {
+                    "run_id": rid,
+                    "ticker": f"T{index}",
+                    "snapshot_id": f"snapshot-{day}-{index}",
+                    "reason": "learned",
+                    "probability": p,
+                    "outcome_status": "resolved",
+                    "target": index % 2,
+                    "outcome_json": "{}",
+                }
+            )
     return runs, rows
 
 
@@ -40,11 +55,17 @@ def test_freeze_uses_exact_complete_cohort_and_retains_unknown_slots():
     assert result["unknown_predictions"] == 1
     assert result["resolved_learned_predictions"] == 29
     assert result["promotion_ready"] is False
-    assert all(a["value"] <= b["value"] for a, b in zip(
-        result["bins"], result["bins"][1:], strict=False))
-    future = dict(rows[-1], probability=.01, target=0, ticker="FUTURE")
-    future_run = dict(runs[-1], id="future", day=(NOW + timedelta(days=1)).date().isoformat(),
-                      deadline_at=(NOW + timedelta(days=2)).isoformat(), expected_rows=1)
+    assert all(
+        a["value"] <= b["value"] for a, b in zip(result["bins"], result["bins"][1:], strict=False)
+    )
+    future = dict(rows[-1], probability=0.01, target=0, ticker="FUTURE")
+    future_run = dict(
+        runs[-1],
+        id="future",
+        day=(NOW + timedelta(days=1)).date().isoformat(),
+        deadline_at=(NOW + timedelta(days=2)).isoformat(),
+        expected_rows=1,
+    )
     future["run_id"] = "future"
     assert calibration.freeze_from_receipts(runs + [future_run], rows + [future], now=NOW) == result
 
@@ -63,8 +84,9 @@ def test_missing_or_pending_row_blocks_a_day_and_prevents_fit():
 
 def test_outside_window_receipts_do_not_block_regular_sessions():
     runs, rows = cohort()
-    outside = dict(runs[0], id="outside", status="outside_window",
-                   deadline_at=None, expected_rows=0)
+    outside = dict(
+        runs[0], id="outside", status="outside_window", deadline_at=None, expected_rows=0
+    )
     result = calibration.freeze_from_receipts(runs + [outside], rows, now=NOW)
     assert result["state"] == "frozen_candidate"
 

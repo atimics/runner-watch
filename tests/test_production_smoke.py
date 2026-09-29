@@ -102,9 +102,7 @@ def test_parallel_deploy_gate_requires_every_job_to_succeed() -> None:
 
     import yaml
 
-    workflow = yaml.safe_load(
-        (Path(__file__).parents[1] / ".github/workflows/fly.yml").read_text()
-    )
+    workflow = yaml.safe_load((Path(__file__).parents[1] / ".github/workflows/fly.yml").read_text())
     jobs = workflow["jobs"]
     gate = jobs["test"]
     always_required = ["lint", "unit", "browser", "evidence", "container"]

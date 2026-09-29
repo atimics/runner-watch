@@ -312,9 +312,7 @@ def test_pregame_refresh_stays_fresh_until_close_slot() -> None:
     state = {"slate": "2026-09-23", "completed": ["opening"]}
 
     assert refresh_decision("mlb", events, start - timedelta(hours=6), state=state) is None
-    pregame = refresh_decision(
-        "mlb", events, start - timedelta(hours=3, minutes=15), state=state
-    )
+    pregame = refresh_decision("mlb", events, start - timedelta(hours=3, minutes=15), state=state)
     assert pregame is not None and pregame.slot == "pregame"
     close = refresh_decision(
         "mlb",

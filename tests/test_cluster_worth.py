@@ -97,9 +97,7 @@ def test_batch_values_each_stock_from_its_direct_entities(database):
     assert summaries["USO"]["value"] == 1500
     assert summaries["OTHER"]["value"] == 500
     assert {stock["ticker"] for stock in summaries["USO"]["stocks"]} == {"USO", "THIRD"}
-    assert {stock["ticker"] for stock in summaries["OTHER"]["stocks"]} == {
-        "OTHER", "FOURTH"
-    }
+    assert {stock["ticker"] for stock in summaries["OTHER"]["stocks"]} == {"OTHER", "FOURTH"}
 
 
 def test_batch_respects_as_of_filing_and_price_clocks(database):
