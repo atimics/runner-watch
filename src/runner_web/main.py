@@ -21,8 +21,8 @@ from datetime import UTC, datetime, timedelta
 from datetime import date as calendar_date
 from datetime import time as clock_time
 from pathlib import Path
-from typing import Any, Literal
-from urllib.parse import quote, unquote, urlencode, urlparse
+from typing import Any
+from urllib.parse import unquote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -34,22 +34,6 @@ from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
 from starlette.middleware.gzip import GZipMiddleware
-from webauthn import (
-    base64url_to_bytes,
-    generate_authentication_options,
-    generate_registration_options,
-    options_to_json,
-    verify_authentication_response,
-    verify_registration_response,
-)
-from webauthn.helpers.structs import (
-    AttestationConveyancePreference,
-    AuthenticatorAttachment,
-    AuthenticatorSelectionCriteria,
-    PublicKeyCredentialDescriptor,
-    ResidentKeyRequirement,
-    UserVerificationRequirement,
-)
 
 from runner_node.api import create_node_router
 from runner_node.runtime import NODE_SERVICE
@@ -70,6 +54,11 @@ from runner_web.account_routes import (
 )
 from runner_web.actor_portraits import generate_actor_portrait, portrait_for_actor
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
+from runner_web.auth_routes import (
+    AuthRouteDependencies,
+    RegisterOptionsPayload,  # noqa: F401
+    create_auth_routes,
+)
 from runner_web.billing import (
     construct_webhook_event,
     delete_customer,
@@ -272,7 +261,6 @@ from runner_web.ranker import (
 from runner_web.request_security import (
     edge_proxy_authenticated,
     request_client_ip,
-    safe_next_path,
 )
 from runner_web.research_context import build_research_context, research_evidence_metrics
 from runner_web.research_pipeline import verified_public_citations
@@ -339,6 +327,13 @@ from runner_web.sports import (
     sports_slate,
     sports_team_profile,
     validate_sports_ai_forecast,
+)
+from runner_web.sports_routes import (
+    SportsPickPayload as SportsPickPayload,
+)
+from runner_web.sports_routes import (
+    SportsRouteDependencies,
+    create_sports_routes,
 )
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.telegram import (
@@ -436,6 +431,10 @@ from runner_web.telegram_chat import (
 )
 from runner_web.telegram_chat import (
     spend_engagement as telegram_spend_engagement,
+)
+from runner_web.telegram_routes import (
+    TelegramRouteDependencies,
+    create_telegram_routes,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
 from runner_web.wallet_routes import WalletRouteDependencies, create_wallet_routes
@@ -2734,15 +2733,6 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     return response
 
 
-class PasskeyFinish(BaseModel):
-    flow_token: str
-    credential: dict[str, Any]
-
-
-class RegisterOptionsPayload(BaseModel):
-    invite_code: str = Field(default="", max_length=200)
-
-
 class PublishSignal(BaseModel):
     snapshot_id: str
     thesis: str = Field(min_length=8, max_length=500)
@@ -2753,11 +2743,6 @@ class PublishSignal(BaseModel):
 
 class ReportSignal(BaseModel):
     reason: str = Field(min_length=3, max_length=240)
-
-
-class SportsPickPayload(BaseModel):
-    selection: Literal["home", "away"]
-    expected_odds: int | None = Field(default=None, strict=True)
 
 
 class ClientErrorReport(BaseModel):
@@ -3124,40 +3109,31 @@ def roadmap_api(request: Request) -> dict[str, Any]:
 
 
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
-TELEGRAM_WEBHOOK_MAX_BYTES = 1_048_576
-
-
-@app.post("/telegram/webhook")
-async def telegram_webhook(request: Request) -> JSONResponse:
-    """Take one update from Telegram and store it for the chat worker.
-
-    This answers quickly and does no thinking, because Telegram retries anything
-    it is not answered promptly and a slow handler turns into duplicate replies.
-    The secret header is the only thing standing between this public path and
-    anyone posting forged updates, so an unset secret closes the door entirely.
-    """
-
-    if not TELEGRAM_WEBHOOK_SECRET:
-        raise HTTPException(404, "Not found")
-    supplied = request.headers.get("x-telegram-bot-api-secret-token", "")
-    if not secrets.compare_digest(supplied, TELEGRAM_WEBHOOK_SECRET):
-        raise HTTPException(404, "Not found")
-    raw = await request.body()
-    if len(raw) > TELEGRAM_WEBHOOK_MAX_BYTES:
-        raise HTTPException(413, "Update too large")
-    try:
-        payload = json.loads(raw)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(400, "Malformed update") from exc
-    if not isinstance(payload, dict):
-        raise HTTPException(400, "Malformed update")
-    await run_in_threadpool(_store_telegram_update, payload)
-    return JSONResponse({"ok": True})
 
 
 def _store_telegram_update(payload: dict[str, Any]) -> None:
     with connection() as database:
         telegram_record_update(database, payload)
+
+
+telegram_routes = create_telegram_routes(
+    TelegramRouteDependencies(
+        templates=templates,
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        webhook_secret=lambda: TELEGRAM_WEBHOOK_SECRET,
+        store_update=lambda payload: _store_telegram_update(payload),
+        run_in_threadpool=lambda *args, **kwargs: run_in_threadpool(*args, **kwargs),
+        runners_origin=lambda: RUNNERS_ORIGIN,
+    )
+)
+app.include_router(telegram_routes.router)
+telegram_webhook = telegram_routes.telegram_webhook
+telegram_announcements_page = telegram_routes.telegram_announcements_page
+telegram_announcements_api = telegram_routes.telegram_announcements_api
+publish_signal = telegram_routes.publish_signal
+signal_page = telegram_routes.signal_page
+signal_card = telegram_routes.signal_card
+report_signal = telegram_routes.report_signal
 
 
 @app.get("/api/market-clock")
@@ -8183,17 +8159,6 @@ def sports_board_response(
     )
 
 
-@app.get("/sports", response_class=HTMLResponse)
-def sports_home(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-    view: str = "signals",
-) -> RedirectResponse:
-    _ = request, runner_session, league, view
-    return RedirectResponse(f"{SPORTS_ORIGIN}/", status_code=307)
-
-
 def sports_radar_response(
     request: Request,
     runner_session: str | None,
@@ -8220,16 +8185,6 @@ def sports_radar_response(
             ),
         ),
     )
-
-
-@app.get("/sports/radar", response_class=HTMLResponse)
-def sports_radar_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=changed", status_code=307)
 
 
 def _invalidate_sports_alpha_data() -> None:
@@ -8281,330 +8236,90 @@ def sports_alpha_response(
     )
 
 
-@app.get("/alpha", response_class=HTMLResponse)
-def alpha_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse("/?view=calls", status_code=307)
-
-
-@app.get("/api/alpha")
-def alpha_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 24,
-) -> Response:
-    if product_for_request(request) == "sports":
-        enforce_rate(request, "sports-alpha", limit=120, seconds=60)
-        return _conditional_json_response(request, _sports_alpha_data(league, limit))
-    enforce_rate(request, "alpha", limit=120, seconds=60)
-    return _conditional_json_response(request, alpha_board_data())
-
-
-@app.get("/sports/alpha", response_class=HTMLResponse)
-def sports_alpha_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
-
-
-@app.get("/receipts", response_class=HTMLResponse)
-def sports_receipts_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> Response:
-    _ = runner_session, league
-    if product_for_request(request) == "sports":
-        return RedirectResponse("/?view=calls", status_code=307)
-    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
-
-
-@app.get("/sports/receipts", response_class=HTMLResponse)
-def sports_receipts_legacy_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse(f"{SPORTS_ORIGIN}/?view=calls", status_code=307)
-
-
-@app.get("/api/sports/pulse")
-def sports_pulse_api(
-    request: Request,
-    league: str = "all",
-    view: str = "signals",
-    limit: int = 30,
-) -> Response:
-    enforce_rate(request, "sports-pulse", limit=120, seconds=60)
-    return _conditional_json_response(
-        request,
-        _public_sports_pulse_data(league, view, limit)["pulse"],
-    )
-
-
-@app.get("/api/sports/golf")
-def sports_golf_api(request: Request, limit: int = 6) -> Response:
-    enforce_rate(request, "sports-golf", limit=120, seconds=60)
-    return _conditional_json_response(request, _public_golf_data(limit))
-
-
-@app.get("/api/sports/radar")
-def sports_radar_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 40,
-) -> Response:
-    enforce_rate(request, "sports-radar", limit=120, seconds=60)
-    return _conditional_json_response(
-        request,
-        _public_sports_radar_data(league, limit)["radar"],
-    )
-
-
-@app.get("/api/sports/alpha")
-def sports_alpha_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 24,
-) -> Response:
-    enforce_rate(request, "sports-alpha", limit=120, seconds=60)
-    return _conditional_json_response(request, _sports_alpha_data(league, limit))
-
-
-@app.get("/api/sports/stats")
-def sports_stats_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 24,
-) -> JSONResponse:
-    enforce_rate(request, "sports-stats", limit=120, seconds=60)
-    return JSONResponse(sports_alpha(league, limit))
-
-
-@app.get("/api/slate")
-@app.get("/api/sports/slate")
-def sports_slate_api(
-    request: Request,
-    league: str = "all",
-    limit: int = 80,
-) -> JSONResponse:
-    enforce_rate(request, "sports-slate", limit=120, seconds=60)
-    return JSONResponse(sports_slate(league, limit))
-
-
-@app.get("/sports/game/{event_id}", response_class=HTMLResponse)
-def sports_game_legacy_page(event_id: str) -> RedirectResponse:
-    return RedirectResponse(_sports_game_location(event_id), status_code=307)
-
-
-def _sports_game_location(event_id: str) -> str:
-    if event_id.startswith("golf:"):
-        with connection() as database:
-            event = database.execute(
-                "SELECT id FROM sports_golf_events WHERE id=?", (event_id,)
-            ).fetchone()
-    else:
-        event = sports_event(event_id)
-    if not event:
-        raise HTTPException(404, "Game not found")
-    canonical_id = quote(str(event["id"]), safe=":")
-    return f"{SPORTS_ORIGIN}/game/{canonical_id}"
-
-
-@app.get("/team/{provider}/{league}/{team_id}", response_class=HTMLResponse)
-def sports_team_page(
-    provider: str,
-    league: str,
-    team_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> Response:
-    profile = sports_team_profile(provider, league, team_id)
-    if profile is None:
-        raise HTTPException(404, "Team not found")
-    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
-        return RedirectResponse(f"{SPORTS_ORIGIN}{request.url.path}", status_code=307)
-    return templates.TemplateResponse(
-        request,
-        "sports_entity.html",
-        page_context(
-            request,
-            runner_session,
-            nav_product="sports",
-            screen={"market": "sports", "kind": "profile", "query": ""},
-            profile=profile,
+sports_routes = create_sports_routes(
+    SportsRouteDependencies(
+        templates=templates,
+        sports_origin=lambda: SPORTS_ORIGIN,
+        app_origin=lambda: APP_ORIGIN,
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        product_for_request=lambda *args, **kwargs: product_for_request(*args, **kwargs),
+        _conditional_json_response=lambda *args, **kwargs: _conditional_json_response(
+            *args, **kwargs
+        ),
+        _sports_alpha_data=lambda *args, **kwargs: _sports_alpha_data(*args, **kwargs),
+        alpha_board_data=lambda *args, **kwargs: alpha_board_data(*args, **kwargs),
+        _public_sports_pulse_data=lambda *args, **kwargs: _public_sports_pulse_data(
+            *args, **kwargs
+        ),
+        _public_golf_data=lambda *args, **kwargs: _public_golf_data(*args, **kwargs),
+        _public_sports_radar_data=lambda *args, **kwargs: _public_sports_radar_data(
+            *args, **kwargs
+        ),
+        sports_alpha=lambda *args, **kwargs: sports_alpha(*args, **kwargs),
+        sports_slate=lambda *args, **kwargs: sports_slate(*args, **kwargs),
+        connection=lambda *args, **kwargs: connection(*args, **kwargs),
+        sports_event=lambda *args, **kwargs: sports_event(*args, **kwargs),
+        sports_team_profile=lambda *args, **kwargs: sports_team_profile(*args, **kwargs),
+        sports_player_profile=lambda *args, **kwargs: sports_player_profile(*args, **kwargs),
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        golf_event=lambda *args, **kwargs: golf_event(*args, **kwargs),
+        simple_market_detail=lambda *args, **kwargs: simple_market_detail(*args, **kwargs),
+        golf_market_context=lambda *args, **kwargs: golf_market_context(*args, **kwargs),
+        _public_screen_data=lambda *args, **kwargs: _public_screen_data(*args, **kwargs),
+        current_user=lambda *args, **kwargs: current_user(*args, **kwargs),
+        sports_pick_for_user=lambda *args, **kwargs: sports_pick_for_user(*args, **kwargs),
+        sports_call_reward=lambda *args, **kwargs: sports_call_reward(*args, **kwargs),
+        comments_for_subject=lambda *args, **kwargs: comments_for_subject(*args, **kwargs),
+        daily_report_for_sports_game=lambda *args, **kwargs: daily_report_for_sports_game(
+            *args, **kwargs
+        ),
+        comment_count_for_subject=lambda *args, **kwargs: comment_count_for_subject(
+            *args, **kwargs
+        ),
+        _flash_provider_ready=lambda *args, **kwargs: _flash_provider_ready(*args, **kwargs),
+        _flash_report_action=lambda *args, **kwargs: _flash_report_action(*args, **kwargs),
+        latest_commission=lambda *args, **kwargs: latest_commission(*args, **kwargs),
+        _sports_report_key=lambda *args, **kwargs: _sports_report_key(*args, **kwargs),
+        require_origin=lambda *args, **kwargs: require_origin(*args, **kwargs),
+        require_user=lambda *args, **kwargs: require_user(*args, **kwargs),
+        _require_research_route=lambda *args, **kwargs: _require_research_route(*args, **kwargs),
+        _create_research_commission=lambda *args, **kwargs: _create_research_commission(
+            *args, **kwargs
+        ),
+        _enqueue_created_research_report=lambda *args, **kwargs: _enqueue_created_research_report(
+            *args, **kwargs
+        ),
+        _commission_api_payload=lambda *args, **kwargs: _commission_api_payload(*args, **kwargs),
+        run_in_threadpool=lambda *args, **kwargs: run_in_threadpool(*args, **kwargs),
+        create_sports_pick=lambda *args, **kwargs: create_sports_pick(*args, **kwargs),
+        _invalidate_public_screen_data=lambda *args, **kwargs: _invalidate_public_screen_data(
+            *args, **kwargs
+        ),
+        _invalidate_sports_alpha_data=lambda *args, **kwargs: _invalidate_sports_alpha_data(
+            *args, **kwargs
         ),
     )
-
-
-@app.get("/player/{provider}/{league}/{player_id}", response_class=HTMLResponse)
-def sports_player_page(
-    provider: str,
-    league: str,
-    player_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> Response:
-    profile = sports_player_profile(provider, league, player_id)
-    if profile is None:
-        raise HTTPException(404, "Player not found")
-    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
-        return RedirectResponse(f"{SPORTS_ORIGIN}{request.url.path}", status_code=307)
-    return templates.TemplateResponse(
-        request,
-        "sports_entity.html",
-        page_context(
-            request,
-            runner_session,
-            nav_product="sports",
-            screen={"market": "sports", "kind": "profile", "query": ""},
-            profile=profile,
-        ),
-    )
-
-
-@app.get("/game/{event_id}", response_class=HTMLResponse)
-def sports_game_page(
-    event_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> Response:
-    if product_for_request(request) != "sports" and SPORTS_ORIGIN != APP_ORIGIN:
-        return RedirectResponse(_sports_game_location(event_id), status_code=307)
-    if event_id.startswith("golf:"):
-        golf = golf_event(event_id)
-        if golf is None:
-            raise HTTPException(404, "Game not found")
-        return templates.TemplateResponse(
-            request,
-            "sports_golf_detail.html",
-            page_context(
-                request,
-                runner_session,
-                nav_product="sports",
-                screen=simple_market_detail(
-                    "sports",
-                    golf,
-                    outcome=request.query_params.get("outcome", ""),
-                    contract=request.query_params.get("contract", ""),
-                ),
-                golf=golf,
-                golf_context=golf_market_context(golf),
-            ),
-        )
-    public_data = _public_screen_data(
-        "sports-game",
-        event_id,
-        lambda: {"event": sports_event(event_id)},
-    )
-    event = public_data.get("event")
-    if not event:
-        raise HTTPException(404, "Game not found")
-    user = current_user(runner_session)
-    user_id = str(user["id"]) if user else None
-    my_pick = sports_pick_for_user(user_id, event_id) if user_id else None
-    quote = event.get("paper_odds") or {}
-    pick_rewards = {
-        "away": sports_call_reward(quote.get("away_odds")),
-        "home": sports_call_reward(quote.get("home_odds")),
-    }
-    comments = comments_for_subject("sports_game", event_id, current_user_id=user_id)
-    latest_report = daily_report_for_sports_game(event_id, user_id)
-    sports_path_prefix = ""
-    return templates.TemplateResponse(
-        request=request,
-        name="simple_sports_detail.html",
-        context=page_context(
-            request,
-            runner_session,
-            resolved_user=user,
-            event=event,
-            my_pick=my_pick,
-            pick_rewards=pick_rewards,
-            comments=comments,
-            comment_count=comment_count_for_subject("sports_game", event_id),
-            comment_generation_enabled=_flash_provider_ready(),
-            latest_commission=latest_report,
-            flash_report=_flash_report_action(
-                user_id=user_id,
-                latest_report=latest_report,
-                latest_attempt=latest_commission(user_id, _sports_report_key(event_id))
-                if user_id
-                else None,
-                start_url=f"/api/research/game/{event_id}",
-                login_url=f"/login?next={sports_path_prefix}/game/{event_id}",
-                sports_event=event,
-            ),
-            active_tab="pulse",
-            nav_product="sports",
-            sports_path_prefix=sports_path_prefix,
-        ),
-    )
-
-
-@app.post("/api/research/game/{event_id}")
-@app.post("/api/sports/games/{event_id}/research")
-async def commission_sports_research_api(
-    event_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "commission-sports-research", limit=20, seconds=3600, subject=user["id"])
-    if not sports_event(event_id):
-        raise HTTPException(404, "Game not found")
-    _require_research_route(str(user["id"]))
-    report, created = await run_in_threadpool(
-        _create_research_commission,
-        str(user["id"]),
-        _sports_report_key(event_id),
-    )
-    if created:
-        report = await _enqueue_created_research_report(report, str(user["id"]))
-    payload = _commission_api_payload(report, str(user["id"]))
-    payload["created"] = created
-    return JSONResponse(payload, status_code=202 if payload["status"] == "running" else 200)
-
-
-@app.post("/api/calls/game/{event_id}")
-@app.post("/api/picks/{event_id}")
-@app.post("/api/sports/picks/{event_id}")
-def create_sports_pick_api(
-    event_id: str,
-    payload: SportsPickPayload,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "sports-pick", limit=20, seconds=60, subject=str(user["id"]))
-    try:
-        pick = create_sports_pick(
-            str(user["id"]),
-            event_id,
-            payload.selection,
-            **(
-                {"expected_odds": payload.expected_odds}
-                if payload.expected_odds is not None
-                else {}
-            ),
-        )
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    _invalidate_public_screen_data("sports-game", event_id)
-    _invalidate_sports_alpha_data()
-    if pick.get("caller_handle"):
-        _invalidate_public_screen_data("caller", str(pick["caller_handle"]))
-    return JSONResponse(pick, status_code=201)
+)
+app.include_router(sports_routes.router)
+sports_home = sports_routes.sports_home
+sports_radar_page = sports_routes.sports_radar_page
+alpha_page = sports_routes.alpha_page
+alpha_api = sports_routes.alpha_api
+sports_alpha_page = sports_routes.sports_alpha_page
+sports_receipts_page = sports_routes.sports_receipts_page
+sports_receipts_legacy_page = sports_routes.sports_receipts_legacy_page
+sports_pulse_api = sports_routes.sports_pulse_api
+sports_golf_api = sports_routes.sports_golf_api
+sports_radar_api = sports_routes.sports_radar_api
+sports_alpha_api = sports_routes.sports_alpha_api
+sports_stats_api = sports_routes.sports_stats_api
+sports_slate_api = sports_routes.sports_slate_api
+sports_game_legacy_page = sports_routes.sports_game_legacy_page
+sports_team_page = sports_routes.sports_team_page
+sports_player_page = sports_routes.sports_player_page
+sports_game_page = sports_routes.sports_game_page
+commission_sports_research_api = sports_routes.commission_sports_research_api
+create_sports_pick_api = sports_routes.create_sports_pick_api
 
 
 @app.get("/api/pulse")
@@ -11573,450 +11288,57 @@ def intelligence_api(_access: None = Depends(require_operations_access)) -> JSON
     return JSONResponse(intelligence_data())
 
 
-@app.get("/auth/openrouter/callback")
-def legacy_openrouter_callback() -> RedirectResponse:
-
-    return RedirectResponse("/", 303)
-
-
-@app.get("/signup", response_class=HTMLResponse)
-def signup_page() -> RedirectResponse:
-    return RedirectResponse("/login", 308)
-
-
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, runner_session: str | None = Cookie(default=None)) -> HTMLResponse:
-    user = current_user(runner_session)
-    if user:
-        return RedirectResponse("/", 303)
-    return templates.TemplateResponse(
-        request=request,
-        name="auth.html",
-        context=page_context(
-            request,
-            runner_session,
-            resolved_user=None,
-            next_path=safe_next_path(
-                request.query_params.get("next") if "query_string" in request.scope else None
-            ),
+auth_routes = create_auth_routes(
+    AuthRouteDependencies(
+        templates=templates,
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        current_user=lambda session: current_user(session),
+        require_origin=lambda request: require_origin(request),
+        require_user=lambda session: require_user(session),
+        require_recent_auth=lambda session: require_recent_auth(session),
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        create_session=lambda *args, **kwargs: create_session(*args, **kwargs),
+        mark_session_authenticated=lambda session, user_id: mark_session_authenticated(
+            session, user_id
         ),
-    )
-
-
-@app.get("/.well-known/webauthn")
-def webauthn_related_origins() -> JSONResponse:
-
-    origins = list(
-        dict.fromkeys(
-            origin for origin in (RUNNERS_ORIGIN, SPORTS_ORIGIN) if origin.startswith("https://")
-        )
-    )
-    return JSONResponse(
-        {"origins": origins},
-        headers={"Cache-Control": "public, max-age=300"},
-    )
-
-
-def _invite_hash(value: str) -> str:
-    return hashlib.sha256(f"rati-registration-v1:{value.strip()}".encode()).hexdigest()
-
-
-def _validated_registration_invite(value: str) -> str | None:
-    if REGISTRATION_MODE == "open":
-        return None
-    supplied_hash = _invite_hash(value)
-    allowed_hashes = (_invite_hash(code) for code in REGISTRATION_INVITE_CODES)
-    if not any(secrets.compare_digest(supplied_hash, allowed) for allowed in allowed_hashes):
-        raise HTTPException(403, "Invite code is invalid or has already been used.")
-    return supplied_hash
-
-
-@app.post("/api/auth/register/options")
-def register_options(
-    request: Request,
-    payload: RegisterOptionsPayload | None = None,
-) -> JSONResponse:
-    require_origin(request)
-    enforce_rate(request, "register-options", limit=8, seconds=600)
-    enforce_rate(request, "register-options-daily", limit=12, seconds=86400)
-    invite_hash = _validated_registration_invite((payload or RegisterOptionsPayload()).invite_code)
-    user_id = str(uuid.uuid4())
-    username = f"member_{user_id.replace('-', '')[:16]}"
-    display_name = "Member"
-    with connection() as db:
-        db.execute("DELETE FROM auth_challenges WHERE expires_at<=?", (iso(),))
-        db.execute(
-            """
-            DELETE FROM users WHERE status='pending' AND created_at<?
-            AND NOT EXISTS(SELECT 1 FROM passkeys p WHERE p.user_id=users.id)
-            """,
-            (iso(now() - timedelta(minutes=15)),),
-        )
-        pending_invite = None
-        if invite_hash:
-            pending_invite = db.execute(
-                """
-                SELECT id,username,display_name,status FROM users
-                WHERE registration_invite_hash=?
-                """,
-                (invite_hash,),
-            ).fetchone()
-        if pending_invite:
-            if str(pending_invite["status"]) != "pending":
-                raise HTTPException(403, "Invite code is invalid or has already been used.")
-            user_id = str(pending_invite["id"])
-            username = str(pending_invite["username"])
-            display_name = str(pending_invite["display_name"])
-            db.execute(
-                "DELETE FROM auth_challenges WHERE kind='register' AND user_id=?",
-                (user_id,),
-            )
-        else:
-            inserted = db.execute(
-                """
-                INSERT INTO users(
-                    id,username,display_name,status,created_at,registration_invite_hash
-                ) VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING
-                """,
-                (user_id, username, display_name, "pending", iso(), invite_hash),
-            )
-            if inserted.rowcount != 1:
-                raise HTTPException(403, "Invite code is invalid or has already been used.")
-    options = generate_registration_options(
-        rp_id=rp_id_for_request(request),
-        rp_name="RATi",
-        user_id=user_id.encode(),
-        user_name=username,
-        user_display_name=display_name,
-        timeout=60_000,
-        attestation=AttestationConveyancePreference.NONE,
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            authenticator_attachment=AuthenticatorAttachment.PLATFORM,
-            resident_key=ResidentKeyRequirement.REQUIRED,
-            user_verification=UserVerificationRequirement.REQUIRED,
+        save_challenge=lambda *args, **kwargs: save_challenge(*args, **kwargs),
+        take_challenge=lambda token, kind: take_challenge(token, kind),
+        rp_id_for_request=lambda request: rp_id_for_request(request),
+        origin_for_request=lambda request: origin_for_request(request),
+        legacy_passkey_migration_available=lambda request: legacy_passkey_migration_available(
+            request
         ),
+        enum_value=lambda value: enum_value(value),
+        token_hash=lambda token: token_hash(token),
+        iso=lambda *args, **kwargs: iso(*args, **kwargs),
+        now=lambda: now(),
+        connection=lambda: connection(),
+        runners_origin=lambda: RUNNERS_ORIGIN,
+        sports_origin=lambda: SPORTS_ORIGIN,
+        legacy_rp_id=lambda: LEGACY_RP_ID,
+        registration_mode=lambda: REGISTRATION_MODE,
+        registration_invite_codes=lambda: REGISTRATION_INVITE_CODES,
+        session_cookie=SESSION_COOKIE,
+        cookie_domain=COOKIE_DOMAIN,
     )
-    flow_token = save_challenge("register", options.challenge, user_id)
-    return JSONResponse({"flow_token": flow_token, "options": json.loads(options_to_json(options))})
-
-
-@app.post("/api/auth/register/verify")
-def register_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
-    require_origin(request)
-    enforce_rate(request, "register-verify", limit=12, seconds=600)
-    flow = take_challenge(payload.flow_token, "register")
-    try:
-        verification = verify_registration_response(
-            credential=payload.credential,
-            expected_challenge=flow["challenge"],
-            expected_rp_id=rp_id_for_request(request),
-            expected_origin=origin_for_request(request),
-            require_user_verification=True,
-        )
-    except Exception as exc:
-        raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
-    response = JSONResponse({"ok": True, "redirect": "/"})
-    transports = payload.credential.get("response", {}).get("transports", [])
-    with connection() as db:
-        db.execute(
-            """
-            INSERT INTO passkeys(
-                credential_id,user_id,public_key,sign_count,device_type,backed_up,
-                transports,created_at
-            ) VALUES(?,?,?,?,?,?,?,?)
-            """,
-            (
-                verification.credential_id,
-                flow["user_id"],
-                verification.credential_public_key,
-                verification.sign_count,
-                enum_value(verification.credential_device_type),
-                int(verification.credential_backed_up),
-                json.dumps(transports),
-                iso(),
-            ),
-        )
-        db.execute("UPDATE users SET status='active' WHERE id=?", (flow["user_id"],))
-        ensure_comment_avatar(db, str(flow["user_id"]))
-    create_session(flow["user_id"], response)
-    return response
-
-
-@app.post("/api/auth/login/options")
-def login_options(request: Request) -> JSONResponse:
-    require_origin(request)
-    enforce_rate(request, "login-options", limit=15, seconds=600)
-    options = generate_authentication_options(
-        rp_id=rp_id_for_request(request),
-        timeout=60_000,
-        user_verification=UserVerificationRequirement.REQUIRED,
-    )
-    flow_token = save_challenge("login", options.challenge)
-    return JSONResponse({"flow_token": flow_token, "options": json.loads(options_to_json(options))})
-
-
-@app.post("/api/auth/login/verify")
-def login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
-    require_origin(request)
-    enforce_rate(request, "login-verify", limit=20, seconds=600)
-    flow = take_challenge(payload.flow_token, "login")
-    credential_id = base64url_to_bytes(payload.credential.get("id", ""))
-    with connection() as db:
-        passkey = db.execute(
-            "SELECT * FROM passkeys WHERE credential_id=?", (credential_id,)
-        ).fetchone()
-    if not passkey:
-        raise HTTPException(404, "This passkey is not registered here.")
-    try:
-        verification = verify_authentication_response(
-            credential=payload.credential,
-            expected_challenge=flow["challenge"],
-            expected_rp_id=rp_id_for_request(request),
-            expected_origin=origin_for_request(request),
-            credential_public_key=passkey["public_key"],
-            credential_current_sign_count=passkey["sign_count"],
-            require_user_verification=True,
-        )
-    except Exception as exc:
-        raise HTTPException(400, f"Passkey login failed: {exc}") from exc
-    with connection() as db:
-        db.execute(
-            "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
-            (verification.new_sign_count, iso(), credential_id),
-        )
-    response = JSONResponse({"ok": True, "redirect": "/"})
-    create_session(passkey["user_id"], response)
-    return response
-
-
-@app.post("/api/auth/login/legacy/options")
-def legacy_login_options(request: Request) -> JSONResponse:
-
-    require_origin(request)
-    if not legacy_passkey_migration_available(request):
-        raise HTTPException(404, "Legacy passkey migration is not available here.")
-    enforce_rate(request, "legacy-login-options", limit=10, seconds=600)
-    options = generate_authentication_options(
-        rp_id=LEGACY_RP_ID,
-        timeout=60_000,
-        user_verification=UserVerificationRequirement.REQUIRED,
-    )
-    flow_token = save_challenge("login_legacy", options.challenge)
-    return JSONResponse({"flow_token": flow_token, "options": json.loads(options_to_json(options))})
-
-
-@app.post("/api/auth/login/legacy/verify")
-def legacy_login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
-
-    require_origin(request)
-    if not legacy_passkey_migration_available(request):
-        raise HTTPException(404, "Legacy passkey migration is not available here.")
-    enforce_rate(request, "legacy-login-verify", limit=12, seconds=600)
-    flow = take_challenge(payload.flow_token, "login_legacy")
-    credential_id = base64url_to_bytes(payload.credential.get("id", ""))
-    with connection() as db:
-        passkey = db.execute(
-            "SELECT * FROM passkeys WHERE credential_id=?", (credential_id,)
-        ).fetchone()
-    if not passkey:
-        raise HTTPException(404, "This passkey is not registered on the old site.")
-    try:
-        verification = verify_authentication_response(
-            credential=payload.credential,
-            expected_challenge=flow["challenge"],
-            expected_rp_id=LEGACY_RP_ID,
-            expected_origin=origin_for_request(request),
-            credential_public_key=passkey["public_key"],
-            credential_current_sign_count=passkey["sign_count"],
-            require_user_verification=True,
-        )
-    except Exception as exc:
-        raise HTTPException(400, f"Legacy passkey login failed: {exc}") from exc
-    with connection() as db:
-        db.execute(
-            "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
-            (verification.new_sign_count, iso(), credential_id),
-        )
-    response = JSONResponse({"ok": True, "redirect": "/settings/passkey?migrate=1"})
-    create_session(passkey["user_id"], response)
-    return response
-
-
-@app.get("/settings/passkey", response_class=HTMLResponse)
-def add_passkey_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    user = current_user(runner_session)
-    if not user:
-        return RedirectResponse("/login", 303)
-    return templates.TemplateResponse(
-        request=request,
-        name="passkey_add.html",
-        context=page_context(
-            request,
-            runner_session,
-            resolved_user=user,
-            migrating_legacy_passkey=request.query_params.get("migrate") == "1",
-        ),
-    )
-
-
-@app.post("/api/auth/reauth/options")
-def reauth_options(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "reauth-options", limit=8, seconds=600, subject=user["id"])
-    with connection() as db:
-        credential_rows = db.execute(
-            "SELECT credential_id FROM passkeys WHERE user_id=? ORDER BY created_at",
-            (user["id"],),
-        ).fetchall()
-    if not credential_rows:
-        raise HTTPException(409, "This account has no passkey available for verification.")
-    options = generate_authentication_options(
-        rp_id=rp_id_for_request(request),
-        timeout=60_000,
-        allow_credentials=[
-            PublicKeyCredentialDescriptor(id=bytes(row["credential_id"])) for row in credential_rows
-        ],
-        user_verification=UserVerificationRequirement.REQUIRED,
-    )
-    flow_token = save_challenge("reauth", options.challenge, user["id"])
-    return JSONResponse({"flow_token": flow_token, "options": json.loads(options_to_json(options))})
-
-
-@app.post("/api/auth/reauth/verify")
-def reauth_verify(
-    payload: PasskeyFinish,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "reauth-verify", limit=10, seconds=600, subject=user["id"])
-    flow = take_challenge(payload.flow_token, "reauth")
-    if flow["user_id"] != user["id"]:
-        raise HTTPException(403, "Passkey request does not match this account.")
-    credential_id = base64url_to_bytes(payload.credential.get("id", ""))
-    with connection() as db:
-        passkey = db.execute(
-            "SELECT * FROM passkeys WHERE credential_id=? AND user_id=?",
-            (credential_id, user["id"]),
-        ).fetchone()
-    if not passkey:
-        raise HTTPException(403, "Use a passkey that is already registered to this account.")
-    try:
-        verification = verify_authentication_response(
-            credential=payload.credential,
-            expected_challenge=flow["challenge"],
-            expected_rp_id=rp_id_for_request(request),
-            expected_origin=origin_for_request(request),
-            credential_public_key=passkey["public_key"],
-            credential_current_sign_count=passkey["sign_count"],
-            require_user_verification=True,
-        )
-    except Exception as exc:
-        raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
-    with connection() as db:
-        db.execute(
-            "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
-            (verification.new_sign_count, iso(), credential_id),
-        )
-    mark_session_authenticated(str(runner_session), str(user["id"]))
-    return JSONResponse({"ok": True})
-
-
-@app.post("/api/auth/passkey/options")
-def add_passkey_options(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    require_recent_auth(runner_session)
-    enforce_rate(request, "add-passkey", limit=6, seconds=600, subject=user["id"])
-    options = generate_registration_options(
-        rp_id=rp_id_for_request(request),
-        rp_name="RATi",
-        user_id=user["id"].encode(),
-        user_name=user["username"],
-        user_display_name=user["display_name"],
-        timeout=60_000,
-        attestation=AttestationConveyancePreference.NONE,
-        authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.REQUIRED,
-            user_verification=UserVerificationRequirement.REQUIRED,
-        ),
-    )
-    flow_token = save_challenge("add_passkey", options.challenge, user["id"])
-    return JSONResponse({"flow_token": flow_token, "options": json.loads(options_to_json(options))})
-
-
-@app.post("/api/auth/passkey/verify")
-def add_passkey_verify(
-    payload: PasskeyFinish,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    require_recent_auth(runner_session)
-    enforce_rate(request, "add-passkey-verify", limit=8, seconds=600, subject=user["id"])
-    flow = take_challenge(payload.flow_token, "add_passkey")
-    if flow["user_id"] != user["id"]:
-        raise HTTPException(403, "Passkey request does not match this account.")
-    try:
-        verification = verify_registration_response(
-            credential=payload.credential,
-            expected_challenge=flow["challenge"],
-            expected_rp_id=rp_id_for_request(request),
-            expected_origin=origin_for_request(request),
-            require_user_verification=True,
-        )
-    except Exception as exc:
-        raise HTTPException(400, f"Passkey verification failed: {exc}") from exc
-    transports = payload.credential.get("response", {}).get("transports", [])
-    with connection() as db:
-        db.execute(
-            """
-            INSERT INTO passkeys(
-                credential_id,user_id,public_key,sign_count,device_type,backed_up,
-                transports,created_at
-            ) VALUES(?,?,?,?,?,?,?,?)
-            """,
-            (
-                verification.credential_id,
-                user["id"],
-                verification.credential_public_key,
-                verification.sign_count,
-                enum_value(verification.credential_device_type),
-                int(verification.credential_backed_up),
-                json.dumps(transports),
-                iso(),
-            ),
-        )
-    response = JSONResponse({"ok": True, "redirect": "/"})
-    create_session(str(user["id"]), response, revoke_existing=True)
-    return response
-
-
-@app.post("/api/auth/logout")
-def logout(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    enforce_rate(request, "logout", limit=20, seconds=60)
-    if runner_session:
-        with connection() as db:
-            db.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash(runner_session),))
-    response = JSONResponse({"ok": True, "redirect": "/"})
-    response.delete_cookie(SESSION_COOKIE, path="/", domain=COOKIE_DOMAIN)
-    return response
+)
+app.include_router(auth_routes.router)
+legacy_openrouter_callback = auth_routes.legacy_openrouter_callback
+signup_page = auth_routes.signup_page
+login_page = auth_routes.login_page
+webauthn_related_origins = auth_routes.webauthn_related_origins
+register_options = auth_routes.register_options
+register_verify = auth_routes.register_verify
+login_options = auth_routes.login_options
+login_verify = auth_routes.login_verify
+legacy_login_options = auth_routes.legacy_login_options
+legacy_login_verify = auth_routes.legacy_login_verify
+add_passkey_page = auth_routes.add_passkey_page
+reauth_options = auth_routes.reauth_options
+reauth_verify = auth_routes.reauth_verify
+add_passkey_options = auth_routes.add_passkey_options
+add_passkey_verify = auth_routes.add_passkey_verify
+logout = auth_routes.logout
 
 
 def recent_sec_catalysts(tickers: list[str]) -> dict[str, dict[str, Any]]:
@@ -12946,20 +12268,6 @@ def dispatch_release_announcement() -> dict[str, Any]:
         TELEGRAM_ALERT_DISPATCH_LOCK.release()
 
 
-@app.get("/telegram/announcements", response_class=HTMLResponse)
-def telegram_announcements_page(request: Request):
-    return templates.TemplateResponse(
-        request, "telegram_announcements.html", page_context(request, None, resolved_user=None)
-    )
-
-
-@app.get("/api/telegram/announcements")
-def telegram_announcements_api(_access: None = Depends(require_operations_access)):
-    from runner_web.telegram_outbox import announcement_history
-
-    return JSONResponse(announcement_history(), headers={"Cache-Control": "no-store"})
-
-
 def _spawn_telegram_dispatch(*, scan_run_id: str | None = None) -> None:
     """Run the channel dispatch off the calling thread when the feature is on."""
 
@@ -13335,32 +12643,6 @@ def _run_scan(mode: str = "penny") -> dict[str, Any]:
         },
         "warnings": scan_warnings[:4],
     }
-
-
-@app.post("/api/signals")
-def publish_signal() -> None:
-
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
-
-
-@app.get("/s/{public_id}", response_class=HTMLResponse)
-def signal_page(
-    public_id: str,
-) -> RedirectResponse:
-    _ = public_id
-    return RedirectResponse(f"{RUNNERS_ORIGIN}/community", status_code=308)
-
-
-@app.get("/s/{public_id}/card.png")
-def signal_card(public_id: str) -> None:
-    _ = public_id
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
-
-
-@app.post("/api/signals/{public_id}/report")
-def report_signal(public_id: str) -> None:
-    _ = public_id
-    raise HTTPException(410, "Public Signals were replaced by Calls.")
 
 
 CALLER_BOARD_DAYS = 7
