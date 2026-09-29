@@ -93,7 +93,6 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .section-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .section-heading h2{margin:0;font-size:19px;font-weight:600}
 .section-heading b{color:var(--muted);font-size:12px;font-weight:600}
-.avatar-story-note{color:var(--muted);font-size:12px}
 .comment-form{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin:12px 0 0}
 .comment-form small{color:var(--muted);font-size:11px}
 .comment-form button,.comment-login{padding:0;border:0;background:none;color:var(--muted);font-size:12px;font-weight:600;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.comment-form button:hover,.comment-login:hover{color:var(--text)}

@@ -1,6 +1,6 @@
 # Market Actors: insider map and AI characters
 
-Design update, 12 September 2026: the [pseudonymous identity design](research/pseudonymous-identity-design.md) governs the next version. It covers Sports, Stocks and Memecoins; public entity associations; stable identities; and reversible grouping and corrections. The [shared three-screen design](research/game-pattern-assessment.md) governs public presentation. Source receipts and internal evidence remain in the service layer. The sections below preserve the earlier v1 design record; their evidence panels, identity formulas and navigation proposals belong to that earlier scope. The identity revision documents the current implementation's name-based stock key and wallet-set coin key.
+Design note: the sections below are the earlier v1 design record. Public presentation follows the shared screen contract in [market-screens/README.md](market-screens/README.md); source receipts and internal evidence stay in the service layer. Stored identity records (`participant_entities`, references, claims) back the map; public identity reveals and combined avatars are not planned (see [product.md](product.md)).
 
 Status: v1 implemented 2026-09-12. Design agreed 2026-09-12.
 

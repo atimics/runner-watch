@@ -16,6 +16,7 @@ the root [README](../README.md) for how the service is built and run.
 | [memecoin-replay.md](memecoin-replay.md) | Replay rendering and channel GIF delivery |
 | [ticker-maps.md](ticker-maps.md) | Per-ticker map placement and navigation |
 | [market-actors.md](market-actors.md) | Insider/cluster map and AI characters (v1 record) |
+| [product.md](product.md) | What the product is: Calls, Comments, Reports, and what is not planned |
 
 ## Direction and in-progress work
 
@@ -24,21 +25,13 @@ pull request as the source of truth for current status.
 
 | Document | Status |
 | --- | --- |
-| [media-game.md](media-game.md) | Product framing for the playable media service |
 | [market-list-ux.md](market-list-ux.md) | Redesign: tight tagged list, one composite score, top-bar breadth filters, ticker = chart → map → metrics → comments, Avatar Sentiment ([preview](market-list-preview.html)) |
-| [playable-ticker-design.md](playable-ticker-design.md) | First game design proposal, superseded by the assessment below |
-| [research/game-pattern-assessment.md](research/game-pattern-assessment.md) | Revised design assessment; governs public presentation |
-| [research/pseudonymous-identity-design.md](research/pseudonymous-identity-design.md) | Planned identity revision; governs `market-actors.md` going forward |
 | [research/market-attention-study.md](research/market-attention-study.md) | Market attention research: ML papers, frozen candidate, chronological results, and replay receipts |
 | [research/attention-shadow-release.md](research/attention-shadow-release.md) | Live attention trial, durable outcomes, operations, and release gates |
-| [playable-ticker-backlog.md](playable-ticker-backlog.md) | Delivery structure for the game work |
-| [backlog/2026-09-12-triage.md](backlog/2026-09-12-triage.md) | Dated triage of the open backlog |
-| [reviews/pr-229-base-design.md](reviews/pr-229-base-design.md) | Read-only adversarial review of PR #229 |
 
 ## Historical records
 
-`playable-ticker-preview.html`, `research/game-pattern-sources.json` and the
-screenshots under `market-screens/` are snapshots captured on 12 September 2026
-from local previews with sample data. They document a point in time and are not
-kept in sync with the code.
+The screenshots under `market-screens/` are snapshots captured on 12 September
+2026 from local previews with sample data. They document a point in time and are
+not kept in sync with the code.
 - [Performance hot paths](performance-hot-paths.md): bounded queue reads, indexed history and benchmark receipts.

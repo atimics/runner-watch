@@ -2,9 +2,7 @@
 
 Design note, 13 September 2026. This records the list/top-bar redesign, the
 composite score, and the removal of the market-wide Map tab. It revises the
-shared screen contract in [market-screens/README.md](market-screens/README.md)
-and builds on the identity work in
-[research/pseudonymous-identity-design.md](research/pseudonymous-identity-design.md).
+shared screen contract in [market-screens/README.md](market-screens/README.md).
 
 A static preview lives at [market-list-preview.html](market-list-preview.html).
 
