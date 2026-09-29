@@ -39,7 +39,9 @@ COPY src ./src
 COPY web ./web
 COPY --from=desktop-renderer /desktop/dist/renderer ./desktop/dist/renderer
 RUN uv sync --locked --no-dev --no-editable
-RUN chown -R runner:runner /app
+# The app writes only under /app/data (and /tmp); the code and virtualenv stay
+# root-owned, so this layer holds two directory entries, not a copy of /app.
+RUN chown runner:runner /app && install -d -o runner -g runner /app/data
 
 ENV PATH="/app/.venv/bin:$PATH" \
     STONKS_INTEGER_RANKER_BIN="/usr/local/bin/stonks-integer-ranker"
