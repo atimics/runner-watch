@@ -301,6 +301,7 @@ def test_wallet_events_endpoint_renders_the_rows_the_page_uses(board_client, mon
     assert "Director" in payload["html"]
     assert "https://www.sec.gov/Archives/fast" in payload["html"]
 
+
 @pytest.mark.parametrize(
     ("path", "location"),
     [
@@ -356,9 +357,7 @@ def test_stock_search_reaches_rows_after_the_first_page(board_client, monkeypatc
     assert pages == [0, 1]
 
 
-def test_stock_search_opens_a_tracked_ticker_outside_the_pulse_board(
-    board_client, monkeypatch
-):
+def test_stock_search_opens_a_tracked_ticker_outside_the_pulse_board(board_client, monkeypatch):
     monkeypatch.setattr(
         web_main,
         "_public_pulse_data",

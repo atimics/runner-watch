@@ -491,9 +491,7 @@ def test_outcome_coverage_reports_what_can_be_accounted_for(
             "UPDATE scan_outcomes SET barrier_label='up',barrier_resolution='resolved' "
             "WHERE ticker='ONE'"
         )
-        database.execute(
-            "UPDATE scan_outcomes SET attempts=6 WHERE ticker='TWO'"
-        )
+        database.execute("UPDATE scan_outcomes SET attempts=6 WHERE ticker='TWO'")
 
     coverage = outcomes.outcome_coverage(current)
 

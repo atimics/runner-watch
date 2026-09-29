@@ -69,8 +69,15 @@ def add_bars(database, ticker: str, rows: list[tuple[datetime, float, float]]) -
             """,
             [
                 (
-                    ticker, _iso(moment), price, price, price, price,
-                    volume, _iso(moment), _iso(moment),
+                    ticker,
+                    _iso(moment),
+                    price,
+                    price,
+                    price,
+                    price,
+                    volume,
+                    _iso(moment),
+                    _iso(moment),
                 )
                 for moment, price, volume in rows
             ],
@@ -281,9 +288,7 @@ def test_gap_projection_reaches_the_clock_with_a_widening_band(database):
 def test_gap_projection_says_so_when_the_market_is_closed(database):
     friday_close = datetime(2026, 9, 19, 1, 0, tzinfo=UTC)  # Fri 21:00 ET
     add_bars(database, "TEST", [(friday_close, 10.0, 100)])
-    projection = price_gap.gap_projection(
-        database, "TEST", at=friday_close + timedelta(days=2)
-    )
+    projection = price_gap.gap_projection(database, "TEST", at=friday_close + timedelta(days=2))
     assert projection["market_open"] is False
     assert projection["state"] == "stale"
     assert projection["gap_minutes"] == 2_880
