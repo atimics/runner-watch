@@ -62,7 +62,6 @@ class MemecoinRoutes:
     memecoin_charts_api: Callable[..., Any]
     memecoins_api: Callable[..., Any]
     memecoin_alpha_redirect: Callable[..., Any]
-    memecoin_alpha_page: Callable[..., Any]
     memecoin_calls_api: Callable[..., Any]
     memecoin_detail_api: Callable[..., Any]
     memecoin_replay_api: Callable[..., Any]
@@ -173,24 +172,6 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
     ) -> RedirectResponse:
         _ = request, runner_session
         return RedirectResponse("/memecoins?view=calls", status_code=307)
-
-    def memecoin_alpha_page(
-        request: Request,
-        runner_session: str | None = Cookie(default=None),
-    ) -> HTMLResponse:
-        dependencies.enforce_rate(request, "memecoins", limit=120, seconds=60)
-        return dependencies.templates.TemplateResponse(
-            request,
-            "memecoin_alpha.html",
-            dependencies.page_context(
-                request,
-                runner_session,
-                nav_product="memecoins",
-                active_tab=dependencies.board_view_tabs["calls"],
-                calls=memecoin_calls(),
-                back_url="/memecoins",
-            ),
-        )
 
     @router.get("/api/memecoin-calls")
     def memecoin_calls_api(request: Request) -> dict[str, Any]:
@@ -401,7 +382,6 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
         memecoin_charts_api=memecoin_charts_api,
         memecoins_api=memecoins_api,
         memecoin_alpha_redirect=memecoin_alpha_redirect,
-        memecoin_alpha_page=memecoin_alpha_page,
         memecoin_calls_api=memecoin_calls_api,
         memecoin_detail_api=memecoin_detail_api,
         memecoin_replay_api=memecoin_replay_api,
