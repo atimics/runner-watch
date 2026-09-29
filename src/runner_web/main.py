@@ -26,7 +26,7 @@ from urllib.parse import quote, unquote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -177,10 +177,8 @@ from runner_web.market_actors import (
     ACTOR_DERIVE_INTERVAL_SECONDS,
     coin_subject_key,
     derive_market_actors,
-    market_actor_comment_budget,
     market_actor_detail,
     market_actor_map,
-    record_market_actor_comment,
 )
 from runner_web.market_clock import market_clock
 from runner_web.market_commentary import generate_report_commentary
@@ -198,12 +196,17 @@ from runner_web.market_screens import detail as simple_market_detail
 from runner_web.market_screens import stamp as screen_stamp
 from runner_web.memecoin_calls import (
     active_memecoin_call,
-    close_memecoin_call,
-    create_memecoin_call,
     expire_memecoin_calls,
     fill_memecoin_call_orders,
     memecoin_calls,
     pending_memecoin_order,
+)
+from runner_web.memecoin_routes import (
+    MEMECOIN_CHART_CACHE as MEMECOIN_CHART_CACHE,
+)
+from runner_web.memecoin_routes import (
+    MemecoinRouteDependencies,
+    create_memecoin_routes,
 )
 from runner_web.memecoins import (
     REFRESH_SECONDS,
@@ -212,7 +215,6 @@ from runner_web.memecoins import (
     memecoin_market,
     note_memecoin_view,
     refresh_memecoins,
-    request_memecoin,
     snapshot_version,
     view_note_due,
 )
@@ -283,7 +285,6 @@ from runner_web.share_cards import (
     _ticker_card_png,
     call_share,
     font,
-    memecoin_share,
     ticker_share,
 )
 from runner_web.shared_state import (
@@ -437,10 +438,7 @@ from runner_web.telegram_chat import (
     spend_engagement as telegram_spend_engagement,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
-from runner_web.wallet_registry import WALLET_ID
-from runner_web.wallet_registry import register_people as register_wallet_people
-from runner_web.wallet_registry import register_person as register_wallet_person
-from runner_web.wallet_registry import wallet as resolve_wallet
+from runner_web.wallet_routes import WalletRouteDependencies, create_wallet_routes
 from runner_web.worker_supervisor import run_supervised
 
 __all__ = [
@@ -7654,134 +7652,6 @@ async def _enqueue_created_research_report(
     return report
 
 
-@app.get("/memecoins", response_class=HTMLResponse)
-def memecoins_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    q: str = "",
-    sort: str = "volume",
-    view: str = DEFAULT_BOARD_VIEW,
-) -> Response:
-    return memecoins_board_response(request, runner_session, board_view(view), q, sort)
-
-
-def memecoins_board_response(
-    request: Request,
-    runner_session: str | None,
-    view: str,
-    q: str = "",
-    sort: str = "volume",
-) -> HTMLResponse:
-    from runner_web.stories import stories_by_subject
-
-    enforce_rate(request, "memecoins", limit=120, seconds=60)
-    market = memecoin_market(query=q, sort=sort, view="radar")
-    coins = [str(item.get("id") or "") for item in market["rows"] if item.get("id")]
-    # An address we do not track yet is queued; the next quote cycle adds it.
-    requested = not market["rows"] and request_memecoin(q)
-    return _simple_board(
-        request,
-        runner_session,
-        "memecoins",
-        market["rows"],
-        view,
-        q,
-        updated_at=str(market.get("collected_at") or ""),
-        stories=stories_by_subject("memecoins", coins),
-        requested=q.strip() if requested else "",
-    )
-
-
-@app.get("/memecoins/radar", response_class=HTMLResponse)
-def memecoins_radar_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    league: str = "all",
-) -> RedirectResponse:
-    _ = request, runner_session, league
-    return RedirectResponse("/memecoins?view=changed", status_code=307)
-
-
-@app.get("/api/memecoins/evidence/{signature}")
-def memecoin_transaction_evidence(request: Request, signature: str):
-    from runner_web.memecoin_evidence import transaction_receipt
-
-    enforce_rate(request, "memecoin_evidence", limit=30, seconds=60)
-    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{64,88}", signature):
-        raise HTTPException(404, "Transaction receipt unavailable")
-    receipt = transaction_receipt(signature)
-    if receipt is None:
-        raise HTTPException(404, "Transaction receipt unavailable")
-    return receipt
-
-
-MEMECOIN_CHART_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-
-
-@app.get("/api/memecoins/charts")
-async def memecoin_charts_api(request: Request, ids: str = "", offset: int = 0) -> Response:
-    """Board sparklines, one bounded batch like the stock board's."""
-    from runner_web.memecoin_store import memecoin_sparklines
-
-    _ = offset  # The row ids already name the page.
-    enforce_rate(request, "memecoin-charts", limit=20, seconds=60)
-    requested = sorted(
-        {coin for coin in ids.split(",") if re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin)}
-    )[:50]
-    key = ",".join(requested)
-    cached = MEMECOIN_CHART_CACHE.get(key)
-    if cached and time.monotonic() - cached[0] < 60:
-        payload = cached[1]
-    else:
-        charts = await run_in_threadpool(memecoin_sparklines, requested, at=now())
-        payload = {"charts": charts, "annotations": {}}
-        if len(MEMECOIN_CHART_CACHE) > 200:
-            MEMECOIN_CHART_CACHE.clear()
-        MEMECOIN_CHART_CACHE[key] = (time.monotonic(), payload)
-    return _conditional_json_response(request, payload)
-
-
-@app.get("/api/memecoins")
-def memecoins_api(request: Request, q: str = "", sort: str = "volume", view: str = "radar"):
-    enforce_rate(request, "memecoins", limit=120, seconds=60)
-    market = memecoin_market(query=q, sort=sort, view=view)
-    return {**market, "requested": bool(not market["rows"] and request_memecoin(q))}
-
-
-@app.get("/memecoins/alpha", response_class=HTMLResponse)
-def memecoin_alpha_redirect(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> RedirectResponse:
-    _ = request, runner_session
-    return RedirectResponse("/memecoins?view=calls", status_code=307)
-
-
-def memecoin_alpha_page(
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    enforce_rate(request, "memecoins", limit=120, seconds=60)
-    return templates.TemplateResponse(
-        request,
-        "memecoin_alpha.html",
-        page_context(
-            request,
-            runner_session,
-            nav_product="memecoins",
-            active_tab=BOARD_VIEW_TABS["calls"],
-            calls=memecoin_calls(),
-            back_url="/memecoins",
-        ),
-    )
-
-
-@app.get("/api/memecoin-calls")
-def memecoin_calls_api(request: Request) -> dict[str, Any]:
-    enforce_rate(request, "memecoins", limit=120, seconds=60)
-    return {"calls": memecoin_calls()}
-
-
 def _cached_memecoin_detail(coin_id: str) -> dict[str, Any] | None:
     payload = _public_screen_data(
         "memecoin-detail",
@@ -7810,359 +7680,6 @@ def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
         "pool_state": memecoin_pool_state(detail["coin"]),
         "can_call": detail["status"] == "ok" and not detail["coin"]["stale"],
     }
-
-
-@app.get("/api/memecoins/{coin_id}")
-def memecoin_detail_api(coin_id: str, request: Request) -> dict[str, Any]:
-    enforce_rate(request, "memecoins", limit=120, seconds=60)
-    return _memecoin_detail_payload(coin_id)
-
-
-@app.get("/api/memecoins/{coin_id}/replay")
-def memecoin_replay_api(coin_id: str, request: Request, revision: str | None = None):
-    enforce_rate(request, "memecoin_replay", limit=30, seconds=60)
-    if _cached_memecoin_detail(coin_id) is None or (
-        revision and not re.fullmatch(r"[a-f0-9]{64}", revision)
-    ):
-        raise HTTPException(404, "Replay not found")
-    try:
-        status = _cached_replay_status(coin_id, revision)
-    except ValueError:
-        raise HTTPException(409, "Saved replay needs an evidence review") from None
-    if revision and status["status"] != "ready":
-        raise HTTPException(404, "Replay not found")
-    return status
-
-
-def _cached_replay_status(coin_id: str, revision: str | None) -> dict[str, Any]:
-    from runner_web.memecoin_replay_store import replay_status
-
-    return _public_screen_data(
-        "memecoin-replay",
-        f"{coin_id}:{revision or ''}",
-        lambda: replay_status(coin_id, revision),
-    )
-
-
-def _memecoin_replay_artifact(coin_id: str, replay_id: str, request: Request, *, gif: bool):
-    from runner_web.memecoin_replay_store import saved_replay
-
-    enforce_rate(request, "memecoin_replay", limit=30, seconds=60)
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id) or not re.fullmatch(
-        r"[a-f0-9]{64}", replay_id
-    ):
-        raise HTTPException(404, "Replay not found")
-    try:
-        record = saved_replay(coin_id, replay_id, with_gif=gif)
-    except ValueError:
-        raise HTTPException(409, "Saved replay needs an evidence review") from None
-    if record is None:
-        raise HTTPException(404, "Replay not found")
-    content = record["gif"] if gif else json.dumps(record["payload"], allow_nan=False).encode()
-    suffix = "gif" if gif else "json"
-    return Response(
-        content,
-        media_type="image/gif" if gif else "application/json",
-        headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "ETag": '"' + (record["gif_sha256"] if gif else replay_id) + '"',
-            "Content-Disposition": f'inline; filename="token-replay-{replay_id[:12]}.{suffix}"',
-        },
-    )
-
-
-@app.get("/api/memecoins/{coin_id}/replays/{replay_id}.gif")
-def memecoin_replay_gif_api(coin_id: str, replay_id: str, request: Request):
-    return _memecoin_replay_artifact(coin_id, replay_id, request, gif=True)
-
-
-@app.get("/api/memecoins/{coin_id}/replays/{replay_id}.json")
-def memecoin_replay_evidence_api(coin_id: str, replay_id: str, request: Request):
-    return _memecoin_replay_artifact(coin_id, replay_id, request, gif=False)
-
-
-@app.get("/api/memecoins/{coin_id}/replays/{replay_id}/receipts/{signature}")
-def memecoin_replay_receipt_api(coin_id: str, replay_id: str, signature: str, request: Request):
-    package = _memecoin_replay_artifact(coin_id, replay_id, request, gif=False)
-    payload = json.loads(package.body)
-    receipt = next((row for row in payload["receipts"] if row["signature"] == signature), None)
-    if receipt is None:
-        raise HTTPException(404, "Receipt not found")
-    return JSONResponse(receipt, headers={"Cache-Control": "public, max-age=31536000, immutable"})
-
-
-@app.get("/memecoins/coin/{coin_id}", response_class=HTMLResponse)
-def memecoin_detail_page(
-    coin_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-    view: str = "pulse",
-    q: str = "",
-    sort: str = "volume",
-) -> HTMLResponse:
-    enforce_rate(request, "memecoins", limit=120, seconds=60)
-    detail = _memecoin_detail_payload(coin_id)
-    view = "radar" if view == "radar" else "pulse"
-    list_path = "/memecoins"
-    sort = sort if sort in {"volume", "market_cap", "gainers", "losers"} else "volume"
-    back_url = (
-        list_path
-        + "?"
-        + urlencode(
-            {
-                "q": q.strip()[:80],
-                "sort": sort,
-                "view": "changed" if view == "radar" else "pulse",
-            }
-        )
-    )
-    context = page_context(
-        request,
-        runner_session,
-        nav_product="memecoins",
-        active_tab=view,
-        detail=detail,
-        share=memecoin_share(detail, coin_id),
-        calls=detail["calls"],
-        back_url=back_url,
-        list_path=list_path,
-        list_view=view,
-        query=q.strip()[:80],
-        sort=sort,
-    )
-    if context["user"]:
-        detail["pending_order"] = pending_memecoin_order(str(context["user"]["id"]), coin_id)
-    context["active_call"] = (
-        (
-            active_memecoin_call(str(context["user"]["id"]), coin_id)
-            or next(
-                iter(memecoin_calls(user_id=str(context["user"]["id"]), coin_id=coin_id, limit=1)),
-                None,
-            )
-        )
-        if context["user"]
-        else None
-    )
-    user_id = str(context["user"]["id"]) if context["user"] else None
-    context["flash_report"] = _flash_report_action(
-        user_id=user_id,
-        latest_report=daily_report_for_ticker(coin_id, user_id),
-        latest_attempt=latest_commission(user_id, coin_id) if user_id else None,
-        start_url=f"/api/research/coin/{coin_id}",
-        login_url=f"/login?next=/memecoins/coin/{coin_id}",
-    )
-    return templates.TemplateResponse(request, "simple_coin_detail.html", context)
-
-
-@app.get("/api/market-actors")
-def market_actors_api(request: Request, domain: str = "stock") -> dict[str, Any]:
-    enforce_rate(request, "market-map", limit=120, seconds=60)
-    return market_actor_map(domain)
-
-
-@app.get("/api/stocks/{ticker}/map")
-def stock_ticker_map_api(
-    ticker: str,
-    request: Request,
-    cursor: str | None = Query(default=None, max_length=1024),
-) -> dict[str, Any]:
-    from runner_web.stock_map import ticker_map
-
-    enforce_rate(request, "stock-ticker-map", limit=120, seconds=60)
-    normalized = _clean_ticker(ticker)
-    try:
-        # The wallet page asks for the same holder page as the stock map, so keep
-        # it warm in the shared cache and let the browser reuse it too.
-        payload = _public_screen_data(
-            "ticker-map",
-            f"{normalized}:{cursor or 'first'}",
-            lambda: ticker_map(normalized, cursor),
-        )
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid map cursor") from exc
-    register_wallet_people(payload.get("events") or [], normalized)
-    return _conditional_json_response(request, payload)
-
-
-@app.get("/api/stocks/{ticker}/cluster-worth")
-def stock_cluster_worth_api(ticker: str, request: Request) -> Response:
-    from runner_web.cluster_worth import cluster_worth
-
-    enforce_rate(request, "stock-cluster-worth", limit=60, seconds=60)
-    normalized = _clean_ticker(ticker)
-    payload = _public_screen_data(
-        "cluster-worth", normalized, lambda: cluster_worth(normalized), ttl_seconds=300
-    )
-    return _conditional_json_response(request, payload)
-
-
-@app.get("/api/stocks/{ticker}/map/connections")
-def stock_person_connections_api(
-    ticker: str,
-    request: Request,
-    person_id: str = Query(max_length=32),
-    cursor: str | None = Query(default=None, max_length=1024),
-) -> dict[str, Any]:
-    from runner_web.stock_map import person_connections
-
-    enforce_rate(request, "stock-person-connections", limit=120, seconds=60)
-    normalized = _clean_ticker(ticker)
-    try:
-        payload = _public_screen_data(
-            "person-connections",
-            f"{normalized}:{person_id}:{cursor or 'first'}",
-            lambda: person_connections(normalized, person_id, cursor),
-        )
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid connection request") from exc
-    register_wallet_people(payload.get("events") or [], normalized)
-    return _conditional_json_response(request, payload)
-
-
-@app.get("/wallets/stocks/{ticker}/{person_id}", response_class=HTMLResponse)
-def stock_wallet_page_legacy(
-    ticker: str,
-    person_id: str,
-    request: Request,
-) -> Response:
-    """A wallet used to be addressed through a stock; send it to the wallet path."""
-
-    _ = request
-    wallet_id = register_wallet_person(person_id, _clean_ticker(ticker))
-    # Only a minted wallet id can be a redirect target, so nothing tainted from
-    # the request reaches the Location header.
-    if wallet_id is None or not WALLET_ID.fullmatch(wallet_id):
-        raise HTTPException(404, "Wallet not found")
-    return RedirectResponse(f"/wallet/{wallet_id}", status_code=301)
-
-
-@app.get("/wallet/{wallet_id}", response_class=HTMLResponse)
-def wallet_page(
-    wallet_id: str,
-    request: Request,
-    cursor: str | None = Query(default=None, max_length=1024),
-    runner_session: str | None = Cookie(default=None),
-) -> HTMLResponse:
-    """A wallet stands on its own: no stock in the path, whatever it identifies."""
-
-    from runner_web.entity_view import entity_view
-    from runner_web.market_screens import listing
-    from runner_web.stock_map import person_connections
-
-    enforce_rate(request, "stock-wallet", limit=60, seconds=60)
-    resolved = resolve_wallet(wallet_id)
-    person_id = str(resolved.get("person_id") or "") if resolved else ""
-    if not resolved or not person_id:
-        raise HTTPException(404, "Wallet not found")
-    scope = str(resolved.get("scope") or "")
-    try:
-        connections = person_connections(scope, person_id, cursor)
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid wallet request") from exc
-    events = connections["events"]
-    register_wallet_people(events, scope)
-    person = next(
-        (entry for event in events for entry in event["people"] if entry["id"] == person_id),
-        {"name": "Wallet", "id": person_id},
-    )
-    stocks = sorted({event["ticker"] for event in events})
-    items = [_direct_ticker_item(symbol, []) or {"ticker": symbol} for symbol in stocks]
-    screen = listing("stocks", items)
-    return templates.TemplateResponse(
-        request,
-        "stock_wallet.html",
-        page_context(
-            request,
-            runner_session,
-            nav_product="runners",
-            screen=screen,
-            wallet=person,
-            wallet_events=events,
-            wallet_cursor=connections["next_cursor"],
-            wallet_ticker=scope,
-            wallet_id=wallet_id,
-            entity=entity_view(events, items, person_id),
-        ),
-    )
-
-
-@app.get("/api/wallets/{wallet_id}/filings")
-def wallet_filings_api(
-    wallet_id: str,
-    request: Request,
-    cursor: str | None = Query(default=None, max_length=1024),
-) -> Response:
-    """The next page of a wallet's filings, rendered by the same partial as the page."""
-
-    resolved = resolve_wallet(wallet_id)
-    person_id = str(resolved.get("person_id") or "") if resolved else ""
-    if not resolved or not person_id:
-        raise HTTPException(404, "Wallet not found")
-    return _wallet_filings_response(request, str(resolved.get("scope") or ""), person_id, cursor)
-
-
-@app.get("/api/wallets/stocks/{ticker}/{person_id}/events")
-def wallet_events_api(
-    ticker: str,
-    person_id: str,
-    request: Request,
-    cursor: str | None = Query(default=None, max_length=1024),
-) -> Response:
-    """The next page of a wallet's filings, rendered by the same partial the page
-    uses so the appended rows are identical."""
-
-    enforce_rate(request, "stock-wallet-events", limit=120, seconds=60)
-    return _wallet_filings_response(request, _clean_ticker(ticker), person_id, cursor)
-
-
-def _wallet_filings_response(
-    request: Request, ticker: str, person_id: str, cursor: str | None
-) -> Response:
-    from runner_web.stock_map import person_connections
-
-    try:
-        connections = person_connections(ticker, person_id, cursor)
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid wallet request") from exc
-    events = connections["events"]
-    person = next(
-        (entry for event in events for entry in event["people"] if entry["id"] == person_id),
-        {"name": "Wallet", "id": person_id},
-    )
-    partial = templates.get_template("_wallet_event.html")
-    return _conditional_json_response(
-        request,
-        {
-            "html": "".join(partial.render(event=event, wallet=person) for event in events),
-            "next_cursor": connections["next_cursor"],
-            "count": len(events),
-        },
-    )
-
-
-@app.get("/api/market-actors/{actor_id}")
-def market_actor_api(actor_id: str, request: Request) -> dict[str, Any]:
-    enforce_rate(request, "market-map", limit=120, seconds=60)
-    detail = market_actor_detail(actor_id)
-    if detail is None:
-        raise HTTPException(404, "Market actor not found")
-    return detail
-
-
-@app.get("/api/market-actors/{actor_id}/portrait")
-def market_actor_portrait_api(actor_id: str, request: Request, cached: bool = False) -> Response:
-    enforce_rate(request, "market-actor-portrait", limit=60, seconds=60)
-    existing = portrait_for_actor(actor_id)
-    if existing is None and not cached:
-        generate_actor_portrait(actor_id, api_key=_openrouter_api_key())
-        existing = portrait_for_actor(actor_id)
-    if existing is None:
-        raise HTTPException(404, "No portrait for this character")
-    return Response(
-        content=existing["bytes"],
-        media_type=existing["content_type"],
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
 
 
 def _generate_market_actor_comment_text(
@@ -8198,113 +7715,92 @@ def _generate_market_actor_comment_text(
     )
 
 
-@app.post("/api/market-actors/{actor_id}/comment")
-async def create_market_actor_comment_api(
-    actor_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    detail = market_actor_detail(actor_id)
-    if detail is None:
-        raise HTTPException(404, "Market actor not found")
-    if not _openrouter_api_key():
-        raise HTTPException(503, "AI comments are temporarily unavailable.")
-    await run_in_threadpool(
-        enforce_rate,
-        request,
-        "market-actor-comment",
-        limit=10,
-        seconds=3600,
-        subject=str(user["id"]),
+memecoin_routes = create_memecoin_routes(
+    MemecoinRouteDependencies(
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        now=lambda: now(),
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        require_origin=lambda request: require_origin(request),
+        require_user=lambda session: require_user(session),
+        templates=templates,
+        board_view=lambda value: board_view(value),
+        simple_board=lambda *args, **kwargs: _simple_board(*args, **kwargs),
+        conditional_json_response=lambda request, payload: _conditional_json_response(
+            request, payload
+        ),
+        expected_call_price=lambda request: _expected_call_price(request),
+        flash_report_action=lambda *args, **kwargs: _flash_report_action(*args, **kwargs),
+        invalidate_public_screen_data=lambda scope, identity: _invalidate_public_screen_data(
+            scope, identity
+        ),
+        public_screen_data=lambda *args, **kwargs: _public_screen_data(*args, **kwargs),
+        latest_commission=lambda user_id, ticker: latest_commission(user_id, ticker),
+        daily_report_for_ticker=lambda *args, **kwargs: daily_report_for_ticker(*args, **kwargs),
+        cached_memecoin_detail=lambda coin_id: _cached_memecoin_detail(coin_id),
+        memecoin_detail_payload=lambda coin_id: _memecoin_detail_payload(coin_id),
+        memecoin_market=lambda *args, **kwargs: memecoin_market(*args, **kwargs),
+        active_memecoin_call=lambda *args, **kwargs: active_memecoin_call(*args, **kwargs),
+        wallet_for_user=lambda user_id: wallet_for_user(user_id),
+        run_in_threadpool=lambda *args, **kwargs: run_in_threadpool(*args, **kwargs),
+        board_view_tabs=BOARD_VIEW_TABS,
+        default_board_view=DEFAULT_BOARD_VIEW,
     )
-    budget = market_actor_comment_budget(actor_id)
-    if not budget["allowed"]:
-        raise HTTPException(429, "This character has posted enough for now.")
-    actor = detail["actor"]
-    body, model = await run_in_threadpool(
-        _generate_market_actor_comment_text,
-        actor_id,
-        avatar=actor["avatar"],
+)
+app.include_router(memecoin_routes.router)
+memecoins_page = memecoin_routes.memecoins_page
+memecoins_board_response = memecoin_routes.memecoins_board_response
+memecoins_radar_page = memecoin_routes.memecoins_radar_page
+memecoin_transaction_evidence = memecoin_routes.memecoin_transaction_evidence
+memecoin_charts_api = memecoin_routes.memecoin_charts_api
+memecoins_api = memecoin_routes.memecoins_api
+memecoin_alpha_redirect = memecoin_routes.memecoin_alpha_redirect
+memecoin_alpha_page = memecoin_routes.memecoin_alpha_page
+memecoin_calls_api = memecoin_routes.memecoin_calls_api
+memecoin_detail_api = memecoin_routes.memecoin_detail_api
+memecoin_replay_api = memecoin_routes.memecoin_replay_api
+memecoin_replay_gif_api = memecoin_routes.memecoin_replay_gif_api
+memecoin_replay_evidence_api = memecoin_routes.memecoin_replay_evidence_api
+memecoin_replay_receipt_api = memecoin_routes.memecoin_replay_receipt_api
+memecoin_detail_page = memecoin_routes.memecoin_detail_page
+make_memecoin_call_api = memecoin_routes.make_memecoin_call_api
+close_memecoin_call_api = memecoin_routes.close_memecoin_call_api
+wallet_routes = create_wallet_routes(
+    WalletRouteDependencies(
+        enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+        require_origin=lambda request: require_origin(request),
+        require_user=lambda session: require_user(session),
+        templates=templates,
+        public_screen_data=lambda *args, **kwargs: _public_screen_data(*args, **kwargs),
+        conditional_json_response=lambda request, payload: _conditional_json_response(
+            request, payload
+        ),
+        clean_ticker=lambda ticker: _clean_ticker(ticker),
+        direct_ticker_item=lambda query, rows: _direct_ticker_item(query, rows),
+        openrouter_api_key=lambda: _openrouter_api_key(),
+        iso=lambda *args, **kwargs: iso(*args, **kwargs),
+        generate_market_actor_comment_text=lambda *args, **kwargs: (
+            _generate_market_actor_comment_text(*args, **kwargs)
+        ),
+        connection=lambda: connection(),
+        generate_actor_portrait=lambda *args, **kwargs: generate_actor_portrait(*args, **kwargs),
+        portrait_for_actor=lambda actor_id: portrait_for_actor(actor_id),
+        market_actor_map=lambda domain: market_actor_map(domain),
+        run_in_threadpool=lambda *args, **kwargs: run_in_threadpool(*args, **kwargs),
     )
-    comment_id = secrets.token_urlsafe(10)
-    primary = detail["evidence"][0]["subject_key"] if detail["evidence"] else actor_id
-    with connection() as db:
-        db.execute(
-            """
-            INSERT INTO market_actor_comments(
-                id,actor_id,subject_key,body,generation_model,created_at
-            ) VALUES(?,?,?,?,?,?)
-            """,
-            (comment_id, actor_id, str(primary), body, model, iso()),
-        )
-    record_market_actor_comment()
-    updated = market_actor_detail(actor_id) or {"comments": []}
-    return JSONResponse(
-        {
-            "comment": updated["comments"][0] if updated["comments"] else None,
-            "budget": market_actor_comment_budget(actor_id),
-        },
-        status_code=201,
-    )
-
-
-@app.post("/api/memecoins/{coin_id}/calls")
-async def make_memecoin_call_api(
-    coin_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "call-create", limit=12, seconds=3600, subject=user["id"])
-    expected = await _expected_call_price(request)
-    try:
-        order = await run_in_threadpool(
-            create_memecoin_call, str(user["id"]), coin_id, expected_price=expected
-        )
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    _invalidate_public_screen_data("caller", str(order["caller_handle"]))
-    # Accepted, not filled: the Call opens at the next quote.
-    return JSONResponse(
-        {"order": order, "balance": wallet_for_user(str(user["id"]))["balance"]},
-        status_code=202,
-    )
-
-
-@app.post("/api/memecoin-calls/{public_id}/close")
-async def close_memecoin_call_api(
-    public_id: str,
-    request: Request,
-    runner_session: str | None = Cookie(default=None),
-) -> JSONResponse:
-    require_origin(request)
-    user = require_user(runner_session)
-    enforce_rate(request, "call-close", limit=12, seconds=3600, subject=user["id"])
-    expected = await _expected_call_price(request)
-    try:
-        call = await run_in_threadpool(
-            close_memecoin_call, str(user["id"]), public_id, expected_price=expected
-        )
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    if call is None:
-        raise HTTPException(404, "Call not found")
-    _invalidate_public_screen_data("caller", str(call["caller_handle"]))
-    wallet = wallet_for_user(str(user["id"]))
-    return JSONResponse(
-        {
-            "call": call,
-            "reward": int(call.get("flash_reward") or 0),
-            "balance": wallet["balance"],
-        }
-    )
+)
+app.include_router(wallet_routes.router)
+market_actors_api = wallet_routes.market_actors_api
+stock_ticker_map_api = wallet_routes.stock_ticker_map_api
+stock_cluster_worth_api = wallet_routes.stock_cluster_worth_api
+stock_person_connections_api = wallet_routes.stock_person_connections_api
+stock_wallet_page_legacy = wallet_routes.stock_wallet_page_legacy
+wallet_page = wallet_routes.wallet_page
+wallet_filings_api = wallet_routes.wallet_filings_api
+wallet_events_api = wallet_routes.wallet_events_api
+market_actor_api = wallet_routes.market_actor_api
+market_actor_portrait_api = wallet_routes.market_actor_portrait_api
+create_market_actor_comment_api = wallet_routes.create_market_actor_comment_api
 
 
 @app.get("/", response_class=HTMLResponse)
