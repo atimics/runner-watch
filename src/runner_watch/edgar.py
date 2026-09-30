@@ -682,12 +682,48 @@ _LISTING_NOTICE = re.compile(
 )
 
 
+# A notice 6-K is short (a few thousand to a few tens of thousands of characters).
+# Longer furnished documents (securities purchase agreements, prospectuses, proxy
+# statements) repeat listing language as boilerplate, so they are not read.
+MAX_LISTING_NOTICE_CHARS = 80_000
+# Boilerplate says the opposite of a notice: "has not received any notice from
+# any Trading Market to the effect that the Company is not in compliance ...".
+_NOT_A_NOTICE = re.compile(
+    r"to\s+the\s+effect\s+that|(?:has|have|had)\s+not\s+(?:received|been\s+notified)"
+    r"|(?:not|never)\s+received|no\s+(?:written\s+)?notice|any\s+(?:written\s+)?notice"
+    r"|in\s+the\s+(?:past|last|preceding)\s+(?:\w+\s+)?(?:months|years)",
+    re.IGNORECASE,
+)
+# Good news that recounts the earlier notice. "Had not regained compliance" is
+# still a notice, so a negation in front of the verb does not count.
+_REGAINED = re.compile(
+    r"(?<!not )(?<!n't )(?<!failed to )(?:regained|regains)\s+(?:full\s+)?compliance"
+    r"|back\s+in\s+compliance|returned\s+to\s+compliance|(?<!not )now\s+in\s+compliance",
+    re.IGNORECASE,
+)
+_US_EXCHANGE = re.compile(r"nasdaq|nyse|new\s+york\s+stock\s+exchange", re.IGNORECASE)
+
+
 def is_listing_notice(text: str) -> bool:
-    """A 6-K reporting an exchange deficiency, delisting or suspension notice."""
+    """A 6-K reporting an exchange deficiency, delisting or suspension notice.
+
+    Precision comes first: a false notice publishes a false "not met" against a
+    healthy company, so anything that is not clearly a short notice is left alone.
+    """
 
     plain = re.sub(r"<[^>]+>", " ", text[:400_000])
     plain = re.sub(r"&nbsp;|&#160;|\s+", " ", plain)
-    return bool(_LISTING_NOTICE.search(plain))
+    if len(plain) > MAX_LISTING_NOTICE_CHARS or _REGAINED.search(plain):
+        return False
+    for match in _LISTING_NOTICE.finditer(plain):
+        if _NOT_A_NOTICE.search(plain[max(0, match.start() - 250) : match.start()]):
+            continue
+        if match.group(0).lower().startswith(("suspend", "suspension")) and not _US_EXCHANGE.search(
+            plain[max(0, match.start() - 300) : match.end() + 300]
+        ):
+            continue
+        return True
+    return False
 
 
 def classify_filing(form: str, ownership: OwnershipSummary | None = None) -> dict[str, Any]:
