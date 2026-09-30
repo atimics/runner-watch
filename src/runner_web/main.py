@@ -45,6 +45,7 @@ from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
 from runner_web import attention
 from runner_web import db as runner_db
+from runner_web import decisions as openrouter_decisions
 from runner_web.account_routes import (
     AccountDeletePayload,
     AccountRouteDependencies,
@@ -110,6 +111,25 @@ from runner_web.dash import (
     dash_world,
 )
 from runner_web.dash import recent_actions as dash_recent_actions
+from runner_web.dash import recent_changes as dash_recent_changes
+from runner_web.dash_decisions import (
+    DESK_NOTE_QUESTIONS as DASH_DESK_NOTE_QUESTIONS,
+)
+from runner_web.dash_decisions import (
+    TURN_QUESTIONS as DASH_TURN_QUESTIONS,
+)
+from runner_web.dash_decisions import (
+    choose_turn as dash_choose_turn,
+)
+from runner_web.dash_decisions import (
+    desk_note_state as dash_desk_note_state,
+)
+from runner_web.dash_decisions import (
+    desk_note_worth_it as dash_desk_note_worth_it,
+)
+from runner_web.dash_decisions import (
+    turn_state as dash_turn_state,
+)
 from runner_web.db import connection, init_db
 from runner_web.flash_evaluations import (
     flash_open_calls,
@@ -2280,6 +2300,318 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
     return {"action": "hold", "why": "ran out of lookups"}
 
 
+# The decision-model path. Off by default: the Decisions API is alpha and its
+# thresholds are untuned. When on, any decision failure falls back to the tool
+# loop above, so the room never goes silent.
+DASH_DECISIONS_ENABLED = os.getenv("DASH_DECISIONS", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+# The decision request asks for zero-data-retention endpoints like every other
+# Dash call. If the decision model has none, the call fails and falls back.
+DASH_DECISION_PROVIDER = {"zdr": True}
+
+
+def _dash_decide(state: Any, questions: dict[str, Any]) -> Any:
+    """One Decisions API call. Kept separate so a turn can be tested."""
+
+    return openrouter_decisions.decide(
+        state,
+        questions,
+        api_key=OPENROUTER_API_KEY,
+        referer=APP_ORIGIN,
+        title="RATi Runners chat",
+        provider=DASH_DECISION_PROVIDER,
+    )
+
+
+def _log_dash_decision(
+    *,
+    update_id: int | None,
+    kind: str,
+    source: str,
+    action: str | None = None,
+    decision: Any = None,
+    plan: Any = None,
+    error: str | None = None,
+) -> None:
+    """Write down one decision so the thresholds can be tuned from real traffic."""
+
+    try:
+        with connection() as database:
+            database.execute(
+                """
+                INSERT INTO dash_decisions(
+                    update_id,kind,source,action,answers_json,plan_json,model,cost,error,
+                    created_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    update_id,
+                    kind,
+                    source,
+                    action,
+                    json.dumps(decision.answers_json(), separators=(",", ":"))
+                    if decision is not None
+                    else None,
+                    json.dumps(plan, separators=(",", ":"), default=str)
+                    if plan is not None
+                    else None,
+                    (decision.model if decision is not None else None)
+                    or openrouter_decisions.decision_model(),
+                    decision.cost if decision is not None else None,
+                    (error or "")[:500] or None,
+                    iso(),
+                ),
+            )
+    except Exception:
+        LOG.exception("Could not log a Dash decision")
+
+
+def _dash_decision_failed(exc: Exception, *, update_id: int | None, kind: str) -> None:
+    detail = str(exc)[:500] if isinstance(exc, openrouter_decisions.DecisionError) else ""
+    detail = detail or type(exc).__name__
+    LOG.warning("Dash decision failed, falling back: %s", detail[:120])
+    worker_state("dash_decision_last_error", f"{iso()} {kind}: {detail}")
+    _log_dash_decision(update_id=update_id, kind=kind, source="fallback", error=detail)
+
+
+def _whole_sentences(text: str) -> str:
+    """Keep only the sentences a token cap did not cut off.
+
+    A cut text ends mid-word, often mid-address, and even a final "." may be a
+    decimal point. Keep only the sentences that were followed by more.
+    """
+
+    end = max(text.rfind(mark) for mark in (". ", "! ", "? ", ".\n", "!\n", "?\n"))
+    return text[: end + 1] if end >= 0 else ""
+
+
+def _dash_write(instruction: str, context: dict[str, Any], *, max_tokens: int = 700) -> str:
+    """The writing stage: one chat call, no tools, plain words back."""
+
+    body = {
+        "model": _dash_model(),
+        "messages": [
+            {"role": "system", "content": CHEETAH_PERSONA},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {"instruction": instruction, **context},
+                    separators=(",", ":"),
+                    default=str,
+                ),
+            },
+        ],
+        "provider": {"require_parameters": True, "zdr": True},
+        "max_tokens": max_tokens,
+    }
+    result = _telegram_chat_completion(body)
+    first = (result.get("choices") or [{}])[0]
+    text = str((first.get("message") or {}).get("content") or "").strip()
+    if first.get("finish_reason") == "length":
+        text = _whole_sentences(text)
+    return text
+
+
+DASH_REPLY_INSTRUCTION = (
+    "You decided to reply to the message in room.said. You have no tools this turn: "
+    "everything you may quote is in already_looked_up, loaded and your_action. Write "
+    "the reply only, about forty words, plain text, no markdown, a new line for each "
+    "separate thought. Name a stock as $SYMBOL and a coin by its full contract "
+    "address. If something you would need is not in that data, say you have not "
+    "looked rather than guessing. If your_action is present, say what you did."
+)
+
+
+def _run_dash_mutation(message: Any, plan: Any, grounding: dict[str, Any]) -> dict[str, Any]:
+    """Carry out a Call or comment the decision asked for, once per update."""
+
+    ticker = str(plan.ticker or "")
+    if plan.mutation == "make_call":
+        return dash_once(message.update_id, "make_call", ticker, lambda: dash_make_call(ticker))
+    if plan.mutation == "close_call":
+        return dash_once(message.update_id, "close_call", ticker, lambda: dash_close_call(ticker))
+
+    def comment() -> dict[str, Any]:
+        # The body is only written when the comment has not been posted yet.
+        body = _dash_write(
+            "Write one public comment for the page of $"
+            + ticker
+            + ", under 240 characters, plain text, from what is in the data below. "
+            "No advice, no numbers that are not in the data.",
+            {"ticker": ticker, "data": grounding},
+            max_tokens=400,
+        )
+        return dash_comment(ticker, body)
+
+    return dash_once(message.update_id, "comment_on_ticker", ticker, comment)
+
+
+def _dash_unbacked(text: str, looked_symbols: set[str], backed_text: str) -> list[str]:
+    with connection() as database:
+        cited = telegram_resolve_tickers(database, text, limit=8)
+    unbacked = [symbol for symbol in cited if symbol not in looked_symbols]
+    unbacked += [
+        address for address in telegram_reply_addresses(text) if address not in backed_text
+    ]
+    return unbacked
+
+
+def _write_telegram_reply(
+    message: Any, transcript: list[dict[str, Any]], plan: Any, now: datetime
+) -> dict[str, Any]:
+    """Load what the plan needs, act if it says so, then write the words."""
+
+    with connection() as database:
+        grounded = telegram_prefetch_for(message, database)
+    looked_symbols = {
+        str(item.get("ticker") or "").strip().upper().lstrip("$")
+        for item in grounded.get("looked_up") or []
+        if item.get("ticker")
+    }
+    looked_symbols.discard("")
+    looked_text = [json.dumps(grounded, default=str)]
+    loaded: dict[str, Any] = {}
+    node = plan.node
+    if node and node.startswith("ticker:") and node.split(":", 1)[1] in looked_symbols:
+        node = None  # the prefetch already looked it up
+    if node:
+        loaded[node] = dash_expand(node)
+        looked_text.append(json.dumps(loaded[node], default=str))
+        if node.startswith("coin:"):
+            looked_text.append(node.split(":", 1)[1])
+        if node.startswith("ticker:"):
+            looked_symbols.add(node.split(":", 1)[1].upper())
+    action_result = None
+    if plan.mutation:
+        action_result = {
+            "did": plan.mutation,
+            "ticker": plan.ticker,
+            "result": _run_dash_mutation(message, plan, {**grounded, "loaded": loaded}),
+        }
+        looked_text.append(json.dumps(action_result, default=str))
+        if plan.ticker:
+            looked_symbols.add(str(plan.ticker).upper())
+    clock = market_clock(now)
+    context = {
+        "market_session": {
+            "label": clock["label"],
+            "eastern_now": clock["eastern_now"],
+            "next_label": clock["next_label"],
+            "next_at": clock["next_at"],
+        },
+        "already_looked_up": grounded,
+        "loaded": loaded,
+        **({"your_action": action_result} if action_result else {}),
+        "room": {
+            "speaker": message.user_name,
+            "said": message.text,
+            "addressed_you": message.addressed,
+            "recent": transcript[-6:],
+        },
+    }
+    text = _dash_write(DASH_REPLY_INSTRUCTION, context)
+    unbacked = _dash_unbacked(text, looked_symbols, "\n".join(looked_text)) if text else []
+    if unbacked:
+        # One rewrite. Code knows what was loaded, so it names what was not.
+        text = _dash_write(
+            DASH_REPLY_INSTRUCTION
+            + " Your draft named "
+            + ", ".join(unbacked)
+            + " but nothing about it was loaded. Rewrite the reply without it, or say "
+            "you have not looked it up. Do not state numbers that are not in the data.",
+            {**context, "draft": text},
+        )
+    return {"action": "reply", "text": text}
+
+
+def _decide_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
+    """Decide with the decision model, then write only if the plan is to reply.
+
+    Any failure in the decision stage (network, 402, 429, a malformed answer)
+    falls back to the tool-loop turn, so the room never goes silent.
+    """
+
+    now = datetime.now(UTC)
+    try:
+        with connection() as database:
+            tickers = telegram_resolve_tickers(database, message.text)
+        addresses = telegram_reply_addresses(message.text)
+        budget = dash_budget(at=now)
+        state = dash_turn_state(
+            speaker=message.user_name,
+            text=message.text,
+            addressed=message.addressed,
+            transcript=transcript,
+            recent_actions=dash_recent_actions(message.chat_id, limit=3),
+            budget=budget,
+            changes=dash_recent_changes(at=now),
+            session=str(market_clock(now)["label"]),
+            tickers=tickers,
+            addresses=addresses,
+        )
+        decision = _dash_decide(state, DASH_TURN_QUESTIONS)
+        plan = dash_choose_turn(
+            decision.answers,
+            addressed=message.addressed,
+            budget=budget,
+            tickers=tickers,
+            addresses=addresses,
+        )
+    except Exception as exc:
+        _dash_decision_failed(exc, update_id=message.update_id, kind="turn")
+        return _generate_telegram_turn(message, transcript)
+    _log_dash_decision(
+        update_id=message.update_id,
+        kind="turn",
+        source="decision",
+        action=plan.action,
+        decision=decision,
+        plan=plan.as_json(),
+    )
+    if plan.action == "react":
+        return {"action": "react", "emoji": plan.emoji or "🐆"}
+    if plan.action != "reply":
+        return {"action": "hold", "why": plan.reason, "stop": plan.mute}
+    return _write_telegram_reply(message, transcript, plan, now)
+
+
+def _desk_note_gate(world: dict[str, Any], current: datetime) -> bool | None:
+    """Ask the decision model whether a desk note is worth writing.
+
+    Returns None when the decision failed, so the caller keeps the old behaviour.
+    """
+
+    with connection() as database:
+        rows = database.execute(
+            "SELECT key,value FROM worker_state "
+            "WHERE key IN ('dash_desk_note_last_at','dash_desk_note_last_note')"
+        ).fetchall()
+    saved = {row["key"]: row["value"] for row in rows}
+    last_at = _stamp(saved.get("dash_desk_note_last_at"))
+    minutes = round((current - last_at).total_seconds() / 60) if last_at else None
+    try:
+        state = dash_desk_note_state(
+            world, last_note=str(saved.get("dash_desk_note_last_note") or ""), minutes_since=minutes
+        )
+        decision = _dash_decide(state, DASH_DESK_NOTE_QUESTIONS)
+        speak = dash_desk_note_worth_it(decision.answers["worth_speaking"])
+    except Exception as exc:
+        _dash_decision_failed(exc, update_id=None, kind="desk_note")
+        return None
+    _log_dash_decision(
+        update_id=None,
+        kind="desk_note",
+        source="decision",
+        action="write" if speak else "hold",
+        decision=decision,
+    )
+    return speak
+
+
 DASH_DESK_NOTES_ENABLED = os.getenv("TELEGRAM_DESK_NOTES", "0").strip().lower() in {
     "1",
     "true",
@@ -2326,10 +2658,7 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
     first = (result.get("choices") or [{}])[0]
     note = str((first.get("message") or {}).get("content") or "").strip()
     if first.get("finish_reason") == "length":
-        # A cut note ends mid-word, often mid-address, and even a final "." may
-        # be a decimal point. Keep only the sentences that were followed by more.
-        end = max(note.rfind(mark) for mark in (". ", "! ", "? ", ".\n", "!\n", "?\n"))
-        note = note[: end + 1] if end >= 0 else ""
+        note = _whole_sentences(note)
     return note
 
 
@@ -2355,6 +2684,8 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     world = dash_world(current)
     if not world["changes"]["any"]:
         return {"status": "quiet"}
+    if DASH_DECISIONS_ENABLED and _desk_note_gate(world, current) is False:
+        return {"status": "held", "detail": "not_worth_speaking"}
     try:
         note = _generate_desk_note(world)
     except Exception as exc:
@@ -2400,7 +2731,9 @@ async def telegram_chat_worker() -> None:
                 wallet_checked = time.monotonic()
             result = await run_in_threadpool(
                 run_telegram_chat,
-                _generate_telegram_turn if OPENROUTER_API_KEY else None,
+                (_decide_telegram_turn if DASH_DECISIONS_ENABLED else _generate_telegram_turn)
+                if OPENROUTER_API_KEY
+                else None,
             )
             worker_state("telegram_chat_last_run", json.dumps(result, separators=(",", ":")))
             worker_state("telegram_chat_last_error", "")
