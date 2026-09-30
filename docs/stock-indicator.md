@@ -214,3 +214,24 @@ local. Not done: showing times in the reader's own zone. That needs the reader's
 zone from the browser and would change the byte-for-byte output for US readers,
 so it is left open.
 
+
+## Language
+
+The interface is English only. There is no translation layer, and none is
+attempted. What that means for foreign issuers:
+
+- Filing text is used as filed. A foreign private issuer's 6-K, 20-F or 40-F
+  can be in English only when the company filed it in English; SEC rules
+  require English, or an English translation, for filings on EDGAR, but RATi
+  does not check the quality of a translation.
+- The listing-notice reading (`edgar.is_listing_notice`) matches English
+  phrases. A notice worded differently is not seen, so it can never make a
+  standard read "met" by itself: the trading standard stays "not checked yet"
+  until 6-K texts have been read for the whole 90 days, and a phrase that is
+  not matched is a known limit of that reading, not a claim that no notice
+  exists.
+- Company names, titles and amounts are shown as the source gives them. Amounts
+  show the currency code of the fact (see the table above) and are never
+  converted.
+- Dates, times and numbers use the English format and the labelled US time
+  zones described above.
