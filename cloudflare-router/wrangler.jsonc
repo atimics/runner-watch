@@ -3,6 +3,7 @@
   "name": "rati-products-router",
   "main": "src/index.js",
   "compatibility_date": "2026-08-26",
+  "r2_buckets": [{ "binding": "AUDITS", "bucket_name": "rati-audits" }],
   "routes": [
     {
       "pattern": "runners.rati.chat/*",

@@ -1,3 +1,5 @@
+import { handleAudits } from "./audits.js";
+
 const UPSTREAM_HOST = "runner-watch-ratimics.fly.dev";
 const PUBLIC_HOSTS = new Set(["runners.rati.chat", "sports.rati.chat", "trust.rati.chat"]);
 
@@ -9,6 +11,11 @@ export default {
     }
     if (!env.EDGE_PROXY_SECRET) {
       return new Response("Edge routing is not configured", { status: 503 });
+    }
+
+    if (publicUrl.hostname === "trust.rati.chat" && env.AUDITS) {
+      const audit = await handleAudits(request, env);
+      if (audit) return audit;
     }
 
     const upstreamUrl = new URL(request.url);
