@@ -1,0 +1,55 @@
+{% extends "mobile_base.html" %}
+{% block app_class %}account-page trust-page{% endblock %}
+{% block title %}RATi Audit, in progress{% endblock %}
+{% block page_description %}<meta name="description" content="A RATi smart contract audit that is still under way: its status, its reviewers and a commitment to its record.">{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
+{% macro short_digest(digest) %}{{ digest[:8] }}…{{ digest[-4:] }}{% endmacro %}
+{% block content %}
+{% set f = audit.findings %}
+<main class="account-wrap trust-wrap">
+  <header class="trust-head">
+    <span class="eyebrow">RATi Trust · Audit draft</span>
+    <h1>An audit in progress</h1>
+    <p>This page changes until the audit is final. It shows how far the audit has got, never the code, the repository or what was found. The report stays sealed and opens only for the reviewers' wallets.</p>
+  </header>
+
+  <section class="trust-status" aria-label="Status">
+    <div><span>Findings</span><strong>{{ f.total }}</strong></div>
+    <div><span>Open</span><strong>{{ f.open }}</strong></div>
+    <div><span>Fixed</span><strong>{{ f.fixed }}</strong></div>
+    <div><span>Acknowledged by the client</span><strong>{{ f.acknowledged }}</strong></div>
+    <div><span>Gates still open</span><strong>{{ audit.gates|length }}</strong></div>
+    <div><span>Last checked</span><strong>{{ audit.checked }}</strong></div>
+    <div><span>Protocol</span><strong>{{ audit.protocol.version }}</strong></div>
+    <div class="trust-status-digest"><span>Record commitment</span><strong><code title="{{ audit.record_sha256 }}">{{ short_digest(audit.record_sha256) }}</code></strong></div>
+  </section>
+
+  {% if audit.gates %}
+  <section aria-label="Open gates">
+    <h2>Before this audit can be final</h2>
+    <ul>{% for gate in audit.gates %}<li>{{ gate }}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+
+  <section aria-label="Reviewers">
+    <h2>Reviewers</h2>
+    {% if audit.reviewers %}
+    <table class="trust-table">
+      <thead><tr><th>Solana wallet</th><th>Findings reviewed</th><th>Review</th></tr></thead>
+      <tbody>{% for r in audit.reviewers %}<tr><td><code>{{ r.wallet }}</code></td><td>{{ r.findings|join(", ") }}</td><td>{% if r.counts %}counts{% else %}stale{% endif %}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<p>No review has been recorded yet.</p>{% endif %}
+  </section>
+
+  {% if audit.has_vault %}
+  <section aria-label="Sealed report">
+    <h2>The report</h2>
+    <p>The report is encrypted for the reviewers' wallets. Open it in a normal browser tab with Phantom or Solflare.</p>
+    <p><a href="/draft/{{ audit.uuid }}/vault">Open the sealed report</a></p>
+  </section>
+  {% endif %}
+
+  <p class="trust-note">Disclosure terms: <strong>{{ audit.disclosure.policy }}</strong>{% if audit.disclosure.policy == "public-after-fix" %}, up to {{ audit.disclosure.max_wait_days }} days for the client to fix{% endif %}. The commitment above is the SHA-256 of the current record; the final audit is published once every finding is fixed or acknowledged.</p>
+  <p class="trust-note"><a href="/draft/{{ audit.uuid }}/status.json">status.json</a></p>
+</main>
+{% endblock %}

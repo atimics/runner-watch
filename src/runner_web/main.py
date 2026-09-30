@@ -2708,7 +2708,7 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     if COOKIE_SECURE:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = (
+    response.headers["Content-Security-Policy"] = getattr(request.state, "csp_override", None) or (
         f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; "
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
         "connect-src 'self'; frame-src 'self'; "
@@ -3080,6 +3080,59 @@ def trust_rules_file(request: Request) -> Response:
         raise HTTPException(status_code=404, detail="Not published")
     media = "application/schema+json" if name.endswith(".json") else "application/toml"
     return Response(text, media_type=f"{media}; charset=utf-8")
+
+
+def _audit_surface(request: Request) -> None:
+    """Audits are published on the trust host only."""
+
+    enforce_rate(request, "trust", limit=120, seconds=60)
+    if _request_host(request) != _origin_host(TRUST_ORIGIN):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@app.get("/draft/{audit_uuid}", response_class=HTMLResponse)
+def audit_draft_page(
+    audit_uuid: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    from runner_web import audits
+
+    _audit_surface(request)
+    status = audits.draft(audit_uuid)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return templates.TemplateResponse(
+        request=request,
+        name="audit_draft.html",
+        context=page_context(request, runner_session, audit=status, nav_product="trust"),
+    )
+
+
+@app.get("/draft/{audit_uuid}/status.json")
+def audit_draft_status(audit_uuid: str, request: Request) -> JSONResponse:
+    from runner_web import audits
+
+    _audit_surface(request)
+    status = audits.draft(audit_uuid)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    status.pop("has_vault", None)
+    return JSONResponse(status)
+
+
+@app.get("/draft/{audit_uuid}/vault", response_class=HTMLResponse)
+def audit_draft_vault(audit_uuid: str, request: Request) -> HTMLResponse:
+    """The sealed report: one page that opens only for the reviewers' wallets."""
+
+    from runner_web import audits
+
+    _audit_surface(request)
+    page = audits.draft_vault(audit_uuid)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    request.state.csp_override = audits.VAULT_CSP
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/trust/access-requests")
@@ -12552,3 +12605,35 @@ def callers_leaderboard(
         else None,
     }
     return {"rows": rows, "machine": machine, "min_settled": min_settled, "days": days}
+
+
+# A root-level path parameter matches every single-segment path, so these are registered last.
+@app.get("/{bundle_id}", response_class=HTMLResponse)
+def audit_final_page(
+    bundle_id: str,
+    request: Request,
+    runner_session: str | None = Cookie(default=None),
+) -> HTMLResponse:
+    from runner_web import audits
+
+    _audit_surface(request)
+    bundle = audits.final(bundle_id)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return templates.TemplateResponse(
+        request=request,
+        name="audit_final.html",
+        context=page_context(request, runner_session, bundle=bundle, nav_product="trust"),
+    )
+
+
+@app.get("/{bundle_id}/{name}")
+def audit_final_file(bundle_id: str, name: str, request: Request) -> Response:
+    from runner_web import audits
+
+    _audit_surface(request)
+    found = audits.final_file(bundle_id, name)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    body, media = found
+    return Response(body, media_type=f"{media}; charset=utf-8")
