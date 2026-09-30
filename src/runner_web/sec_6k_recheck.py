@@ -52,6 +52,7 @@ from runner_watch.edgar import (
     filing_directory_url,
     is_listing_notice,
 )
+from runner_watch.xml_security import PayloadTooLargeError
 
 LOG = logging.getLogger(__name__)
 DEFAULT_MAX_FETCH = 50
@@ -147,6 +148,7 @@ def recheck_archived_6ks(
     already = 0
     fetched = 0
     fetch_failed = 0
+    too_large = 0
     for row in rows:
         if LISTING_NOTICE_ITEM in str(row["items"] or ""):
             already += 1
@@ -156,6 +158,13 @@ def recheck_archived_6ks(
             fetched += 1
             try:
                 text = fetch_text(str(row["filing_url"] or ""), str(row["accession"]))
+            except PayloadTooLargeError:
+                # Over the SEC client's size limit. A notice is a few thousand
+                # characters and `is_listing_notice` never reads a document over
+                # its length limit, so a filing this large cannot be a notice: it
+                # counts as read, not as missing.
+                too_large += 1
+                text = ""
             except Exception:
                 LOG.warning("Could not fetch 6-K %s", row["accession"], exc_info=True)
                 text = None
@@ -179,6 +188,7 @@ def recheck_archived_6ks(
         "text_not_archived": missing,
         "fetched": fetched,
         "fetch_failed": fetch_failed,
+        "too_large_to_be_a_notice": too_large,
         "would_mark" if not apply else "marked": notices,
         "tickers": sorted({notice["ticker"] for notice in notices}),
         "window_marked_as_read": False,
