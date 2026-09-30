@@ -3,7 +3,7 @@
 # against rules.schema.json.
 
 name = "The RATi Rules"
-version = "2.1.0"
+version = "2.1.1"
 summary = "The standards a stock or memecoin must meet to be Ratified."
 meaning = """\
 Ratified means the asset meets RATi's basic standards on the facts RATi could \
@@ -256,7 +256,7 @@ test = [{ fact = "share_growth", op = "<=", value = 25, unit = "percent" }]
 [[assets.stock.standards]]
 id = "trading"
 label = "No halt in 30 days and no delisting notice in 90"
-why = "A delisting notice is an 8-K item 3.01. No notice is known only once the last 90 days of notices have been read: until then, not checked yet."
+why = "A delisting notice is an 8-K item 3.01. A foreign private issuer files no 8-K, so its notice is a 6-K whose text reads as one. Notices are recognised from English wording, so a notice in another language can be missed. No notice is known only once the last 90 days of notices have been read: until then, not checked yet."
 facts = ["halts", "delisting_notices"]
 test = [
   { fact = "trading_halt", op = "none_within", value = 30, unit = "days" },
@@ -326,7 +326,7 @@ source = "Nasdaq trade halt feed"
 [[assets.stock.facts]]
 id = "delisting_notices"
 label = "Delisting notices"
-source = "EDGAR full-text search for 8-K and 8-K/A filings whose items include 3.01, over the last 90 days, and the EDGAR current feed as filings arrive"
+source = "EDGAR full-text search for 8-K and 8-K/A filings whose items include 3.01, over the last 90 days, and the EDGAR current feed as filings arrive; for foreign private issuers, 6-K filings whose text reads as a listing notice, read as they arrive"
 refresh = "Twice a day"
 
 # -------------------------------------------------------------- worked cases
