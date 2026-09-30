@@ -1251,3 +1251,41 @@ def test_a_refusal_is_not_remembered_and_another_update_acts_again():
     assert dash.dash_once(5, "make_call", "AAA", lambda: outcomes.pop(0))["ok"] is False
     assert dash.dash_once(5, "make_call", "AAA", lambda: outcomes.pop(0))["n"] == 1
     assert dash.dash_once(6, "make_call", "AAA", lambda: outcomes.pop(0))["n"] == 2
+
+
+def test_dash_model_defaults_to_flash_and_can_be_overridden(monkeypatch):
+    from runner_web import main as web_main
+    from runner_web.ai_kol import FLASH
+
+    monkeypatch.delenv("DASH_MODEL", raising=False)
+    assert web_main._dash_model() == FLASH.model
+    monkeypatch.setenv("DASH_MODEL", "  vendor/other-model ")
+    assert web_main._dash_model() == "vendor/other-model"
+    monkeypatch.setenv("DASH_MODEL", "  ")
+    assert web_main._dash_model() == FLASH.model
+
+
+def test_the_desk_note_uses_the_dash_model(monkeypatch):
+    from runner_web import main as web_main
+
+    monkeypatch.setenv("DASH_MODEL", "vendor/other-model")
+    bodies: list[dict] = []
+
+    def completion(body):
+        bodies.append(body)
+        return {"choices": [{"message": {"content": "ok."}, "finish_reason": "stop"}]}
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion)
+    web_main._generate_desk_note({"changes": {"any": True}})
+
+    assert bodies[0]["model"] == "vendor/other-model"
+
+
+def test_the_expand_description_lists_every_node_dash_expand_accepts():
+    from runner_web import telegram_chat as chat
+
+    tool = next(t for t in chat.TOOL_SCHEMA if t["name"] == "expand")
+    description = tool["description"]
+
+    for node in dash.WORLD_NODES:
+        assert node in description

@@ -1936,6 +1936,10 @@ async def hot_quote_worker() -> None:
 
 
 TELEGRAM_CHAT_INTERVAL_SECONDS = max(3, int(os.getenv("TELEGRAM_CHAT_INTERVAL_SECONDS", "5")))
+# One tick stops starting model turns after this long; the rest stay pending.
+TELEGRAM_TICK_SECONDS = max(0, int(os.getenv("TELEGRAM_TICK_SECONDS", "60")))
+# Without a pending update the wallet is only looked at this often.
+TELEGRAM_WALLET_IDLE_SECONDS = 300
 TELEGRAM_ALERT_SWEEP_SECONDS = max(60, int(os.getenv("TELEGRAM_ALERT_SWEEP_SECONDS", "600")))
 
 
@@ -2041,6 +2045,7 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
     config = telegram_config_from_env()
     with connection() as database:
         updates = telegram_pending_updates(database)
+    tick_deadline = time.monotonic() + TELEGRAM_TICK_SECONDS
     for row in updates:
         # Each update is judged at the moment it is read. Sharing one timestamp
         # across the batch made every message after the first look simultaneous
@@ -2064,6 +2069,11 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
         counts["seen"] += 1
         with connection() as database:
             attention = telegram_attention_for(database, message, now)
+            if attention.consider and time.monotonic() >= tick_deadline:
+                # Out of time for model turns. Skips above and below still finish;
+                # this one stays pending for the next tick.
+                counts["seen"] -= 1
+                continue
             if attention.consider and message.addressed and message.user_id is not None:
                 telegram_open_engagement(database, message.chat_id, message.user_id, now)
             transcript = telegram_recent_transcript(database, message.chat_id)
@@ -2109,6 +2119,12 @@ def _telegram_chat_completion(body: dict[str, Any]) -> dict[str, Any]:
     )
     with urllib.request.urlopen(api_request, timeout=30) as response:
         return json.loads(response.read(262_145))
+
+
+def _dash_model() -> str:
+    """The model for Dash's chat turn and desk note. Defaults to FLASH.model."""
+
+    return os.getenv("DASH_MODEL", "").strip() or FLASH.model
 
 
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2159,10 +2175,13 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
     corrected = False
     for _round in range(6):
         body = {
-            "model": FLASH.model,
+            "model": _dash_model(),
             "messages": messages,
             "tools": tools,
             "tool_choice": "required",
+            # A router model (for example typesafe/jev-router) lists no supported
+            # parameters, so these options may make it fail. Try any new
+            # DASH_MODEL on a test chat first.
             "provider": {"require_parameters": True, "zdr": True},
             "max_tokens": 700,
         }
@@ -2275,7 +2294,7 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
     """Ask Dash for one short, unprompted note about what changed."""
 
     body = {
-        "model": FLASH.model,
+        "model": _dash_model(),
         "messages": [
             {"role": "system", "content": CHEETAH_PERSONA},
             {
@@ -2297,6 +2316,7 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
                 ),
             },
         ],
+        # Same caution as the chat turn: a router model may fail these options.
         "provider": {"require_parameters": True, "zdr": True},
         # Room for the model's reasoning as well as the note: a contract address
         # alone is dozens of tokens, and a tight cap cut notes off mid-address.
@@ -2364,11 +2384,20 @@ async def dash_desk_note_worker() -> None:
         await asyncio.sleep(DASH_DESK_NOTE_SECONDS)
 
 
+def _telegram_has_pending() -> bool:
+    with connection() as database:
+        return bool(telegram_pending_updates(database, limit=1))
+
+
 async def telegram_chat_worker() -> None:
     await asyncio.sleep(30)
+    wallet_checked = float("-inf")
     while True:
         try:
-            await run_in_threadpool(dash_wallet)
+            has_pending = await run_in_threadpool(_telegram_has_pending)
+            if has_pending or time.monotonic() - wallet_checked >= TELEGRAM_WALLET_IDLE_SECONDS:
+                await run_in_threadpool(dash_wallet)
+                wallet_checked = time.monotonic()
             result = await run_in_threadpool(
                 run_telegram_chat,
                 _generate_telegram_turn if OPENROUTER_API_KEY else None,

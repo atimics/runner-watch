@@ -253,6 +253,30 @@ def test_an_hourly_budget_caps_the_cheetah():
     assert capped.reason == "hourly_budget"
 
 
+def test_an_hourly_turn_budget_counts_holds_and_reacts_too():
+    with connection() as database:
+        for index in range(chat.TURNS_PER_HOUR):
+            action = ("hold", "react")[index % 2]
+            chat.record_action(
+                database,
+                _parse(_update("x", update_id=300 + index)),
+                action,
+                None,
+                NOW - timedelta(minutes=30),
+            )
+        capped = chat.attention_for(
+            database, _parse(_update("more", mention=True, update_id=8)), NOW
+        )
+        later = chat.attention_for(
+            database,
+            _parse(_update("more", mention=True, update_id=9)),
+            NOW + timedelta(minutes=31),
+        )
+    assert capped.consider is False
+    assert capped.reason == "hourly_turn_budget"
+    assert later.consider is True
+
+
 def test_an_update_is_stored_once_however_often_telegram_retries():
     payload = _update("hello")
     with connection() as database:
@@ -449,6 +473,27 @@ def test_every_mention_in_one_backlog_gets_an_answer(wired):
 
     assert result["replied"] == 2
     assert [text for _, text, _ in wired.replies] == ["hiss at 1", "hiss at 3"]
+
+
+def test_a_spent_tick_leaves_model_turns_pending_but_still_skips(wired, monkeypatch):
+    from runner_web import main as web_main
+
+    monkeypatch.setattr(web_main, "TELEGRAM_TICK_SECONDS", 0)
+    calls: list[Any] = []
+    with connection() as database:
+        chat.record_update(database, _update("hi", mention=True, update_id=1), NOW)
+        chat.record_update(database, _update("chatter", update_id=2), NOW)
+
+    result = web_main.run_telegram_chat(lambda *a: calls.append(a) or {"action": "hold"}, at=NOW)
+
+    assert calls == []
+    assert result["skipped"] == 1
+    with connection() as database:
+        rows = {
+            r["update_id"]: r["status"]
+            for r in database.execute("SELECT update_id,status FROM telegram_updates").fetchall()
+        }
+    assert rows == {1: "pending", 2: "skipped"}
 
 
 def test_a_passed_over_message_records_why(wired):
@@ -816,3 +861,38 @@ def test_a_rerun_turn_does_not_repeat_a_comment(monkeypatch):
         web_main._generate_telegram_turn(message, [])
 
     assert made == ["MSGM"]
+
+
+def test_the_worker_only_touches_the_wallet_when_there_is_work(wired, monkeypatch):
+    import asyncio
+
+    from runner_web import main as web_main
+
+    wallets: list[int] = []
+    monkeypatch.setattr(web_main, "dash_wallet", lambda *a, **k: wallets.append(1) or {})
+
+    def drain(*a, **k):
+        with connection() as database:
+            database.execute("UPDATE telegram_updates SET status='handled'")
+        return {}
+
+    monkeypatch.setattr(web_main, "run_telegram_chat", drain)
+    monkeypatch.setattr(web_main, "TELEGRAM_WALLET_IDLE_SECONDS", 10_000)
+    sleeps = {"n": 0}
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(seconds):
+        sleeps["n"] += 1
+        if sleeps["n"] > 4:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    monkeypatch.setattr(web_main.asyncio, "sleep", fake_sleep)
+    with connection() as database:
+        chat.record_update(database, _update("hi", mention=True, update_id=1), NOW)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(web_main.telegram_chat_worker())
+
+    # The first pass has work; later passes stay inside the idle window.
+    assert len(wallets) == 1
