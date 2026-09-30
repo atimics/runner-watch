@@ -214,3 +214,21 @@ local. Not done: showing times in the reader's own zone. That needs the reader's
 zone from the browser and would change the byte-for-byte output for US readers,
 so it is left open.
 
+
+## Language
+
+The interface is English only. There is no translation layer, and none is
+attempted. What that means for foreign issuers:
+
+- Filing text is used as filed. EDGAR filings are expected in English (or with
+  an English translation), and RATi does not check the quality of a
+  translation or read any other language.
+- The listing-notice reading (`edgar.is_listing_notice`) matches a fixed set of
+  English phrases. A notice worded differently, or in another language, is not
+  seen. This is a known limit: once 6-K texts have been read for the whole 90
+  days, a missed notice leaves the trading standard reading "met", so "no
+  notice found" means no matching phrase was found, not proof that none exists.
+- Company names, titles and amounts are shown as the source gives them. Amounts
+  show the currency code of the fact and are never converted.
+- Dates, times and numbers use the English format and the labelled US time
+  zones described above.
