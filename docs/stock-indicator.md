@@ -171,8 +171,8 @@ while markets are closed.
 | --- | --- | --- |
 | Listing | NASDAQ, NYSE, NYSE American | Same: this is a US-listing standard |
 | Filings | 10-Q or 10-K within 135 days | 20-F or 40-F within 490 days; interim 6-Ks not read. With no 20-F or 40-F held, not checked yet (never "not met") |
-| Cash | us-gaap facts; not applied to SIC 6000-6799 | ifrs-full facts (or us-gaap), in the reporting currency. SIC 6000-6799 not applied. With no SIC code read yet, not checked yet |
-| Dilution | Shares outstanding, year on year | Same, usually from annual 20-F figures; ordinary shares, not ADSs |
+| Cash | us-gaap facts; not applied to SIC 6000-6799 | ifrs-full facts (or us-gaap), in the reporting currency. SIC 6000-6799 not applied. With no SIC code read yet, not checked yet. Reported cash is shown with its own currency code (for example "EUR 1,200,000.00"), never converted. Runway is computed only when burn and cash are in the same currency, otherwise not checked yet |
+| Dilution | Shares outstanding, year on year | Same, but only between two share facts on the same XBRL tag and unit. RATi holds no ADS ratio, so if the tags differ (a cover-page count against an IFRS note, where one may count ADSs) growth is not checked yet, never "not met". It is ordinary shares, not ADSs |
 | Trading | Nasdaq halts; 8-K item 3.01 | Nasdaq halts; 6-K listing notices read from text. Not checked yet until 6-K texts have been read for the whole 90 days |
 
 Why a foreign issuer can read "not checked yet" where a domestic one reads a
@@ -214,3 +214,21 @@ local. Not done: showing times in the reader's own zone. That needs the reader's
 zone from the browser and would change the byte-for-byte output for US readers,
 so it is left open.
 
+
+## Language
+
+The interface is English only. There is no translation layer, and none is
+attempted. What that means for foreign issuers:
+
+- Filing text is used as filed. EDGAR filings are expected in English (or with
+  an English translation), and RATi does not check the quality of a
+  translation or read any other language.
+- The listing-notice reading (`edgar.is_listing_notice`) matches a fixed set of
+  English phrases. A notice worded differently, or in another language, is not
+  seen. This is a known limit: once 6-K texts have been read for the whole 90
+  days, a missed notice leaves the trading standard reading "met", so "no
+  notice found" means no matching phrase was found, not proof that none exists.
+- Company names, titles and amounts are shown as the source gives them. Amounts
+  show the currency code of the fact and are never converted.
+- Dates, times and numbers use the English format and the labelled US time
+  zones described above.

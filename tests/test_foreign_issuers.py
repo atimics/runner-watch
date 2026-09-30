@@ -53,6 +53,31 @@ def test_foreign_offering_and_late_filing_forms_are_flagged():
     assert classify_filing("NT 20-F")["kind"] == "Late periodic report"
 
 
+@pytest.mark.parametrize("form", ["SC TO-I", "SC TO-T", "SC TO-C", "SC TO-I/A", "sc to-t/a"])
+def test_tender_offer_forms_are_labelled_neutral(form):
+    result = classify_filing(form)
+    assert result == {"kind": "Tender offer · check terms", "sentiment": "neutral", "score": 66}
+
+
+@pytest.mark.parametrize(
+    ("form", "kind", "sentiment", "score"),
+    [
+        ("8-K", "New current report", "neutral", 68),
+        ("6-K", "New current report", "neutral", 68),
+        ("6-K/A", "New current report", "neutral", 68),
+        ("424B5", "Offering or dilution filing", "risk", 82),
+        ("S-3", "Offering or dilution filing", "risk", 82),
+        ("10-K", "Financial report", "neutral", 48),
+        ("SC 13D", "Active beneficial ownership · intent needs review", "neutral", 64),
+        ("SC 14D9", "New SC 14D9 filing", "neutral", 30),
+        ("SC TO", "New SC TO filing", "neutral", 30),
+        ("XYZ", "New XYZ filing", "neutral", 30),
+    ],
+)
+def test_other_forms_are_classified_as_before(form, kind, sentiment, score):
+    assert classify_filing(form) == {"kind": kind, "sentiment": sentiment, "score": score}
+
+
 @pytest.fixture
 def database(monkeypatch):
     connection = sqlite3.connect(":memory:")

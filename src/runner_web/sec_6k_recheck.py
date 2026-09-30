@@ -5,10 +5,21 @@ only read as filings arrive, so 6-Ks stored before that are marked as ordinary
 current reports, and the trading standard may have passed the issuer without
 having seen its notice.
 
-This reads the 6-K texts already archived in `source_documents` (it fetches
-nothing) and reports which 6-Ks read as notices. It is a DRY RUN unless
-`--apply` is given: then it marks those 6-Ks, and it records that the whole
-window has been read only when every 6-K in it had archived text.
+This reads the 6-K texts already archived in `source_documents` and reports
+which 6-Ks read as notices. By default it fetches nothing. It is a DRY RUN
+unless `--apply` is given: then it marks those 6-Ks, and it records that the
+whole window has been read only when every 6-K in it had text.
+
+`--fetch` is optional. It downloads the text of 6-Ks that were never archived
+from SEC EDGAR (the SEC_USER_AGENT env, at most 2 requests a second, two
+requests per 6-K: the folder index and the document), at most `--max-fetch`
+6-Ks (default 50). What is written:
+
+- `--fetch` alone writes NOTHING. The text is read in memory and dropped.
+- `--fetch --apply` also archives each fetched text in `source_documents`
+  (with the usual source fetch log rows), then marks notices as `--apply`
+  does. A 6-K whose fetch fails, or that is over the limit, stays unread, so
+  the window is not recorded as read and a later run can go on.
 
 Run against a copy or a local database first:
 
@@ -26,12 +37,28 @@ import argparse
 import gzip
 import hashlib
 import json
+import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from ratitrust.stock import DELISTING_DAYS
-from runner_watch.edgar import LISTING_NOTICE_ITEM, filing_directory_url, is_listing_notice
+from runner_watch.edgar import (
+    LISTING_NOTICE_ITEM,
+    SEC_USER_AGENT,
+    EdgarClient,
+    EdgarFiling,
+    filing_directory_url,
+    is_listing_notice,
+)
+
+LOG = logging.getLogger(__name__)
+DEFAULT_MAX_FETCH = 50
+# Two requests per 6-K, so this is at most one 6-K a second. SEC allows 10 a second.
+FETCH_REQUESTS_PER_SECOND = 2.0
+# Given a filing's URL and accession, returns its primary document text or None.
+FetchText = Callable[[str, str], str | None]
 
 
 def _archived_text(database: Any, filing_url: str) -> str | None:
@@ -60,8 +87,54 @@ def _archived_text(database: Any, filing_url: str) -> str | None:
     return None
 
 
-def recheck_archived_6ks(database: Any, *, at: datetime, apply: bool = False) -> dict[str, Any]:
-    """Report (and with `apply`, mark) archived 6-Ks whose text is a listing notice."""
+def edgar_text_fetcher(*, archive: bool) -> FetchText:
+    """Fetch a 6-K's primary document from SEC EDGAR, slowly.
+
+    With `archive` the client records each response in `source_documents`; without
+    it nothing is written anywhere.
+    """
+
+    recorder = None
+    if archive:
+        from runner_web.ingestion import record_source_fetch
+
+        recorder = record_source_fetch
+    client = EdgarClient(
+        user_agent=SEC_USER_AGENT,
+        max_requests_per_second=FETCH_REQUESTS_PER_SECOND,
+        fetch_recorder=recorder,
+    )
+
+    def fetch(filing_url: str, accession: str) -> str | None:
+        filing = EdgarFiling(
+            accession=accession,
+            cik=0,
+            form="6-K",
+            title="",
+            role="",
+            filed_at="",
+            filing_url=filing_url,
+        )
+        found = client.primary_filing_text(filing)
+        return found[1] if found else None
+
+    return fetch
+
+
+def recheck_archived_6ks(
+    database: Any,
+    *,
+    at: datetime,
+    apply: bool = False,
+    fetch_text: FetchText | None = None,
+    max_fetch: int = DEFAULT_MAX_FETCH,
+) -> dict[str, Any]:
+    """Report (and with `apply`, mark) 6-Ks whose text is a listing notice.
+
+    Text comes from the archive. When `fetch_text` is given, a 6-K with no archived
+    text is fetched with it, for at most `max_fetch` 6-Ks; without it nothing is
+    fetched.
+    """
 
     since = (at - timedelta(days=DELISTING_DAYS)).isoformat()
     rows = database.execute(
@@ -72,11 +145,22 @@ def recheck_archived_6ks(database: Any, *, at: datetime, apply: bool = False) ->
     notices: list[dict[str, str]] = []
     missing = 0
     already = 0
+    fetched = 0
+    fetch_failed = 0
     for row in rows:
         if LISTING_NOTICE_ITEM in str(row["items"] or ""):
             already += 1
             continue
         text = _archived_text(database, str(row["filing_url"] or ""))
+        if text is None and fetch_text is not None and fetched < max_fetch:
+            fetched += 1
+            try:
+                text = fetch_text(str(row["filing_url"] or ""), str(row["accession"]))
+            except Exception:
+                LOG.warning("Could not fetch 6-K %s", row["accession"], exc_info=True)
+                text = None
+            if text is None:
+                fetch_failed += 1
         if text is None:
             missing += 1
         elif is_listing_notice(text):
@@ -93,6 +177,8 @@ def recheck_archived_6ks(database: Any, *, at: datetime, apply: bool = False) ->
         "six_ks": len(rows),
         "already_marked": already,
         "text_not_archived": missing,
+        "fetched": fetched,
+        "fetch_failed": fetch_failed,
         "would_mark" if not apply else "marked": notices,
         "tickers": sorted({notice["ticker"] for notice in notices}),
         "window_marked_as_read": False,
@@ -125,7 +211,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--database-path", type=Path)
     parser.add_argument("--apply", action="store_true", help="write changes (default: report only)")
+    parser.add_argument(
+        "--fetch",
+        action="store_true",
+        help="download 6-Ks with no archived text from SEC EDGAR; with --apply the texts are "
+        "also archived (default: fetch nothing)",
+    )
+    parser.add_argument(
+        "--max-fetch",
+        type=int,
+        default=DEFAULT_MAX_FETCH,
+        help=f"most 6-Ks to download with --fetch (default {DEFAULT_MAX_FETCH})",
+    )
     arguments = parser.parse_args()
+    if arguments.max_fetch < 0:
+        parser.error("--max-fetch cannot be negative")
     from runner_web import db
 
     if arguments.database_path:
@@ -133,7 +233,13 @@ def main() -> None:
             parser.error("--database-path cannot be combined with DATABASE_URL")
         db.DATABASE_PATH = arguments.database_path
     with db.connection() as database:
-        report = recheck_archived_6ks(database, at=datetime.now(UTC), apply=arguments.apply)
+        report = recheck_archived_6ks(
+            database,
+            at=datetime.now(UTC),
+            apply=arguments.apply,
+            fetch_text=edgar_text_fetcher(archive=arguments.apply) if arguments.fetch else None,
+            max_fetch=arguments.max_fetch,
+        )
     print(json.dumps(report, indent=2))
 
 
