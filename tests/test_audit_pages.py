@@ -122,7 +122,7 @@ def test_a_draft_serves_its_status_as_json_and_its_vault_with_its_own_csp(site):
     csp = directives(vault.headers["content-security-policy"])
     assert csp["script-src"] == ["'unsafe-inline'", "https://cdnjs.cloudflare.com"]
     assert csp["connect-src"] == ["'none'"] and csp["frame-ancestors"] == ["'none'"]
-    assert vault.headers["cache-control"] == "no-store"
+    assert vault.headers["cache-control"] == "no-store, no-transform"
 
     other = client.get(f"/draft/{UUID}")
     assert (
