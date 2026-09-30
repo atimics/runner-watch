@@ -1,0 +1,43 @@
+{% extends "mobile_base.html" %}
+{% block app_class %}account-page trust-page{% endblock %}
+{% block title %}RATi Audit {{ bundle.manifest.audit }}{% endblock %}
+{% block page_description %}<meta name="description" content="A final, signed RATi smart contract audit with its files and hashes.">{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
+{% macro short_digest(digest) %}{{ digest[:8] }}…{{ digest[-4:] }}{% endmacro %}
+{% block content %}
+{% set a = bundle.attestation %}
+<main class="account-wrap trust-wrap">
+  <header class="trust-head">
+    <span class="eyebrow">RATi Trust · Final audit</span>
+    <h1>{% if a %}{{ a.title }}{% else %}Audit {{ bundle.manifest.audit }}{% endif %}</h1>
+    <p>A final audit, signed by a named auditor. Nothing on this page changes.</p>
+  </header>
+
+  <section class="trust-status" aria-label="Signature and files">
+    <div><span>Files</span><strong>{% if bundle.verified %}<span class="trust-ok">Match their hashes</span>{% else %}<span class="trust-bad">Do not match their hashes</span>{% endif %}</strong></div>
+    <div><span>Signed by</span><strong>{{ bundle.manifest.signer }}</strong></div>
+    <div><span>Signed on</span><strong>{{ bundle.manifest.signed }}</strong></div>
+    <div><span>Protocol</span><strong>{{ bundle.manifest.protocol.version }}</strong></div>
+    {% if a %}<div><span>Findings</span><strong>{{ a.findings.total }} ({{ a.findings.fixed }} fixed, {{ a.findings.acknowledged }} acknowledged)</strong></div>{% endif %}
+    <div class="trust-status-digest"><span>Bundle hash</span><strong><code title="{{ bundle.bundle_hash }}">{{ short_digest(bundle.bundle_hash) }}</code></strong></div>
+  </section>
+
+  <section aria-label="Files">
+    <h2>Files</h2>
+    <table class="trust-table">
+      <thead><tr><th>File</th><th>SHA-256</th><th></th></tr></thead>
+      <tbody>{% for file in bundle.files %}<tr>
+        <td><a href="/{{ bundle.id }}/{{ file.name }}">{{ file.name }}</a></td>
+        <td><code title="{{ file.sha256 }}">{{ short_digest(file.sha256) }}</code></td>
+        <td>{% if file.ok %}<span class="trust-ok">matches</span>{% else %}<span class="trust-bad">does not match</span>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+  </section>
+
+  <section aria-label="Verify it yourself">
+    <h2>Verify it yourself</h2>
+    <p>Download the files and <a href="/{{ bundle.id }}/allowed_signers">allowed_signers</a>, then run <code>ratiaudit check &lt;folder&gt; --allowed-signers allowed_signers</code>. It checks the SSH signature on the attestation and every file hash. Trust the signer's key from a source you already know; this page cannot vouch for it.</p>
+    <p class="trust-note">The report is <a href="/{{ bundle.id }}/report.md">report.md</a>. Address: <code>{{ bundle.id }}</code></p>
+  </section>
+</main>
+{% endblock %}
