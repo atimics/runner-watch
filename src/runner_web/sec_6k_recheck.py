@@ -66,8 +66,8 @@ def recheck_archived_6ks(database: Any, *, at: datetime, apply: bool = False) ->
     since = (at - timedelta(days=DELISTING_DAYS)).isoformat()
     rows = database.execute(
         "SELECT accession,ticker,filed_at,filing_url,items FROM sec_filings "
-        "WHERE form LIKE '6-K%' AND filed_at>=? ORDER BY filed_at",
-        (since,),
+        "WHERE form LIKE ? AND filed_at>=? ORDER BY filed_at",
+        ("6-K%", since),
     ).fetchall()
     notices: list[dict[str, str]] = []
     missing = 0
