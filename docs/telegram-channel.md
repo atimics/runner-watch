@@ -234,11 +234,19 @@ Dash, the cheetah in the discussion room, observes a **world state** rather than
 calling a menu of getters. Every addressed message hands the model one snapshot
 from `dash_world()`: the session, the board summary, new runners, recent events,
 community activity, Dash's own book, and `changes` — what landed since the last
-look. The one read verb is `expand` (`board`, `runners`, `events`, `community`,
-`sector:<name>`, `report:pre`, `report:post`, `ticker:<SYM>`); the rest are the
+look. The one read verb is `expand` (`board`, `runners`, `events`, `halts`,
+`community`, `sector:<name>`, `sports`, `sports:<league>`, `memecoins`,
+`coin:<contract address or id>`, `report:pre`, `report:post`, `ticker:<SYM>`);
+the rest are the
 mutations `reply`, `react`, `hold`, `make_call`, `close_call`,
 `comment_on_ticker` and `my_standing`. His recent chat actions come back in the
 world (`dash.recent_actions`) so continuity is stored, not pleaded.
+
+`DASH_MODEL` picks the model for Dash's chat turn and desk note. It defaults to
+the Flash model, so nothing changes until it is set. The requests still send
+`require_parameters` and `zdr`; a router model (for example `typesafe/jev-router`,
+which lists no supported parameters) may fail these options, so try any new
+`DASH_MODEL` on a test chat first.
 
 `dash_desk_note_worker` is the proactive tick: every `DASH_DESK_NOTE_SECONDS`
 (3600) it builds the world and, only when `changes.any` is true, asks for one

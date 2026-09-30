@@ -2110,6 +2110,12 @@ def _telegram_chat_completion(body: dict[str, Any]) -> dict[str, Any]:
         return json.loads(response.read(262_145))
 
 
+def _dash_model() -> str:
+    """The model for Dash's chat turn and desk note. Defaults to FLASH.model."""
+
+    return os.getenv("DASH_MODEL", "").strip() or FLASH.model
+
+
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
     """Ask the model what the cheetah does with one message.
 
@@ -2155,10 +2161,13 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
     corrected = False
     for _round in range(6):
         body = {
-            "model": FLASH.model,
+            "model": _dash_model(),
             "messages": messages,
             "tools": tools,
             "tool_choice": "required",
+            # A router model (for example typesafe/jev-router) lists no supported
+            # parameters, so these options may make it fail. Try any new
+            # DASH_MODEL on a test chat first.
             "provider": {"require_parameters": True, "zdr": True},
             "max_tokens": 700,
         }
@@ -2255,7 +2264,7 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
     """Ask Dash for one short, unprompted note about what changed."""
 
     body = {
-        "model": FLASH.model,
+        "model": _dash_model(),
         "messages": [
             {"role": "system", "content": CHEETAH_PERSONA},
             {
@@ -2277,6 +2286,7 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
                 ),
             },
         ],
+        # Same caution as the chat turn: a router model may fail these options.
         "provider": {"require_parameters": True, "zdr": True},
         # Room for the model's reasoning as well as the note: a contract address
         # alone is dozens of tokens, and a tight cap cut notes off mid-address.
