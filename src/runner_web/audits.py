@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -46,9 +47,26 @@ VAULT_CSP = (
 )
 
 
-def _read(path: Path) -> str | None:
+def _inside(*parts: str) -> Path | None:
+    """A path under ASSETS, or None if it would leave it. Every request reads through here."""
+
+    root = os.path.realpath(ASSETS)
+    path = os.path.realpath(os.path.join(root, *parts))
+    return Path(path) if path.startswith(root + os.sep) else None
+
+
+def _read(*parts: str) -> str | None:
+    path = _inside(*parts)
     try:
-        return path.read_text()
+        return path.read_text() if path else None
+    except OSError:
+        return None
+
+
+def _bytes(*parts: str) -> bytes | None:
+    path = _inside(*parts)
+    try:
+        return path.read_bytes() if path else None
     except OSError:
         return None
 
@@ -56,32 +74,32 @@ def _read(path: Path) -> str | None:
 def draft(audit_uuid: str) -> dict[str, Any] | None:
     """The public status of a draft, or None."""
 
-    if not UUID.match(audit_uuid):
+    if not UUID.fullmatch(audit_uuid):
         return None
-    text = _read(ASSETS / "draft" / audit_uuid / "status.json")
+    text = _read("draft", audit_uuid, "status.json")
     if text is None:
         return None
     try:
         status = json.loads(text)
     except ValueError:
         return None
-    status["has_vault"] = (ASSETS / "draft" / audit_uuid / "vault.html").is_file()
+    vault = _inside("draft", audit_uuid, "vault.html")
+    status["has_vault"] = bool(vault and vault.is_file())
     return status
 
 
 def draft_vault(audit_uuid: str) -> str | None:
-    if not UUID.match(audit_uuid):
+    if not UUID.fullmatch(audit_uuid):
         return None
-    return _read(ASSETS / "draft" / audit_uuid / "vault.html")
+    return _read("draft", audit_uuid, "vault.html")
 
 
 def final(bundle_id: str) -> dict[str, Any] | None:
     """A final bundle with every file hash recomputed, or None."""
 
-    if not BUNDLE.match(bundle_id):
+    if not BUNDLE.fullmatch(bundle_id):
         return None
-    folder = ASSETS / "final" / bundle_id
-    manifest_text = _read(folder / "manifest.json")
+    manifest_text = _read("final", bundle_id, "manifest.json")
     if manifest_text is None:
         return None
     try:
@@ -90,18 +108,14 @@ def final(bundle_id: str) -> dict[str, Any] | None:
         return None
     files, verified = [], True
     for name, expected in sorted(manifest.get("files", {}).items()):
-        actual = (
-            hashlib.sha256((folder / name).read_bytes()).hexdigest()
-            if (folder / name).is_file()
-            else None
-        )
-        ok = actual == expected
+        data = _bytes("final", bundle_id, name) if name in FINAL_FILES else None
+        ok = data is not None and hashlib.sha256(data).hexdigest() == expected
         verified &= ok
         files.append({"name": name, "sha256": expected, "ok": ok})
     attestation = None
     try:
-        attestation = json.loads((folder / "attestation.json").read_text())
-    except (OSError, ValueError):
+        attestation = json.loads(_read("final", bundle_id, "attestation.json") or "")
+    except ValueError:
         verified = False
     return {
         "id": bundle_id,
@@ -114,9 +128,7 @@ def final(bundle_id: str) -> dict[str, Any] | None:
 
 
 def final_file(bundle_id: str, name: str) -> tuple[bytes, str] | None:
-    if not BUNDLE.match(bundle_id) or name not in FINAL_FILES:
+    if not BUNDLE.fullmatch(bundle_id) or name not in FINAL_FILES:
         return None
-    try:
-        return (ASSETS / "final" / bundle_id / name).read_bytes(), FINAL_FILES[name]
-    except OSError:
-        return None
+    data = _bytes("final", bundle_id, name)
+    return (data, FINAL_FILES[name]) if data is not None else None

@@ -95,7 +95,7 @@ def test_a_draft_page_shows_progress_and_never_code(site):
     assert page.status_code == 200
     assert "An audit in progress" in page.text and "phase not done: manual_review" in page.text
     assert WALLET in page.text and "Open the sealed report" in page.text
-    assert "github.com" not in page.text
+    assert "Fishbowl" not in page.text and "787cead" not in page.text
 
 
 def test_a_draft_serves_its_status_as_json_and_its_vault_with_its_own_csp(site):
@@ -136,6 +136,7 @@ def test_unknown_and_malformed_drafts_are_not_found(site):
     write_draft(root)
     assert client.get("/draft/00000000-0000-4000-8000-000000000000").status_code == 404
     assert client.get("/draft/not-a-uuid").status_code == 404
+    assert client.get(f"/draft/{UUID}%0A").status_code == 404  # a trailing newline is not a uuid
     assert client.get("/draft/..%2F..%2Fetc%2Fpasswd").status_code == 404
 
 
