@@ -574,6 +574,46 @@ def test_golf_tied_match_does_not_name_a_winner() -> None:
     assert matches[0]["result"] == "Halved"
 
 
+def test_golf_slate_carries_the_latest_cup_quotes_and_detail_keeps_the_history(
+    sports_db,
+) -> None:
+    from runner_web import golf_markets
+
+    current = datetime.now(UTC)
+    raw = {
+        "id": "401824815",
+        "name": "Presidents Cup fixture",
+        "date": (current + timedelta(days=2)).isoformat(),
+        "endDate": (current + timedelta(days=5)).isoformat(),
+        "status": {"type": {"state": "pre", "completed": False}},
+        "competitions": [{"competitors": []}],
+    }
+    event = normalize_golf_event(raw)
+    assert event is not None and event["id"] == "golf:401824815"
+    store_golf_events([event])
+    golf_markets.store_quotes(
+        [
+            {
+                "event_id": event["id"],
+                "contract_key": "winner",
+                "outcome_key": "usa",
+                "source": "kalshi",
+                "probability": 0.8 + step / 100,
+                "observed_at": (current - timedelta(hours=10 - step)).isoformat(),
+                "quality": "quoted",
+            }
+            for step in range(5)
+        ]
+    )
+
+    listed = next(item for item in golf_slate()["events"] if item["id"] == event["id"])
+    detail = golf_event(event["id"])
+
+    assert len(listed["contract_quotes"]) == 1
+    assert listed["contract_quotes"][0]["probability"] == pytest.approx(0.84)
+    assert len(detail["contract_quotes"]) == 5
+
+
 def test_finished_golf_keeps_round_leaders_and_shipley_score(sports_db) -> None:
     current = datetime.now(UTC)
     holes = [{"period": hole, "value": 4} for hole in range(1, 19)]
