@@ -34,6 +34,15 @@ def site(tmp_path, monkeypatch):
     )
 
 
+def directives(policy: str) -> dict[str, list[str]]:
+    """A Content-Security-Policy as {directive: [sources]}."""
+
+    return {
+        parts[0]: parts[1:]
+        for parts in (item.split() for item in policy.split(";") if item.strip())
+    }
+
+
 def write_draft(root, vault=True):
     folder = root / "draft" / UUID
     folder.mkdir(parents=True)
@@ -110,12 +119,9 @@ def test_a_draft_serves_its_status_as_json_and_its_vault_with_its_own_csp(site):
 
     vault = client.get(f"/draft/{UUID}/vault")
     assert vault.status_code == 200 and "const VAULT" in vault.text
-    csp = vault.headers["content-security-policy"]
-    assert (
-        "https://cdnjs.cloudflare.com" in csp
-        and "'unsafe-inline'" in csp
-        and "connect-src 'none'" in csp
-    )
+    csp = directives(vault.headers["content-security-policy"])
+    assert csp["script-src"] == ["'unsafe-inline'", "https://cdnjs.cloudflare.com"]
+    assert csp["connect-src"] == ["'none'"] and csp["frame-ancestors"] == ["'none'"]
     assert vault.headers["cache-control"] == "no-store"
 
     other = client.get(f"/draft/{UUID}")
