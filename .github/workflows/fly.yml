@@ -372,3 +372,11 @@ jobs:
       - name: Report failed release
         if: always() && (steps.deploy.outcome == 'failure' || steps.edge.outcome == 'failure' || steps.processes.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.screens.outcome == 'failure')
         run: exit 1
+      # The router step is skipped, not failed, when the Cloudflare secrets are missing, and a
+      # skipped step reports nothing. Router code would then stop reaching production unnoticed.
+      # This does not roll the app back: the release itself is fine.
+      - name: Require the edge router credentials
+        if: always() && steps.deploy.outcome == 'success' && steps.edge_credentials.outputs.available != 'true'
+        run: |
+          echo "::error::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set, so the public edge router was not deployed. Set both repository secrets."
+          exit 1

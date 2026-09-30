@@ -86,11 +86,31 @@ def refresh_company_map(client: EdgarClient) -> int:
     companies = client.companies()
     refreshed_at = iso()
     with connection() as db:
+        # The list is rebuilt, but the sector columns are not part of it: a SIC code
+        # takes a slow, throttled lookup per company, so a rebuild that drops them
+        # sends every company back to the queue each time (and the financial-company
+        # carve-out cannot work for any company until its code is read again).
+        kept = {
+            row["cik"]: (row["sic"], row["sic_description"], row["sector_refreshed_at"])
+            for row in db.execute(
+                "SELECT cik,sic,sic_description,sector_refreshed_at FROM sec_companies "
+                "WHERE (sic IS NOT NULL AND sic<>'') OR sector_refreshed_at IS NOT NULL"
+            ).fetchall()
+        }
         db.execute("DELETE FROM sec_companies")
         db.executemany(
-            "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) VALUES(?,?,?,?,?)",
+            "INSERT INTO sec_companies("
+            "cik,ticker,name,exchange,refreshed_at,sic,sic_description,sector_refreshed_at"
+            ") VALUES(?,?,?,?,?,?,?,?)",
             [
-                (company.cik, company.ticker, company.name, company.exchange, refreshed_at)
+                (
+                    company.cik,
+                    company.ticker,
+                    company.name,
+                    company.exchange,
+                    refreshed_at,
+                    *kept.get(company.cik, (None, None, None)),
+                )
                 for company in companies
             ],
         )

@@ -507,8 +507,9 @@ TOOL_SCHEMA = (
             "carries the session, the board summary, new runners, recent events, "
             "community activity, your own book and what changed. Use this when you "
             "need the detail behind one of those nodes before you say anything. "
-            "Nodes: board, runners, events, community, sector:<name>, report:pre, "
-            "report:post, ticker:<SYM>."
+            "Nodes: board, runners, events, halts, community, sector:<name>, "
+            "sports, sports:<league>, memecoins, coin:<contract address or id>, "
+            "report:pre, report:post, ticker:<SYM>."
         ),
         "parameters": {
             "type": "object",

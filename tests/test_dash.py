@@ -1218,3 +1218,41 @@ def test_a_desk_note_cut_off_by_the_token_cap_keeps_only_whole_sentences(monkeyp
         lambda body: {"choices": [{"message": {"content": cut}, "finish_reason": "stop"}]},
     )
     assert web_main._generate_desk_note({}) == cut
+
+
+def test_dash_model_defaults_to_flash_and_can_be_overridden(monkeypatch):
+    from runner_web import main as web_main
+    from runner_web.ai_kol import FLASH
+
+    monkeypatch.delenv("DASH_MODEL", raising=False)
+    assert web_main._dash_model() == FLASH.model
+    monkeypatch.setenv("DASH_MODEL", "  vendor/other-model ")
+    assert web_main._dash_model() == "vendor/other-model"
+    monkeypatch.setenv("DASH_MODEL", "  ")
+    assert web_main._dash_model() == FLASH.model
+
+
+def test_the_desk_note_uses_the_dash_model(monkeypatch):
+    from runner_web import main as web_main
+
+    monkeypatch.setenv("DASH_MODEL", "vendor/other-model")
+    bodies: list[dict] = []
+
+    def completion(body):
+        bodies.append(body)
+        return {"choices": [{"message": {"content": "ok."}, "finish_reason": "stop"}]}
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion)
+    web_main._generate_desk_note({"changes": {"any": True}})
+
+    assert bodies[0]["model"] == "vendor/other-model"
+
+
+def test_the_expand_description_lists_every_node_dash_expand_accepts():
+    from runner_web import telegram_chat as chat
+
+    tool = next(t for t in chat.TOOL_SCHEMA if t["name"] == "expand")
+    description = tool["description"]
+
+    for node in dash.WORLD_NODES:
+        assert node in description
