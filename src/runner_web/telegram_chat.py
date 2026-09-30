@@ -32,6 +32,10 @@ ENGAGEMENT_MINUTES = max(1, int(os.getenv("TELEGRAM_ENGAGEMENT_MINUTES", "10")))
 MUTE_MINUTES = max(1, int(os.getenv("TELEGRAM_MUTE_MINUTES", "60")))
 REPLY_COOLDOWN_SECONDS = max(0, int(os.getenv("TELEGRAM_REPLY_COOLDOWN_SECONDS", "20")))
 REPLIES_PER_HOUR = max(1, int(os.getenv("TELEGRAM_REPLIES_PER_HOUR", "20")))
+# Every model-considered turn costs money whether it ends in reply, react or hold,
+# so the room has its own cap on turns. The action table keeps no user id, so there
+# is no per-user cap.
+TURNS_PER_HOUR = max(1, int(os.getenv("TELEGRAM_TURNS_PER_HOUR", "60")))
 MAX_TEXT_CHARS = 3500
 MAX_UPDATE_ATTEMPTS = 3
 
@@ -358,6 +362,16 @@ def recent_reply_count(database: Any, chat_id: int, now: datetime) -> int:
     )
 
 
+def recent_turn_count(database: Any, chat_id: int, now: datetime) -> int:
+    since = (now - timedelta(hours=1)).isoformat()
+    return int(
+        database.execute(
+            "SELECT COUNT(*) FROM telegram_chat_actions WHERE chat_id=? AND acted_at>?",
+            (chat_id, since),
+        ).fetchone()[0]
+    )
+
+
 def last_reply_at(database: Any, chat_id: int) -> datetime | None:
     row = database.execute(
         "SELECT acted_at FROM telegram_chat_actions "
@@ -382,6 +396,9 @@ def attention_for(database: Any, message: InboundMessage, now: datetime | None =
 
     if recent_reply_count(database, message.chat_id, current) >= REPLIES_PER_HOUR:
         return Attention(consider=False, reason="hourly_budget")
+
+    if recent_turn_count(database, message.chat_id, current) >= TURNS_PER_HOUR:
+        return Attention(consider=False, reason="hourly_turn_budget")
 
     if message.addressed:
         # Someone spoke to him directly. The cooldown is there to stop him talking
