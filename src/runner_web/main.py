@@ -697,6 +697,16 @@ def _public_screen_cache_keys(scope: str, identity: str) -> tuple[str, str]:
     return local_key, shared_key
 
 
+def _with_no_transform(cache_control: str | None) -> str:
+    """A Cache-Control value that also says no-transform, keeping what it already had."""
+
+    if not cache_control:
+        return "no-transform"
+    if "no-transform" in cache_control.lower():
+        return cache_control
+    return f"{cache_control}, no-transform"
+
+
 def _invalidate_public_screen_data(scope: str, identity: str) -> None:
     local_key, shared_key = _public_screen_cache_keys(scope, identity)
     with PUBLIC_SCREEN_DATA_CONDITION:
@@ -2717,6 +2727,12 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     )
     if request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    if response.headers.get("content-type", "").startswith("text/html"):
+        # Ask Cloudflare not to rewrite the page. Its automatic Web Analytics adds a
+        # third-party beacon script to HTML, and this site says it has no analytics.
+        response.headers["Cache-Control"] = _with_no_transform(
+            response.headers.get("Cache-Control")
+        )
     elapsed_ms = (time.perf_counter() - started) * 1000
     route = request.scope.get("route")
     route_path = getattr(route, "path", request.url.path)
