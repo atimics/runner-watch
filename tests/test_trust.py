@@ -11,18 +11,19 @@ from runner_web import db, trust
 def test_the_published_record_commits_to_the_current_version_and_every_digest_checks_out():
     record = trust.rules_record()
 
-    assert record["current"]["version"] == "2.1.0"
-    assert record["current"]["digest"].startswith("78312512")
-    assert record["sealed"] is True and record["shown"]["version"] == "2.0.0"
+    assert record["current"]["version"] == "2.1.1"
+    assert record["current"]["digest"].startswith("9c6c07bf")
+    assert record["sealed"] is True and record["shown"]["version"] == "2.1.0"
     assert "files" not in record["current"]  # the current version is only a commitment
     assert [version["version"] for version in record["revealed"]] == [
+        "2.1.0",
         "2.0.0",
         "1.0.2",
         "1.0.1",
         "1.0.0",
     ]
     assert all(version["verified"] for version in record["revealed"])
-    assert "## Memecoins: nine standards" in record["revealed"][3]["rules_text"]
+    assert "## Memecoins: nine standards" in record["revealed"][4]["rules_text"]
 
 
 def test_rules_published_as_data_are_read_as_structured_standards():
@@ -65,10 +66,11 @@ def test_the_trust_page_shows_the_commitment_and_the_rules(client):
     page = client.get("/trust")
 
     assert page.status_code == 200
+    assert "9c6c07bf81374496148150148654d0bc8674ca6f262006f172f0a5444b660a88" in page.text
     assert "78312512b3ca22a231e9ebe086fffb0b591552ee4a4a1a036cefbc361bc0a80a" in page.text
     assert "cd0357851f936c3628b12f65b7a62bf24cc0c02d40fe265dea26f98d622b029d" in page.text
-    assert "Version 2.1.0 stays sealed until it is replaced" in page.text
-    assert "Shown below is version 2.0.0, the newest published in full." in page.text
+    assert "Version 2.1.1 stays sealed until it is replaced" in page.text
+    assert "Shown below is version 2.1.0, the newest published in full." in page.text
     assert "days_since_annual_report at most 490 days, when foreign_issuer is true" in page.text
     assert "does not match" not in page.text
     assert 'class="market-switcher"' not in page.text  # the rules are not a market
@@ -117,7 +119,7 @@ def test_a_sealed_version_in_force_says_which_published_rules_are_shown(client, 
     page = client.get("/trust").text
 
     assert "Version 1.1.0 stays sealed until it is replaced" in page
-    assert "Shown below is version 2.0.0, the newest published in full." in page
+    assert "Shown below is version 2.1.0, the newest published in full." in page
     assert "In force, sealed" in page and "ab" * 32 in page
 
 
