@@ -21,12 +21,31 @@ from ratitrust.stock import (
     HALT_DAYS,
     PERIODIC_FORMS,
     _day,
+    is_foreign_issuer,
     standards,
 )
+from runner_watch.edgar import LISTING_NOTICE_ITEM
 from runner_web.issuer_risk import issuer_risk_contexts
-from runner_web.sec_delistings import notices_read
+from runner_web.sec_delistings import foreign_notices_read, notices_read
 
 __all__ = ["standards", "stock_ratifications"]
+
+
+# Limit up-limit down and market-wide circuit breaker pauses stop trading for
+# minutes because the price moved, not because of the company: they are not the
+# halts this standard is about (news pending, regulatory concern, suspension).
+VOLATILITY_PAUSE_CODES = {"LUDP", "LUDS", "M", "MWC0", "MWC1", "MWC2", "MWC3", "MWCQ"}
+
+
+def is_volatility_pause(payload: Any) -> bool:
+    import json
+
+    try:
+        values = json.loads(payload) if isinstance(payload, str) else payload or {}
+    except ValueError:
+        return False
+    code = str(values.get("reason_code") or "").strip().upper() if isinstance(values, dict) else ""
+    return code in VOLATILITY_PAUSE_CODES
 
 
 def _note_missing_sectors(database: Any, companies: dict[str, Any], at: datetime) -> None:
@@ -82,20 +101,30 @@ def stock_ratifications(
     }
     halts: dict[str, date] = {}
     for row in database.execute(
-        "SELECT UPPER(ticker) AS ticker,MAX(event_at) AS latest FROM public_market_events "
-        f"WHERE event_type='trading_halt' AND event_at>=? AND UPPER(ticker) IN ({marks}) "
-        "GROUP BY UPPER(ticker)",
+        "SELECT UPPER(ticker) AS ticker,event_at,payload_json FROM public_market_events "
+        f"WHERE event_type='trading_halt' AND event_at>=? AND UPPER(ticker) IN ({marks})",
         ((at - timedelta(days=HALT_DAYS)).isoformat(), *tickers),
     ).fetchall():
-        if (day := _day(row["latest"])) is not None:
+        if is_volatility_pause(row["payload_json"]):
+            continue
+        if (day := _day(row["event_at"])) is not None and day > halts.get(row["ticker"], date.min):
             halts[row["ticker"]] = day
     delistings: dict[str, date] = {}
     for row in database.execute(
         # Patterns are bound: a bare % in SQL text is a placeholder to PostgreSQL.
+        # A domestic issuer's notice is 8-K item 3.01; a foreign issuer's is a
+        # 6-K whose text reads as one (marked at ingestion).
         "SELECT UPPER(ticker) AS ticker,MAX(filed_at) AS latest FROM sec_filings "
-        "WHERE form LIKE ? AND items LIKE ? AND filed_at>=? "
-        f"AND UPPER(ticker) IN ({marks}) GROUP BY UPPER(ticker)",
-        ("8-K%", "%3.01%", (at - timedelta(days=DELISTING_DAYS)).isoformat(), *tickers),
+        "WHERE ((form LIKE ? AND items LIKE ?) OR (form LIKE ? AND items LIKE ?)) "
+        f"AND filed_at>=? AND UPPER(ticker) IN ({marks}) GROUP BY UPPER(ticker)",
+        (
+            "8-K%",
+            "%3.01%",
+            "6-K%",
+            f"%{LISTING_NOTICE_ITEM}%",
+            (at - timedelta(days=DELISTING_DAYS)).isoformat(),
+            *tickers,
+        ),
     ).fetchall():
         if (day := _day(row["latest"])) is not None:
             delistings[row["ticker"]] = day
@@ -116,17 +145,24 @@ def stock_ratifications(
                 entry.update(filed_at=day.isoformat(), form=row["form"])
     issuers = issuer_risk_contexts(database, tickers)
     read = notices_read(database, at)
+    foreign_read = foreign_notices_read(database, at)
     _note_missing_sectors(database, companies, at)
     results = {}
     for ticker in tickers:
+        issuer = issuers.get(ticker) or {}
+        foreign = bool(issuer.get("foreign_issuer")) or is_foreign_issuer(
+            set((periodic.get(ticker) or {}).get("forms") or ())
+        )
         inputs = {
             "exchange": companies[ticker]["exchange"] if ticker in companies else None,
-            "issuer": issuers.get(ticker) or {},
+            "issuer": issuer,
             "halted_on": halts.get(ticker),
             "delisting_on": delistings.get(ticker),
             "today": at.date(),
             "filed": periodic.get(ticker),
-            "delistings_read": read,
+            # A foreign issuer's notices are 6-Ks read from their text: no notice is
+            # known only once that reading has covered the whole window.
+            "delistings_read": read and (foreign_read or not foreign),
         }
         results[ticker] = standards(**inputs)
         if facts is not None:
