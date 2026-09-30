@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 
-import { handleAudits, PAGE_CSP, VAULT_CSP } from "../src/audits.js";
+import { b58decode, handleAudits, PAGE_CSP, VAULT_CSP } from "../src/audits.js";
 import worker from "../src/index.js";
 
 const UUID = "3f1c1c1e-1b7a-4c3e-9a55-0d4f6a1b2c3d";
@@ -21,6 +21,9 @@ class FakeBucket {
   }
   async head(key) {
     return key in this.objects ? { key } : null;
+  }
+  async put(key, value) {
+    this.objects[key] = value;
   }
 }
 
@@ -163,4 +166,122 @@ test("the router answers audit paths from R2 on the trust host and proxies the r
   } finally {
     globalThis.fetch = original;
   }
+});
+
+
+// ---------------------------------------------------------------- submitting a review
+
+const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function b58encode(bytes) {
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i++) {
+      carry += digits[i] << 8;
+      digits[i] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  let out = "";
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    out += "1";
+  }
+  for (let i = digits.length - 1; i >= 0; i--) out += ALPHABET[digits[i]];
+  return out;
+}
+
+async function wallet() {
+  const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const address = b58encode(new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)));
+  const sign = async (text) => b58encode(new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, pair.privateKey, new TextEncoder().encode(text))));
+  return { address, sign };
+}
+
+const STATEMENT = "ratiaudit review v1\naudit: 001\npacket: abc\nproofs: def\nfindings: 001-C1, 001-C2, 001-H1\nI read these findings and their proofs.";
+
+async function reviewEnv(reviewer) {
+  const objects = { [`draft/${UUID}/status.json`]: status({ review: { message: STATEMENT, reviewers: [reviewer.address] } }) };
+  return { AUDITS: new FakeBucket(objects) };
+}
+
+const post = (body, env, headers = {}, path = `/draft/${UUID}/review`) =>
+  handleAudits(new Request(`https://trust.rati.chat${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) }), env);
+
+test("base58 decoding checks length and alphabet", () => {
+  assert.equal(b58decode("0OIl", 3), null);
+  assert.equal(b58decode("2NEpo7TZRRrLZSi2U", 12) && new TextDecoder().decode(b58decode("2NEpo7TZRRrLZSi2U", 12)), "Hello World!");
+  assert.equal(b58decode("2NEpo7TZRRrLZSi2U", 11), null);
+});
+
+test("a listed reviewer's valid signature is kept in the inbox", async () => {
+  const w = await wallet();
+  const env = await reviewEnv(w);
+  const response = await post({ wallet: w.address, message: STATEMENT, signature: await w.sign(STATEMENT) }, env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+  const stored = JSON.parse(env.AUDITS.objects[`inbox/${UUID}/${w.address}.json`]);
+  assert.equal(stored.wallet, w.address);
+  assert.equal(stored.message, STATEMENT);
+});
+
+test("a wallet that is not a reviewer is refused and nothing is stored", async () => {
+  const listed = await wallet();
+  const stranger = await wallet();
+  const env = await reviewEnv(listed);
+  const response = await post({ wallet: stranger.address, message: STATEMENT, signature: await stranger.sign(STATEMENT) }, env);
+  assert.equal(response.status, 403);
+  assert.equal(Object.keys(env.AUDITS.objects).filter((k) => k.startsWith("inbox/")).length, 0);
+});
+
+test("a statement that is not the current one is refused as stale", async () => {
+  const w = await wallet();
+  const env = await reviewEnv(w);
+  const old = STATEMENT.replace("abc", "old");
+  const response = await post({ wallet: w.address, message: old, signature: await w.sign(old) }, env);
+  assert.equal(response.status, 409);
+  assert.match((await response.json()).error, /changed/);
+  assert.equal(Object.keys(env.AUDITS.objects).filter((k) => k.startsWith("inbox/")).length, 0);
+});
+
+test("a signature by another key, or over another text, is refused", async () => {
+  const w = await wallet();
+  const other = await wallet();
+  const env = await reviewEnv(w);
+  for (const signature of [await other.sign(STATEMENT), await w.sign("something else"), "1".repeat(88), "not base58!"]) {
+    const response = await post({ wallet: w.address, message: STATEMENT, signature }, env);
+    assert.equal(response.status, 400, signature.slice(0, 10));
+  }
+  assert.equal(Object.keys(env.AUDITS.objects).filter((k) => k.startsWith("inbox/")).length, 0);
+});
+
+test("malformed, oversized and cross-origin submissions are refused", async () => {
+  const w = await wallet();
+  const env = await reviewEnv(w);
+  const good = { wallet: w.address, message: STATEMENT, signature: await w.sign(STATEMENT) };
+  assert.equal((await post("not json", env)).status, 400);
+  assert.equal((await post({ wallet: 5, message: 1, signature: 2 }, env)).status, 400);
+  assert.equal((await post({ ...good, message: "x".repeat(5000) }, env)).status, 413);
+  assert.equal((await post(good, env, { "Content-Type": "text/plain" })).status, 415);
+  assert.equal((await post(good, env, { Origin: "https://evil.example" })).status, 403);
+  assert.equal((await post(good, env, { Origin: "https://trust.rati.chat" })).status, 200);
+  assert.equal((await post(good, env, {}, "/draft/00000000-0000-4000-8000-000000000000/review")).status, 404);
+  assert.equal((await post(good, env, {}, "/draft/not-a-uuid/review")).status, 404);
+});
+
+test("only POST reaches the review endpoint, and other POSTs still go to the app", async () => {
+  const w = await wallet();
+  const env = await reviewEnv(w);
+  assert.equal((await get(`/draft/${UUID}/review`, env)).status, 404);
+  assert.equal(await post({}, env, {}, `/draft/${UUID}`), null);
+  assert.equal(await post({}, env, {}, "/api/anything"), null);
+});
+
+test("the vault may post back to its own site and nowhere else", () => {
+  assert.ok(VAULT_CSP.includes("connect-src 'self'"));
+  assert.ok(!PAGE_CSP.includes("connect-src") && PAGE_CSP.startsWith("default-src 'none'"));
 });

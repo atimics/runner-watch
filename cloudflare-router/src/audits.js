@@ -29,13 +29,105 @@ const FINAL_FILES = {
 };
 
 // The vault page loads tweetnacl from a CDN and runs inline scripts, and its
-// report frame inherits this policy. Nothing else here allows a script.
+// report frame inherits this policy. It may also post a signed review back to
+// this site (connect-src 'self'). Nothing else here allows a script.
 export const VAULT_CSP =
   "default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; " +
   "style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; " +
-  "img-src data:; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+  "img-src data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 export const PAGE_CSP =
   "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+
+const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const WALLET = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const MAX_REVIEW_BYTES = 4096;
+const TRUST_ORIGIN = "https://trust.rati.chat";
+
+// Base58 to exactly `length` bytes, or null.
+export function b58decode(text, length) {
+  if (typeof text !== "string" || !text.length) return null;
+  const bytes = [0];
+  for (const char of text) {
+    const value = ALPHABET.indexOf(char);
+    if (value < 0) return null;
+    let carry = value;
+    for (let i = 0; i < bytes.length; i++) {
+      carry += bytes[i] * 58;
+      bytes[i] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  for (const char of text) {
+    if (char !== "1") break;
+    bytes.push(0);
+  }
+  const out = Uint8Array.from(bytes.reverse());
+  return out.length === length ? out : null;
+}
+
+async function verifyEd25519(wallet, signature, message) {
+  const publicKey = b58decode(wallet, 32);
+  const sig = b58decode(signature, 64);
+  if (!publicKey || !sig) return false;
+  try {
+    const key = await crypto.subtle.importKey("raw", publicKey, { name: "Ed25519" }, false, ["verify"]);
+    return await crypto.subtle.verify({ name: "Ed25519" }, key, sig, new TextEncoder().encode(message));
+  } catch {
+    return false;
+  }
+}
+
+const reply = (request, status, body) =>
+  respond(request, JSON.stringify(body), { status, type: "application/json; charset=utf-8" });
+
+// A reviewer submits the review they signed on the sealed page. Nothing is recorded as a review here:
+// the object goes to an inbox, and the auditor's `ratiaudit review pull` checks it again and records it.
+async function submitReview(request, uuid, env) {
+  const origin = request.headers.get("Origin");
+  if (origin && origin !== TRUST_ORIGIN) return reply(request, 403, { error: "Cross-origin submissions are refused." });
+  if ((request.headers.get("Content-Type") || "").split(";")[0].trim() !== "application/json") {
+    return reply(request, 415, { error: "Send JSON." });
+  }
+  const text = await request.text();
+  if (new TextEncoder().encode(text).length > MAX_REVIEW_BYTES) return reply(request, 413, { error: "Too large." });
+  let review;
+  try {
+    review = JSON.parse(text);
+  } catch {
+    return reply(request, 400, { error: "That is not JSON." });
+  }
+  const { wallet, message, signature } = review ?? {};
+  if (![wallet, message, signature].every((v) => typeof v === "string") || !WALLET.test(wallet)) {
+    return reply(request, 400, { error: "Expected wallet, message and signature." });
+  }
+  const statusObject = await env.AUDITS.get(`draft/${uuid}/status.json`);
+  if (!statusObject) return reply(request, 404, { error: "No such audit." });
+  let status;
+  try {
+    status = JSON.parse(await statusObject.text());
+  } catch {
+    return reply(request, 404, { error: "No such audit." });
+  }
+  const allowed = status.review?.reviewers;
+  if (!Array.isArray(allowed) || !allowed.includes(wallet)) {
+    return reply(request, 403, { error: "This wallet is not a reviewer of this audit." });
+  }
+  if (message !== status.review?.message) {
+    return reply(request, 409, { error: "The statement has changed since you signed. Reload the page and sign again." });
+  }
+  if (!(await verifyEd25519(wallet, signature, message))) {
+    return reply(request, 400, { error: "The signature does not match this wallet." });
+  }
+  await env.AUDITS.put(`inbox/${uuid}/${wallet}.json`, JSON.stringify({ wallet, message, signature }), {
+    httpMetadata: { contentType: "application/json" },
+  });
+  return reply(request, 200, { ok: true });
+}
 
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -191,8 +283,11 @@ async function loadBundle(id, env) {
 
 // Returns a Response for an audit path, or null for anything else.
 export async function handleAudits(request, env) {
-  if (request.method !== "GET" && request.method !== "HEAD") return null;
   const parts = new URL(request.url).pathname.split("/").slice(1);
+  if (request.method === "POST" && parts.length === 3 && parts[0] === "draft" && parts[2] === "review") {
+    return UUID.test(parts[1]) ? submitReview(request, parts[1], env) : notFound(request);
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") return null;
 
   if (parts[0] === "draft") {
     const [, uuid, leaf, ...extra] = parts;
