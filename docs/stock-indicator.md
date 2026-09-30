@@ -220,18 +220,15 @@ so it is left open.
 The interface is English only. There is no translation layer, and none is
 attempted. What that means for foreign issuers:
 
-- Filing text is used as filed. A foreign private issuer's 6-K, 20-F or 40-F
-  can be in English only when the company filed it in English; SEC rules
-  require English, or an English translation, for filings on EDGAR, but RATi
-  does not check the quality of a translation.
-- The listing-notice reading (`edgar.is_listing_notice`) matches English
-  phrases. A notice worded differently is not seen, so it can never make a
-  standard read "met" by itself: the trading standard stays "not checked yet"
-  until 6-K texts have been read for the whole 90 days, and a phrase that is
-  not matched is a known limit of that reading, not a claim that no notice
-  exists.
+- Filing text is used as filed. EDGAR filings are expected in English (or with
+  an English translation), and RATi does not check the quality of a
+  translation or read any other language.
+- The listing-notice reading (`edgar.is_listing_notice`) matches a fixed set of
+  English phrases. A notice worded differently, or in another language, is not
+  seen. This is a known limit: once 6-K texts have been read for the whole 90
+  days, a missed notice leaves the trading standard reading "met", so "no
+  notice found" means no matching phrase was found, not proof that none exists.
 - Company names, titles and amounts are shown as the source gives them. Amounts
-  show the currency code of the fact (see the table above) and are never
-  converted.
+  show the currency code of the fact and are never converted.
 - Dates, times and numbers use the English format and the labelled US time
   zones described above.
