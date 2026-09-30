@@ -82,6 +82,58 @@ def test_profile_uses_only_known_company_facts_and_filings():
         database.close()
 
 
+def test_spotlight_keeps_a_foreign_currency_fact_with_its_own_code_and_never_converts():
+    database = sqlite3.connect(":memory:")
+    database.row_factory = sqlite3.Row
+    database.executescript("""
+        CREATE TABLE sec_companies(ticker, cik, name, exchange, sic_description,
+                                  refreshed_at, sector_refreshed_at);
+        CREATE TABLE sec_filings(ticker,form,title,filed_at,filing_url,created_at,accession);
+        CREATE TABLE issuer_facts(id,cik,concept,value,unit,period_start,period_end,
+                                 filed_at,accession,first_collected_at);
+        INSERT INTO sec_companies VALUES('TEST',123,'Test Foreign','NASDAQ','Chips',
+                                        '2026-09-20','2026-09-20');
+        INSERT INTO issuer_facts VALUES('a',123,'cash',1200000,'EUR',NULL,'2026-06-30',
+                                       '2026-08-10','0000000123-26-000001','2026-08-10');
+        INSERT INTO issuer_facts VALUES('b',123,'debt_total',5000,'JPY',NULL,'2026-06-30',
+                                       '2026-08-10','0000000123-26-000001','2026-08-10');
+        INSERT INTO issuer_facts VALUES('c',123,'operating_cash_flow',-9,'dollars',NULL,
+                    '2026-06-30','2026-08-10','0000000123-26-000001','2026-08-10');
+    """)
+    try:
+        saved = freeze_spotlight(
+            database,
+            [candidate()],
+            "2026-09-23T20:10:00+00:00",
+            "2026-09-23T20:20:00+00:00",
+        )
+    finally:
+        database.close()
+    assert {(fact["concept"], fact["unit"], fact["value"]) for fact in saved["facts"]} == {
+        ("cash", "EUR", 1200000),
+        ("debt_total", "JPY", 5000),
+    }
+    report = {
+        "report_type": "post_market",
+        "report_day": "2026-09-23",
+        "leaders": [candidate()],
+        "metrics": {},
+        "spotlight": {"snapshot": candidate(), "facts": saved["facts"]},
+    }
+    decorate_edition(report)
+    shown = {fact["concept"]: fact["display"] for fact in report["spotlight"]["facts"]}
+    assert shown == {"cash": "EUR 1.2M", "debt_total": "JPY 5.0K"}
+
+
+def test_dollar_and_share_facts_display_as_before():
+    from runner_web.report_spotlight import _compact
+
+    assert _compact(1_200_000, "USD") == "$1.2M"
+    assert _compact(-2_500, "USD") == "-$2.5K"
+    assert _compact(300_000_000, "shares") == "300.0M"
+    assert _compact(None, "USD") == "Awaiting data"
+
+
 def test_legacy_edition_preserves_unknown_rings_and_closing_breadth():
     report = {
         "report_type": "post_market",
