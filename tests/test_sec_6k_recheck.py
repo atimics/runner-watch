@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from runner_web import sec_6k_recheck
 from runner_web.sec_6k_recheck import recheck_archived_6ks
 from runner_web.sec_delistings import foreign_notices_read
 
@@ -117,3 +118,161 @@ def test_a_second_run_finds_nothing_new(database):
     again = recheck_archived_6ks(database, at=AT)
 
     assert again["already_marked"] == 1 and again["would_mark"] == []
+
+
+class FakeFetcher:
+    """Stands in for SEC EDGAR: no network is ever used."""
+
+    def __init__(self, texts: dict[str, str | Exception | None]):
+        self.texts = texts
+        self.calls: list[str] = []
+
+    def __call__(self, filing_url: str, accession: str) -> str | None:
+        self.calls.append(accession)
+        result = self.texts.get(accession)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def _without_archive(database):
+    database.execute("DELETE FROM source_documents")
+
+
+def test_without_fetch_nothing_is_fetched_even_when_text_is_missing(database):
+    _without_archive(database)
+
+    report = recheck_archived_6ks(database, at=AT)
+
+    assert report["text_not_archived"] == 2
+    assert report["fetched"] == 0 and report["fetch_failed"] == 0
+
+
+def test_fetch_reads_missing_texts_and_finds_the_notice_without_writing(database):
+    _without_archive(database)
+    before = _rows(database)
+    fetcher = FakeFetcher({"acc-1": NOTICE.decode(), "acc-2": ROUTINE.decode()})
+
+    report = recheck_archived_6ks(database, at=AT, fetch_text=fetcher)
+
+    assert fetcher.calls == ["acc-1", "acc-2"]  # the old 6-K outside the window is skipped
+    assert [n["ticker"] for n in report["would_mark"]] == ["NTCE"]
+    assert report["fetched"] == 2 and report["text_not_archived"] == 0
+    assert _rows(database) == before
+    assert database.execute("SELECT COUNT(*) FROM worker_state").fetchone()[0] == 0
+    assert database.execute("SELECT COUNT(*) FROM source_documents").fetchone()[0] == 0
+
+
+def test_archived_text_is_not_fetched_again(database):
+    fetcher = FakeFetcher({})
+
+    recheck_archived_6ks(database, at=AT, fetch_text=fetcher)
+
+    assert fetcher.calls == []
+
+
+def test_max_fetch_bounds_the_downloads_and_leaves_the_rest_unread(database):
+    _without_archive(database)
+    fetcher = FakeFetcher({"acc-1": NOTICE.decode(), "acc-2": ROUTINE.decode()})
+
+    report = recheck_archived_6ks(database, at=AT, apply=True, fetch_text=fetcher, max_fetch=1)
+
+    assert fetcher.calls == ["acc-1"]
+    assert report["fetched"] == 1 and report["text_not_archived"] == 1
+    assert report["window_marked_as_read"] is False
+    assert not foreign_notices_read(database, AT)
+
+
+def test_max_fetch_zero_fetches_nothing(database):
+    _without_archive(database)
+    fetcher = FakeFetcher({"acc-1": NOTICE.decode()})
+
+    report = recheck_archived_6ks(database, at=AT, fetch_text=fetcher, max_fetch=0)
+
+    assert fetcher.calls == [] and report["text_not_archived"] == 2
+
+
+def test_a_failed_fetch_keeps_the_window_unread_and_does_not_stop_the_run(database):
+    _without_archive(database)
+    fetcher = FakeFetcher({"acc-1": OSError("network down"), "acc-2": ROUTINE.decode()})
+
+    report = recheck_archived_6ks(database, at=AT, apply=True, fetch_text=fetcher)
+
+    assert fetcher.calls == ["acc-1", "acc-2"]
+    assert report["fetch_failed"] == 1 and report["text_not_archived"] == 1
+    assert report["window_marked_as_read"] is False
+    assert not foreign_notices_read(database, AT)
+
+
+def test_fetch_with_apply_marks_the_notice_and_reads_the_window(database):
+    _without_archive(database)
+    fetcher = FakeFetcher({"acc-1": NOTICE.decode(), "acc-2": ROUTINE.decode()})
+
+    report = recheck_archived_6ks(database, at=AT, apply=True, fetch_text=fetcher)
+
+    assert report["tickers"] == ["NTCE"] and report["window_marked_as_read"] is True
+    assert foreign_notices_read(database, AT)
+
+
+def test_the_real_fetcher_is_slow_polite_and_archives_only_with_apply(monkeypatch):
+    made: list[dict] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+
+        def primary_filing_text(self, filing):
+            return ("https://www.sec.gov/x", f"text of {filing.accession}")
+
+    monkeypatch.setattr(sec_6k_recheck, "EdgarClient", FakeClient)
+
+    dry = sec_6k_recheck.edgar_text_fetcher(archive=False)
+    apply = sec_6k_recheck.edgar_text_fetcher(archive=True)
+
+    assert dry(_url(1), "acc-1") == "text of acc-1"
+    assert made[0]["fetch_recorder"] is None
+    assert made[1]["fetch_recorder"] is not None
+    for kwargs in made:
+        assert kwargs["max_requests_per_second"] <= 2.0  # SEC allows 10
+        assert kwargs["user_agent"] == sec_6k_recheck.SEC_USER_AGENT
+    assert apply is not dry
+
+
+def test_the_command_line_fetches_only_when_asked_and_bounds_it(monkeypatch):
+    import contextlib
+
+    from runner_web import db
+
+    calls: list[dict] = []
+    archive_flags: list[bool] = []
+
+    def fake_recheck(database, **kwargs):
+        calls.append(kwargs)
+        return {}
+
+    def fake_fetcher(*, archive):
+        archive_flags.append(archive)
+        return "FETCHER"
+
+    @contextlib.contextmanager
+    def fake_connection():
+        yield object()
+
+    monkeypatch.setattr(sec_6k_recheck, "recheck_archived_6ks", fake_recheck)
+    monkeypatch.setattr(sec_6k_recheck, "edgar_text_fetcher", fake_fetcher)
+    monkeypatch.setattr(db, "connection", fake_connection)
+
+    def run(*args):
+        monkeypatch.setattr("sys.argv", ["sec_6k_recheck", *args])
+        sec_6k_recheck.main()
+
+    run()
+    run("--fetch")
+    run("--fetch", "--apply", "--max-fetch", "7")
+
+    assert calls[0]["fetch_text"] is None and calls[0]["max_fetch"] == 50
+    assert calls[1]["fetch_text"] == "FETCHER" and calls[1]["apply"] is False
+    assert calls[2]["apply"] is True and calls[2]["max_fetch"] == 7
+    assert archive_flags == [False, True]  # a fetch alone archives nothing
+    with pytest.raises(SystemExit):
+        run("--max-fetch", "-1")
