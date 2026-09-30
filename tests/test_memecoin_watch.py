@@ -220,8 +220,30 @@ def _finding(state_before, number=1):
     }
 
 
-def test_a_finding_on_a_watched_coin_is_posted_once(database):
-    _store([_finding("setup")])
+def _open_call(mint):
+    from runner_web.caller_ids import ensure_caller_identity_with_database
+    from runner_web.memecoin_watch import coin_id_for
+
+    with db.connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("owner", "owner", "Owner", "active", AT.isoformat()),
+        )
+        identity = ensure_caller_identity_with_database(database, "owner")
+        database.execute(
+            """
+            INSERT INTO memecoin_calls(
+                public_id,user_id,caller_identity_id,coin_id,symbol,name,status,
+                entry_price,entry_at,entry_evidence,created_at,updated_at
+            ) VALUES('call-1','owner',?,?,'X','X','active',1,?,'{}',?,?)
+            """,
+            (identity["id"], coin_id_for(mint), AT.isoformat(), AT.isoformat(), AT.isoformat()),
+        )
+
+
+def test_a_finding_on_a_coin_with_an_open_call_is_posted_once(database):
+    _store([_finding(None)])
+    _open_call(MINT)
     posts = []
 
     first = dispatch_risk_alerts(
@@ -237,8 +259,8 @@ def test_a_finding_on_a_watched_coin_is_posted_once(database):
     assert len(posts) == 1 and "Launch bundle" in posts[0]
 
 
-def test_a_finding_on_an_unwatched_coin_is_not_posted(database):
-    _store([_finding(None)])
+def test_a_finding_on_a_coin_without_a_call_is_not_posted_even_when_tagged(database):
+    _store([_finding("setup")])
 
     result = dispatch_risk_alerts(
         origin="https://runners.test", at=AT, sender=lambda *_: pytest.fail("posted")

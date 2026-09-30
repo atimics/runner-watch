@@ -408,6 +408,43 @@ def event_card(event: dict, *, origin: str) -> dict:
     }
 
 
+def _followed_halt_tickers(database, rows: list[dict]) -> set[str]:
+    """Halted tickers worth a post: ratified at the last check, or an active Call.
+
+    A halt usually ends a stock's ratification, so the state kept before the
+    halt is what says it was one the room follows.
+    """
+
+    tickers = sorted(
+        {
+            str(row.get("ticker") or "").upper()
+            for row in rows
+            if row.get("event_type") == "trading_halt"
+        }
+        - {""}
+    )
+    if not tickers:
+        return set()
+    marks = ",".join("?" for _ in tickers)
+    followed = {
+        str(row["subject"]).upper()
+        for row in database.execute(
+            "SELECT subject FROM transition_state WHERE market='stock' AND ratified=1 "
+            f"AND subject IN ({marks})",
+            tickers,
+        ).fetchall()
+    }
+    followed |= {
+        str(row["ticker"]).upper()
+        for row in database.execute(
+            f"SELECT DISTINCT ticker FROM community_calls WHERE status='active' "
+            f"AND ticker IN ({marks})",
+            tickers,
+        ).fetchall()
+    }
+    return followed
+
+
 def queue_events(database, config, *, origin: str, at: datetime) -> int:
     """Queue halts, coverage and social spikes from the recent window."""
 
@@ -425,8 +462,11 @@ def queue_events(database, config, *, origin: str, at: datetime) -> int:
         """,
         (cutoff, *TELEGRAM_EVENT_TYPES),
     ).fetchall()
+    followed = _followed_halt_tickers(database, [dict(row) for row in rows])
     cards = []
     for row in rows:
+        if row["event_type"] == "trading_halt" and str(row["ticker"] or "").upper() not in followed:
+            continue
         card = event_card(_channel_event(dict(row), at), origin=origin)
         if card["text"]:
             cards.append(card)

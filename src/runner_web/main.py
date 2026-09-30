@@ -12383,6 +12383,7 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 queue_events,
                 queue_stock_filings,
             )
+            from runner_web.transition_alerts import queue_transitions
 
             with connection() as database:
                 enqueue_cards(database, config.chat_id, _announcement_cards(activity), at=current)
@@ -12396,6 +12397,13 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                     "queued": result["events_queued"],
                     "status": "queued" if result["events_queued"] else "empty",
                 }
+                try:
+                    result["transitions_queued"] = queue_transitions(
+                        database, config, origin=RUNNERS_ORIGIN, at=current
+                    )
+                except Exception:
+                    LOG.warning("Transition alerts failed", exc_info=True)
+                    result["transitions_queued"] = 0
                 last_at, last_kind = _last_channel_post(database)
             since = _age_minutes(last_at, current) if last_at is not None else None
             if since is not None and since < TELEGRAM_SEGMENT_GAP_MINUTES:
@@ -12405,7 +12413,14 @@ def dispatch_telegram_posts(*, scan_run_id: str | None = None) -> dict[str, Any]
                 config,
                 telegram_send_post,
                 at=current,
-                kinds=("runner", "market_report", "research_report", "stock_filing", "event"),
+                kinds=(
+                    "runner",
+                    "market_report",
+                    "research_report",
+                    "stock_filing",
+                    "event",
+                    "transition",
+                ),
                 last_kind=last_kind,
             )
             result["status"] = result["announcement"]["status"] = delivery["status"]

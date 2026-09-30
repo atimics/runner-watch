@@ -237,6 +237,7 @@ def select_new_runners(
 # follows; filings and runners are the everyday inventory; a release is rare.
 SEGMENT_ORDER = (
     "market_report",
+    "transition",
     "event",
     "research_report",
     "stock_filing",
@@ -757,6 +758,86 @@ def _story_reason(entry):
     return escape_markdown_v2(
         "  \u00b7  ".join(bounded_text(reason, 300) for reason in reasons[:2])
     )
+
+
+_TRANSITION_EMOJI = {
+    "newly_ratified": "\u2705",
+    "lost_ratification": "\u26a0\ufe0f",
+}
+
+
+def _compact_usd(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if number <= 0 or number != number:
+        return ""
+    for size, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if number >= size:
+            return f"${number / size:.1f}{suffix}"
+    return f"${number:.0f}"
+
+
+def format_transition_post_md(item, *, origin):
+    """One name changed state: the change, one metrics line, one link.
+
+    A coin leads with its contract address, never the creator-set name.
+    """
+
+    event = str(item.get("event") or "")
+    coin = item.get("market") == "memecoin"
+    base = origin.rstrip("/")
+    if coin:
+        mint = str(item.get("subject") or "").strip()
+        coin_id = str(item.get("coin_id") or "").strip()
+        if not mint or not coin_id or not mint.isalnum():
+            return ""
+        subject = "Memecoin"
+        url = f"{base}/memecoins/coin/{coin_id}"
+        label = "Open the coin page"
+    else:
+        ticker = str(item.get("ticker") or item.get("subject") or "").strip().upper()
+        if not ticker:
+            return ""
+        subject = "$" + ticker
+        url = f"{base}/t/{ticker}"
+        label = f"${ticker}"
+    if event == "newly_ratified":
+        verb = "is newly ratified" if not coin else "newly ratified"
+        title = f"{subject} {verb}"
+    elif event == "lost_ratification":
+        title = f"{subject} lost its ratification"
+    else:
+        start = str(item.get("from_tag") or "").title()
+        end = str(item.get("to_tag") or "").title()
+        if not start or not end:
+            return ""
+        title = f"{subject}: {start} \u2192 {end}"
+    emoji = _TRANSITION_EMOJI.get(event) or _state_emoji(item.get("to_tag")) or "\U0001f406"
+    blocks = [f"{emoji} *{escape_markdown_v2(title)}*"]
+    if coin:
+        blocks.append(f"`{mint}`")
+    parts = []
+    total = item.get("total")
+    if total:
+        parts.append(f"{int(item.get('met') or 0)}/{int(total)} standards met")
+    if coin:
+        for name, key in (("liquidity", "liquidity_usd"), ("24h volume", "volume_24h")):
+            amount = _compact_usd(item.get(key))
+            if amount:
+                parts.append(f"{name} {amount}")
+    else:
+        try:
+            volume = float(item.get("relative_volume"))
+        except (TypeError, ValueError):
+            volume = 0.0
+        if volume > 0:
+            parts.append(f"volume {volume:.1f}\u00d7 average")
+    if parts:
+        blocks.append(escape_markdown_v2("  \u00b7  ".join(parts)))
+    blocks.append(markdown_link(label, url))
+    return _join_blocks(blocks)
 
 
 def format_release_announcement_md(version, notes, *, origin):
