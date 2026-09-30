@@ -3846,6 +3846,23 @@ def _migration_094_trust_access_requests(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_096_dash_turn_mutations(db: DatabaseConnection) -> None:
+    """What Dash already did for one Telegram update, so a retried turn does not repeat it."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS dash_turn_mutations (
+            update_id BIGINT NOT NULL,
+            tool TEXT NOT NULL,
+            ticker TEXT NOT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(update_id,tool,ticker)
+        );
+        """
+    )
+
+
 def _migration_095_ratification_records(db: DatabaseConnection) -> None:
     """Each change in a Ratified result, with the rules version and the facts used."""
 
@@ -3979,6 +3996,7 @@ MIGRATIONS = (
     Migration(93, "filing_items", _migration_093_filing_items),
     Migration(94, "trust_access_requests", _migration_094_trust_access_requests),
     Migration(95, "ratification_records", _migration_095_ratification_records),
+    Migration(96, "dash_turn_mutations", _migration_096_dash_turn_mutations),
 )
 
 

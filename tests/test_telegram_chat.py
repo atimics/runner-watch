@@ -787,6 +787,82 @@ def test_a_coin_off_the_live_board_still_links_to_its_saved_page(wired, monkeypa
     assert calls[0]["preview_url"].endswith(f"/memecoins/coin/{saved}")
 
 
+def _no_prefetch(monkeypatch):
+    from runner_web import main as web_main
+
+    monkeypatch.setattr(
+        web_main,
+        "telegram_prefetch_for",
+        lambda message, database: {"resolved_tickers": [], "looked_up": []},
+    )
+    return web_main
+
+
+def test_a_reply_that_names_an_unlooked_address_gets_one_chance_to_correct(monkeypatch):
+    web_main = _no_prefetch(monkeypatch)
+    scripted = [
+        _tool_turn("reply", {"text": f"{CA} is running."}),
+        _tool_turn("reply", {"text": "I have not looked at that coin."}, call_id="call-2"),
+    ]
+    calls: list[dict[str, Any]] = []
+
+    def completion(body):
+        calls.append(body)
+        return scripted.pop(0)
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion)
+
+    decision = web_main._generate_telegram_turn(_parse(_update("what now", mention=True)), [])
+
+    assert decision == {"action": "reply", "text": "I have not looked at that coin."}
+    assert len(calls) == 2
+
+
+def test_an_address_the_model_expanded_is_not_corrected(monkeypatch):
+    web_main = _no_prefetch(monkeypatch)
+    monkeypatch.setattr(web_main, "dash_expand", lambda node: {"found": False})
+    scripted = [
+        _tool_turn("expand", {"node": f"coin:{CA}"}),
+        _tool_turn("reply", {"text": f"{CA} is running."}, call_id="call-2"),
+    ]
+    calls: list[dict[str, Any]] = []
+
+    def completion(body):
+        calls.append(body)
+        return scripted.pop(0)
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion)
+
+    decision = web_main._generate_telegram_turn(_parse(_update("what now", mention=True)), [])
+
+    assert decision == {"action": "reply", "text": f"{CA} is running."}
+    assert len(calls) == 2
+
+
+def test_a_rerun_turn_does_not_repeat_a_comment(monkeypatch):
+    web_main = _no_prefetch(monkeypatch)
+    made: list[str] = []
+
+    def comment(ticker, body, at=None):
+        made.append(ticker)
+        return {"ok": True, "comment_id": f"c{len(made)}"}
+
+    monkeypatch.setattr(web_main, "dash_comment", comment)
+    message = _parse(_update("say something", mention=True))
+
+    for _ in range(2):
+        scripted = [
+            _tool_turn("comment_on_ticker", {"ticker": "MSGM", "body": "hiss"}),
+            _tool_turn("react", {"emoji": "x"}, call_id="call-2"),
+        ]
+        monkeypatch.setattr(
+            web_main, "_telegram_chat_completion", lambda body, s=scripted: s.pop(0)
+        )
+        web_main._generate_telegram_turn(message, [])
+
+    assert made == ["MSGM"]
+
+
 def test_the_worker_only_touches_the_wallet_when_there_is_work(wired, monkeypatch):
     import asyncio
 

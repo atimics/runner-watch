@@ -1220,6 +1220,39 @@ def test_a_desk_note_cut_off_by_the_token_cap_keeps_only_whole_sentences(monkeyp
     assert web_main._generate_desk_note({}) == cut
 
 
+def test_a_retried_update_does_not_comment_or_pay_twice():
+    dash.dash_wallet(at=NOW)
+
+    def run():
+        return dash.dash_comment("MSGM", "hiss.", at=NOW)
+
+    first = dash.dash_once(77, "comment_on_ticker", "$msgm", run)
+    again = dash.dash_once(77, "comment_on_ticker", "MSGM", run)
+
+    assert first["ok"] is True
+    assert again["comment_id"] == first["comment_id"]
+    assert again["already_done"] is True
+    with connection() as database:
+        comments = database.execute("SELECT COUNT(*) FROM ticker_comments").fetchone()[0]
+        balance = database.execute(
+            "SELECT balance FROM flash_wallets WHERE user_id=?", (dash.DASH_USER_ID,)
+        ).fetchone()[0]
+    assert comments == 1
+    assert balance == 90
+
+
+def test_a_refusal_is_not_remembered_and_another_update_acts_again():
+    outcomes = [
+        {"ok": False, "reason": "no_fresh_price"},
+        {"ok": True, "n": 1},
+        {"ok": True, "n": 2},
+    ]
+
+    assert dash.dash_once(5, "make_call", "AAA", lambda: outcomes.pop(0))["ok"] is False
+    assert dash.dash_once(5, "make_call", "AAA", lambda: outcomes.pop(0))["n"] == 1
+    assert dash.dash_once(6, "make_call", "AAA", lambda: outcomes.pop(0))["n"] == 2
+
+
 def test_dash_model_defaults_to_flash_and_can_be_overridden(monkeypatch):
     from runner_web import main as web_main
     from runner_web.ai_kol import FLASH

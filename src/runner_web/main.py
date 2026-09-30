@@ -104,6 +104,7 @@ from runner_web.dash import (
     dash_comment,
     dash_expand,
     dash_make_call,
+    dash_once,
     dash_open_calls,
     dash_wallet,
     dash_world,
@@ -2168,6 +2169,9 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             "content": json.dumps(context, separators=(",", ":"), default=str),
         },
     ]
+    # Everything the model was handed or fetched, so an address in a reply can be
+    # checked against it. Numbers are not checked: that stays in the prompt.
+    looked_text = [json.dumps(grounded, default=str), json.dumps(world, default=str)]
     corrected = False
     for _round in range(6):
         body = {
@@ -2197,6 +2201,9 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             node = str(args.get("node") or "")
             looked = dash_expand(node)
             key = node.strip().lower()
+            looked_text.append(json.dumps(looked, default=str))
+            if key.startswith("coin:"):
+                looked_text.append(node.strip().split(":", 1)[1])
             if key.startswith("ticker"):
                 symbol = key.split(":", 1)[1].strip().upper().lstrip("$")
                 if symbol:
@@ -2204,11 +2211,17 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         elif name == "my_standing":
             looked = {"budget": dash_budget(), "open_calls": dash_open_calls()}
         elif name == "make_call":
-            looked = dash_make_call(str(args.get("ticker") or ""))
+            ticker = str(args.get("ticker") or "")
+            looked = dash_once(message.update_id, name, ticker, lambda t=ticker: dash_make_call(t))
         elif name == "close_call":
-            looked = dash_close_call(str(args.get("ticker") or ""))
+            ticker = str(args.get("ticker") or "")
+            looked = dash_once(message.update_id, name, ticker, lambda t=ticker: dash_close_call(t))
         elif name == "comment_on_ticker":
-            looked = dash_comment(str(args.get("ticker") or ""), str(args.get("body") or ""))
+            ticker = str(args.get("ticker") or "")
+            comment = str(args.get("body") or "")
+            looked = dash_once(
+                message.update_id, name, ticker, lambda t=ticker, c=comment: dash_comment(t, c)
+            )
         if looked is not None:
             messages.append(choice)
             messages.append(
@@ -2225,6 +2238,12 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
                 with connection() as database:
                     cited = telegram_resolve_tickers(database, text, limit=8)
                 unbacked = [symbol for symbol in cited if symbol not in looked_symbols]
+                backed_text = "\n".join(looked_text)
+                unbacked += [
+                    address
+                    for address in telegram_reply_addresses(text)
+                    if address not in backed_text
+                ]
                 if unbacked:
                     corrected = True
                     messages.append(choice)
@@ -2242,7 +2261,8 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
                                 "You were about to name "
                                 + ", ".join(unbacked)
                                 + " without having looked it up. Call expand with "
-                                "node ticker:<SYMBOL> for it now, or reply saying you "
+                                "node ticker:<SYMBOL> (or coin:<ADDRESS>) for it now, "
+                                "or reply saying you "
                                 "have not looked it up. Do not state numbers you did "
                                 "not fetch."
                             ),
