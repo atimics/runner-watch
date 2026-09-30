@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from runner_watch.xml_security import PayloadTooLargeError
 from runner_web import sec_6k_recheck
 from runner_web.sec_6k_recheck import recheck_archived_6ks
 from runner_web.sec_delistings import foreign_notices_read
@@ -202,6 +203,29 @@ def test_a_failed_fetch_keeps_the_window_unread_and_does_not_stop_the_run(databa
     assert report["fetch_failed"] == 1 and report["text_not_archived"] == 1
     assert report["window_marked_as_read"] is False
     assert not foreign_notices_read(database, AT)
+
+
+def test_a_filing_too_large_to_fetch_counts_as_read_because_it_cannot_be_a_notice(database):
+    _without_archive(database)
+    too_big = PayloadTooLargeError("Response exceeds the 20971520-byte limit")
+    fetcher = FakeFetcher({"acc-1": too_big, "acc-2": ROUTINE.decode()})
+
+    report = recheck_archived_6ks(database, at=AT, apply=True, fetch_text=fetcher)
+
+    assert report["too_large_to_be_a_notice"] == 1 and report["fetch_failed"] == 0
+    assert report["text_not_archived"] == 0 and report["tickers"] == []
+    assert report["window_marked_as_read"] is True
+    assert foreign_notices_read(database, AT)
+
+
+def test_a_too_large_filing_does_not_hide_another_failure(database):
+    _without_archive(database)
+    fetcher = FakeFetcher({"acc-1": PayloadTooLargeError("too big"), "acc-2": OSError("down")})
+
+    report = recheck_archived_6ks(database, at=AT, apply=True, fetch_text=fetcher)
+
+    assert report["too_large_to_be_a_notice"] == 1 and report["fetch_failed"] == 1
+    assert report["text_not_archived"] == 1 and report["window_marked_as_read"] is False
 
 
 def test_fetch_with_apply_marks_the_notice_and_reads_the_window(database):
