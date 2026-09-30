@@ -7,7 +7,7 @@ WORKDIR /desktop
 COPY desktop/package.json desktop/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY desktop ./
-RUN pnpm build
+RUN pnpm build && find dist -name '*.map' -type f -delete
 
 FROM rust:1.88-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS integer-ranker
 

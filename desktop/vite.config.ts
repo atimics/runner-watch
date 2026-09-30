@@ -8,6 +8,8 @@ export default defineConfig({
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
+    // Never ship source maps: the renderer is served by the web app and bundled into releases.
+    sourcemap: false,
   },
   server: {
     host: '127.0.0.1',
