@@ -237,6 +237,36 @@ def dash_budget(at: datetime | None = None) -> dict[str, Any]:
     }
 
 
+def dash_once(update_id: int | None, tool: str, ticker: str, act: Any) -> dict[str, Any]:
+    """Run one mutation once per Telegram update.
+
+    A turn that fails later goes back to pending and runs again. The first run's
+    result is stored, so the rerun gets it back instead of posting or paying
+    twice. Only a success is stored: a refusal may work on the next try.
+    """
+
+    if update_id is None:
+        return act()
+    symbol = str(ticker).strip().upper().lstrip("$")
+    key = (int(update_id), tool, symbol)
+    with connection() as database:
+        row = database.execute(
+            "SELECT result_json FROM dash_turn_mutations WHERE update_id=? AND tool=? AND ticker=?",
+            key,
+        ).fetchone()
+    if row:
+        return {**json.loads(row["result_json"]), "already_done": True}
+    result = act()
+    if result.get("ok"):
+        with connection() as database:
+            database.execute(
+                "INSERT INTO dash_turn_mutations(update_id,tool,ticker,result_json,created_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING",
+                (*key, json.dumps(result, default=str), _iso()),
+            )
+    return result
+
+
 def dash_make_call(ticker: str, at: datetime | None = None) -> dict[str, Any]:
     """Open a public Call as Dash, on the same terms as anyone else.
 
