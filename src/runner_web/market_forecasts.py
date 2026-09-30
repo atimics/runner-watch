@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from runner_web.ai_kol import FLASH, actor_snapshot
 from runner_web.collection import recording_market_data
 from runner_web.db import connection
+from runner_web.issuer_risk import FOREIGN_FORMS, PERIODIC_FORMS
 from runner_web.quotes import price_marks
 
 EASTERN = ZoneInfo("America/New_York")
@@ -21,6 +22,16 @@ MAX_ATTEMPTS = 3
 MAX_ROUNDS = 40
 PRICE_MAX_AGE = timedelta(minutes=30)
 DATA_GRACE = timedelta(days=7)
+# A forecast settles on the US regular session close (16:00 America/New_York),
+# whatever market the company mainly trades on. A foreign issuer's shares can
+# already have moved on news in their home market before the US open, so the
+# forecast says which price it is scored on. Display only: it never changes how
+# a forecast is scored.
+SETTLEMENT_BASIS = "US regular session close, 4 p.m. ET"
+FOREIGN_SETTLEMENT_NOTE = (
+    "Scored on the US session only. This foreign issuer may trade in its home "
+    "market at other hours, so news can move it before the US open."
+)
 RISK_PASS_REASON = "The saved risk state calls for a pass."
 NO_PRICE_BY_OPEN = "No pre-market price arrived before the open."
 TargetGenerator = Callable[[dict[str, Any]], dict[str, Any]]
@@ -581,9 +592,45 @@ def attach_market_forecasts(database: Any, reports: list[dict[str, Any]]) -> Non
             source_ids,
         ).fetchall()
     }
+    foreign = foreign_issuer_tickers(
+        database,
+        [
+            str(leader["ticker"])
+            for report, _source_id in pairs
+            for leader in report["leaders"]
+            if (source_id := _source_id) and forecasts.get((source_id, str(leader["ticker"])))
+        ],
+    )
     for report, source_id in pairs:
         job = jobs.get(source_id)
         report["forecast_state"] = job["status"] if job else "legacy"
         report["forecast_model"] = json.loads(job["request_json"])["actor"] if job else None
         for leader in report["leaders"]:
-            leader["eod_forecast"] = forecasts.get((source_id, str(leader["ticker"])))
+            forecast = forecasts.get((source_id, str(leader["ticker"])))
+            if forecast is not None:
+                forecast["settlement_basis"] = SETTLEMENT_BASIS
+                forecast["settlement_note"] = (
+                    FOREIGN_SETTLEMENT_NOTE if str(leader["ticker"]).upper() in foreign else None
+                )
+            leader["eod_forecast"] = forecast
+
+
+def foreign_issuer_tickers(database: Any, tickers: list[str]) -> set[str]:
+    """Tickers that file as foreign private issuers (20-F, 40-F or 6-K, never 10-Q or 10-K)."""
+
+    unique = sorted({ticker.upper() for ticker in tickers if ticker})
+    if not unique:
+        return set()
+    marks = ",".join("?" for _ in unique)
+    forms: dict[str, set[str]] = {}
+    for row in database.execute(
+        f"SELECT UPPER(ticker) AS ticker,UPPER(form) AS form FROM sec_filings "
+        f"WHERE UPPER(ticker) IN ({marks}) GROUP BY UPPER(ticker),UPPER(form)",
+        unique,
+    ).fetchall():
+        forms.setdefault(row["ticker"], set()).add(row["form"])
+    return {
+        ticker
+        for ticker, filed in forms.items()
+        if filed & FOREIGN_FORMS and not filed & PERIODIC_FORMS
+    }
