@@ -2923,7 +2923,9 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
             from runner_web.golf_markets import quote_history
 
             event["analysis"] = saved_cup_analysis()
-            event["contract_quotes"] = quote_history(event["id"])
+            # List rows read the latest quote of each series; the Cup alone held
+            # 2.4 MB of quote history. Detail (golf_event) keeps the full history.
+            event["contract_quotes"] = quote_history(event["id"], latest=True)
     return {
         "events": events,
         "sport": "golf",
