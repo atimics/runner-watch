@@ -75,6 +75,38 @@ def _note_missing_sectors(database: Any, companies: dict[str, Any], at: datetime
     )
 
 
+def _foreign_inputs(
+    issuer: dict[str, Any], filed: dict[str, Any] | None
+) -> tuple[bool, dict[str, Any]]:
+    """Whether the issuer is foreign, and its facts held back where they cannot judge it.
+
+    Two checks would say "not met" for a foreign issuer only because RATi holds
+    less of its record than of a domestic one; each is left as "not checked yet".
+
+    - Interim results are furnished on 6-K, which cannot be told from other 6-Ks
+      by form type. With no annual report (20-F or 40-F) in what RATi holds, the
+      only evidence left would be an interim 6-K, so the filings standard is
+      not judged.
+    - The financial-company carve-out reads a SIC code. Until RATi has read the
+      code, a foreign bank or insurer cannot be told from an operating company,
+      and its operating cash flow means something else, so the cash standard is
+      not judged.
+    """
+
+    foreign = bool(issuer.get("foreign_issuer")) or is_foreign_issuer(
+        set((filed or {}).get("forms") or ())
+    )
+    if not foreign:
+        return False, issuer
+    held = dict(issuer)
+    if not issuer.get("periodic_filed_at") and not (filed or {}).get("filed_at"):
+        held["issuer_data_available"] = False
+    if not issuer.get("sic"):
+        held["cash_runway_months"] = None
+        held["operating_cash_flow"] = None
+    return True, held
+
+
 def stock_ratifications(
     database: Any,
     items: list[dict[str, Any]],
@@ -149,10 +181,7 @@ def stock_ratifications(
     _note_missing_sectors(database, companies, at)
     results = {}
     for ticker in tickers:
-        issuer = issuers.get(ticker) or {}
-        foreign = bool(issuer.get("foreign_issuer")) or is_foreign_issuer(
-            set((periodic.get(ticker) or {}).get("forms") or ())
-        )
+        foreign, issuer = _foreign_inputs(issuers.get(ticker) or {}, periodic.get(ticker))
         inputs = {
             "exchange": companies[ticker]["exchange"] if ticker in companies else None,
             "issuer": issuer,

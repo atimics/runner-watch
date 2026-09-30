@@ -183,3 +183,89 @@ def test_a_later_reading_does_not_shorten_the_covered_window(database):
     mark_foreign_notices_read_from(database, datetime(2026, 9, 27, tzinfo=UTC))
 
     assert foreign_notices_read(database, AT)
+
+
+def _cash_and_filings(found, ticker):
+    by_key = {item["key"]: item for item in found[ticker]["standards"]}
+    return by_key["filings"], by_key["cash"]
+
+
+def test_a_foreign_issuer_with_only_6ks_is_not_failed_on_filings(database, monkeypatch):
+    # Interim results are 6-Ks; with no 20-F held, the filings standard is
+    # "not checked yet", never "no report in its filings".
+    only_6k = {
+        "issuer_data_available": True,
+        "cash_runway_months": 20.0,
+        "shares_growth_pct": 2.0,
+        "operating_cash_flow": -1.0,
+        "foreign_issuer": True,
+        "sic": "3559",
+    }
+    monkeypatch.setattr(
+        stock_ratify, "issuer_risk_contexts", lambda _db, tickers: dict.fromkeys(tickers, only_6k)
+    )
+    database.execute("DELETE FROM sec_filings WHERE ticker='SHMD' AND form='20-F'")
+
+    found = stock_ratify.stock_ratifications(database, [{"ticker": "SHMD"}], at=AT)
+
+    assert _cash_and_filings(found, "SHMD")[0]["met"] is None
+
+
+def test_a_foreign_issuer_with_a_recent_20f_still_meets_filings(database):
+    found = stock_ratify.stock_ratifications(database, [{"ticker": "SHMD"}], at=AT)
+
+    assert _cash_and_filings(found, "SHMD")[0]["met"] is True
+
+
+def test_a_foreign_issuer_without_a_sic_code_is_not_judged_on_cash(database, monkeypatch):
+    # A foreign bank's operating cash flow is not a burn. Until its SIC code is
+    # read it cannot be told from an operating company: not checked yet.
+    burning = {
+        "issuer_data_available": True,
+        "cash_runway_months": 2.0,
+        "shares_growth_pct": 2.0,
+        "operating_cash_flow": -9.0,
+        "foreign_issuer": True,
+        "periodic_filed_at": "2026-04-28T20:00:00+00:00",
+        "periodic_form": "20-F",
+    }
+    monkeypatch.setattr(
+        stock_ratify, "issuer_risk_contexts", lambda _db, tickers: dict.fromkeys(tickers, burning)
+    )
+
+    found = stock_ratify.stock_ratifications(database, [{"ticker": "SHMD"}], at=AT)
+    assert _cash_and_filings(found, "SHMD")[1]["met"] is None
+
+    with_code = {**burning, "sic": "3559"}
+    monkeypatch.setattr(
+        stock_ratify, "issuer_risk_contexts", lambda _db, tickers: dict.fromkeys(tickers, with_code)
+    )
+    found = stock_ratify.stock_ratifications(database, [{"ticker": "SHMD"}], at=AT)
+    assert _cash_and_filings(found, "SHMD")[1]["met"] is False
+
+
+def test_a_domestic_issuer_is_judged_exactly_as_before(database, monkeypatch):
+    # No SIC and a burn: a domestic issuer's cash still reads "not met".
+    domestic = {
+        "issuer_data_available": True,
+        "cash_runway_months": 2.0,
+        "shares_growth_pct": 2.0,
+        "operating_cash_flow": -9.0,
+        "foreign_issuer": False,
+        "periodic_filed_at": "2020-01-01T00:00:00+00:00",
+        "periodic_form": "10-Q",
+    }
+    monkeypatch.setattr(
+        stock_ratify, "issuer_risk_contexts", lambda _db, tickers: dict.fromkeys(tickers, domestic)
+    )
+    database.execute("DELETE FROM sec_filings WHERE ticker='SHMD'")
+    database.execute(
+        "INSERT INTO sec_filings VALUES ('SHMD','10-Q','','2020-01-01T00:00:00+00:00')"
+    )
+
+    filings, cash = _cash_and_filings(
+        stock_ratify.stock_ratifications(database, [{"ticker": "SHMD"}], at=AT), "SHMD"
+    )
+
+    assert cash["met"] is False
+    assert filings["met"] is False  # a stale 10-Q is still stale
