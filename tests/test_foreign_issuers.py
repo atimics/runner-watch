@@ -47,6 +47,63 @@ def test_ordinary_6ks_are_not_listing_notices(text):
     assert not is_listing_notice(text)
 
 
+BOILERPLATE = (
+    "The Company has not, in the 12 months preceding the date hereof, received notice from "
+    "any Trading Market on which the Ordinary Shares are or have been listed or quoted to the "
+    "effect that the Company is not in compliance with the listing or maintenance requirements "
+    "of such Trading Market. The Company is, and has no reason to believe that it will not in "
+    "the foreseeable future continue to be, in compliance with all such requirements."
+)
+
+
+def test_a_purchase_agreement_saying_no_notice_was_received_is_not_a_notice():
+    assert not is_listing_notice(BOILERPLATE)
+    assert not is_listing_notice(
+        "The Company has not received any written notice from Nasdaq that the Company is not "
+        "in compliance with the listing or maintenance requirements of Nasdaq."
+    )
+
+
+def test_a_long_document_is_not_read_even_when_it_quotes_a_notice():
+    real = (
+        "On September 10, 2026 the Company received a notification letter from Nasdaq stating "
+        "that the Company is not in compliance with Nasdaq Listing Rule 5550(a)(2)."
+    )
+    assert is_listing_notice(real)
+    assert not is_listing_notice(real + " filler" * 20_000)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "On August 28, 2026 the Company received a staff determination letter from the Staff "
+        "notifying the Company that it had not regained compliance with the MVPHS Requirement.",
+        "Nasdaq notified the Company that it did not meet the minimum bid price requirement "
+        "set forth in Nasdaq Listing Rule 5550(a)(2); the Company has 180 days to regain "
+        "compliance.",
+        "NYSE has determined to suspend trading in the Company's ADSs immediately.",
+    ],
+)
+def test_short_real_notices_are_still_recognised(text):
+    assert is_listing_notice(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "On March 11, 2026 the Company received a letter from Nasdaq indicating that the "
+        "Company was not in compliance with Nasdaq Listing Rule 5550(a)(2). On September 24, "
+        "2026 Nasdaq notified the Company that it has regained compliance.",
+        "Nasdaq confirmed the Company is back in compliance with the minimum bid price rule "
+        "after earlier notifying it that it was not in compliance with Nasdaq Listing Rule 5550.",
+        "Announcement of the suspension of trading in the Company's ordinary shares on Euronext "
+        "Oslo Bors pending completion of the merger.",
+    ],
+)
+def test_good_news_and_trading_suspensions_elsewhere_are_not_notices(text):
+    assert not is_listing_notice(text)
+
+
 def test_foreign_offering_and_late_filing_forms_are_flagged():
     assert classify_filing("F-1")["sentiment"] == "risk"
     assert classify_filing("F-3/A")["kind"] == "Offering or dilution filing"
