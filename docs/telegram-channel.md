@@ -80,7 +80,8 @@ play.
 | **Flash Report** | rotating, staggered | research commission gone public | `/research/{public_id}` |
 | **The Closing Bell** | 4:20 p.m. ET, appointment | frozen post-market report | `/reports/{day}/post` |
 | **The Scoreboard** | after the close, daily | Flash's record, community calls | `/flash/record` *(needs a card)* |
-| **Halt Desk** | interrupt | `market_events` halts | `/t/{ticker}` |
+| **Transition Desk** | rotating, best first | a ratified name or coin changed state (see below) | `/t/{ticker}` or the coin page |
+| **Halt Desk** | interrupt | `market_events` halts on a ratified stock or one with an active Call | `/t/{ticker}` |
 | **Filing Desk** | interrupt, capped | `market_events` EDGAR / disclosures | `/t/{ticker}` |
 | **Memecoin Replay** | rotating | rendered replay awaiting delivery | the GIF itself |
 | **Sports Desk** | rotating | game decisions, alpha, receipts | `/sports/game/{id}` *(needs a card)* |
@@ -98,6 +99,11 @@ live: `_pending_event_rows` feeds `format_event_post_md` from
 session briefings. Resume notices are skipped so the desk reports the halt, not
 the recovery. EDGAR and house-disclosure events will join the same segment when
 their feeds populate `market_events`.
+
+**The Transition Desk replaces the noise.** Halts on names nobody follows and
+the standalone memecoin bundle post were the annoying part of the channel. The
+room now hears when something it can act on *changes state*. See
+"Transition alerts" below.
 
 **The Scoreboard is what makes the rest credible.** A channel that only posts
 entries is a hype feed. A channel that posts its own win–loss after the close is
@@ -136,6 +142,56 @@ This replaced `announcement_batch_ready`, which optimised for the opposite
 thing: it waited for items to pile up and then fused them into one message.
 Batching was the right answer to flooding when every item was its own ping; a
 paced rundown is the better answer, because it keeps every item's card intact.
+
+## Transition alerts
+
+`src/runner_web/transition_alerts.py` keeps the last action tag and ratified
+flag per `(market, subject)` in `transition_state` (`market` is `stock` or
+`memecoin`). Each dispatch compares the current tag (`state_tag()` for a stock's
+latest snapshot, the early reading for a coin) and ratified result against it.
+
+**Events that speak**
+
+| Event | Rule |
+|---|---|
+| Newly ratified | not ratified (or unknown) before, ratified now |
+| Lost ratification | ratified before, not now |
+| Watch → Setup | only if ratified or the name has an active Call |
+| Setup or Watch → Running | same |
+| Running → Extended | same |
+| Any → Avoid | only if ratified (before or now) or an active Call |
+
+Everything else is silent: Avoid → anything, Extended → Running, any move into or
+out of Paused, and every move on a name that is not ratified and has no Call. A
+name's first sighting, or one last seen over a day ago, records its tag and says
+nothing, so turning this on does not flood the room. One event per name per pass:
+the heaviest wins.
+
+**Ranking.** Events wait in `transition_events` with an interest score computed in
+code. There is no model in the loop. Score = event weight (Setup → Running 100,
+newly ratified 80, Watch → Setup 60, Extended 50, lost ratification 45, Avoid 40)
++ ratified standards met / total (up to 20) + the scanner score (up to 20) +
+activity (up to 20: relative volume for a stock; liquidity and 24 hour volume for
+a coin) + 25 for an active Call. Each turn the best pending event that is
+inside its daily cap moves to the outbox, and only one transition waits in the
+outbox at a time. Caps per UTC day: `TELEGRAM_TRANSITIONS_PER_DAY_STOCK` (8) and
+`TELEGRAM_TRANSITIONS_PER_DAY_MEMECOIN` (4). An event older than
+`TELEGRAM_TRANSITION_MAX_AGE_MINUTES` (180) is retired unheard.
+
+**Dedupe and cooldown.** The outbox key is
+`transition:{subject}:{from}>{to}:{day}`, so a name that flaps between two tags
+speaks once a day. The per-ticker quiet window (`TELEGRAM_TICKER_QUIET_SECONDS`,
+30 minutes) is the cooldown. Memecoin transitions stay behind
+`TELEGRAM_MEMECOIN_ALERTS`.
+
+**Copy.** `⚡ $SOUN: Setup → Running`, `✅ $SOUN is newly ratified`,
+`⚠️ $SOUN lost its ratification`, one metrics line, one link. A coin leads with
+its contract address, never the creator-set name.
+
+**Quieter halts and bundles.** A halt posts only when the stock was ratified at
+its last check or has an active Call. The memecoin bundle and creator-selling post
+goes out only for a coin with an active Call; for everyone else a launch bundle
+shows up as a lost ratification.
 
 ## Dedupe and delivery
 

@@ -3925,6 +3925,36 @@ def _migration_095_ratification_records(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_099_transition_alerts(db: DatabaseConnection) -> None:
+    """The last tag per name, and the state changes waiting to be told."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS transition_state (
+            market TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            tag TEXT NOT NULL,
+            ratified INTEGER,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (market,subject)
+        );
+        CREATE TABLE IF NOT EXISTS transition_events (
+            key TEXT PRIMARY KEY,
+            market TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            event TEXT NOT NULL,
+            score REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            payload_json TEXT NOT NULL,
+            day TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS transition_events_pending
+            ON transition_events(status,market,day);
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4030,6 +4060,7 @@ MIGRATIONS = (
     Migration(96, "dash_turn_mutations", _migration_096_dash_turn_mutations),
     Migration(97, "dash_decisions", _migration_097_dash_decisions),
     Migration(98, "report_sources", _migration_098_report_sources),
+    Migration(99, "transition_alerts", _migration_099_transition_alerts),
 )
 
 

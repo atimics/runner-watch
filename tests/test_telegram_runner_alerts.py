@@ -833,6 +833,12 @@ def test_halt_events_reach_the_channel_once(alert_environment, monkeypatch: Monk
     web_main.dispatch_telegram_posts()  # baseline the empty board
     recent = datetime.now(UTC).isoformat()
     _insert_halt("halt-1", "HALT", event_at=recent)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO transition_state (market,subject,tag,ratified,updated_at) "
+            "VALUES ('stock','HALT','watch',1,?)",
+            (recent,),
+        )
 
     result = web_main.dispatch_telegram_posts()
 
@@ -843,6 +849,22 @@ def test_halt_events_reach_the_channel_once(alert_environment, monkeypatch: Monk
     assert f"{web_main.RUNNERS_ORIGIN}/stock/HALT" in sent[0]
     # Delivered once, not on every sweep.
     assert web_main.dispatch_telegram_posts()["status"] == "empty"
+
+
+def test_halts_on_names_nobody_follows_stay_off_the_channel(
+    alert_environment, monkeypatch: MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(
+        web_main,
+        "telegram_send_post",
+        lambda config, text, **_kw: sent.append(text),
+    )
+    web_main.dispatch_telegram_posts()
+    _insert_halt("halt-3", "NOBODY", event_at=datetime.now(UTC).isoformat())
+
+    assert web_main.dispatch_telegram_posts()["status"] == "empty"
+    assert sent == []
 
 
 def test_resumed_halt_events_stay_off_the_channel(

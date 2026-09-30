@@ -349,7 +349,9 @@ def alert_text(finding: dict[str, Any], *, origin: str) -> str:
 
 
 def dispatch_risk_alerts(*, origin: str, at: datetime | None = None, sender: Any = None) -> dict:
-    """Post new findings on coins people were watching: tagged, or with an open Call.
+    """Post new findings on coins with an open Call.
+
+    Everyone else hears a launch bundle as a lost ratification (transition alerts).
 
     One post per cycle through the channel's own pacing; a finding is posted
     once, and one that fails to send is tried again next cycle.
@@ -391,10 +393,7 @@ def dispatch_risk_alerts(*, origin: str, at: datetime | None = None, sender: Any
         finding
         for finding in recent_findings(stored.get("memecoin_watch_findings") or [], current)
         if finding["id"] not in sent_before
-        and (
-            finding.get("state_before") in ALERT_STATES
-            or coin_id_for(finding["token_address"]) in watched_calls
-        )
+        and coin_id_for(finding["token_address"]) in watched_calls
     ]
     if not due:
         return {"status": "idle", "sent": 0}
