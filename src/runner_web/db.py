@@ -3863,6 +3863,32 @@ def _migration_096_dash_turn_mutations(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_097_dash_decisions(db: DatabaseConnection) -> None:
+    """Each decision-model answer for Dash, so its thresholds can be tuned later."""
+
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS dash_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            update_id BIGINT,
+            kind TEXT NOT NULL,
+            source TEXT NOT NULL,
+            action TEXT,
+            answers_json TEXT,
+            plan_json TEXT,
+            model TEXT,
+            cost REAL,
+            error TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS dash_decisions_recent
+            ON dash_decisions(kind,created_at DESC);
+        CREATE INDEX IF NOT EXISTS dash_decisions_update
+            ON dash_decisions(update_id);
+        """
+    )
+
+
 def _migration_095_ratification_records(db: DatabaseConnection) -> None:
     """Each change in a Ratified result, with the rules version and the facts used."""
 
@@ -3997,6 +4023,7 @@ MIGRATIONS = (
     Migration(94, "trust_access_requests", _migration_094_trust_access_requests),
     Migration(95, "ratification_records", _migration_095_ratification_records),
     Migration(96, "dash_turn_mutations", _migration_096_dash_turn_mutations),
+    Migration(97, "dash_decisions", _migration_097_dash_decisions),
 )
 
 
