@@ -452,6 +452,7 @@ def test_an_unchecked_standard_reads_as_its_own_state_and_the_call_is_labelled()
 
     assert "Standards · 4 of 5 met · 1 not checked yet" in page
     assert '<li class="standard-unknown"><span aria-hidden="true">?</span>' in page
-    assert "<em>not checked yet</em>, so not met" in page
+    assert "<em>not checked yet</em>, so it does not count as met" in page
+    assert "so not met" not in page
     assert 'class="standards-scope">Facts, not a Call' in page
     assert '<span class="state-chip-source">Call</span>' in page
