@@ -41,6 +41,7 @@ from runner_web.main import (
 )
 from runner_web.market_screens import listing
 from runner_web.sports import (
+    SLATE_HISTORY_ROWS,
     collect_stored_player_appearances,
     create_sports_pick,
     fetch_league,
@@ -1461,6 +1462,30 @@ def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
     assert history["change_pct"] == -3.2
     assert len(history["plot_points"].split()) == 2
     assert "fell 3.2 points" in history["label"]
+
+
+def test_slate_carries_only_the_newest_prediction_rows(sports_db) -> None:
+    """The list needs the latest row of each series; all of them made a 10 MB payload."""
+
+    for step in range(SLATE_HISTORY_ROWS + 4):
+        raw = sample_event()
+        moneyline = raw["competitions"][0]["odds"][0]["moneyline"]
+        moneyline["home"]["close"]["odds"] = str(-120 - step * 5)
+        moneyline["away"]["close"]["odds"] = str(100 + step * 5)
+        stored = normalize_event("mlb", raw)
+        assert stored is not None
+        store_events(
+            [stored],
+            observed_at=datetime(2026, 8, 26, 18, 0, tzinfo=UTC) + timedelta(minutes=step * 10),
+        )
+
+    event = next(item for item in sports_slate("mlb")["events"] if item["id"] == stored["id"])
+    history = event["prediction_history"]
+
+    assert len(history) == SLATE_HISTORY_ROWS
+    assert history[-1]["observed_at"] == event["prediction"]["observed_at"]
+    assert [row["observed_at"] for row in history] == sorted(row["observed_at"] for row in history)
+    assert len(event["edge_history"]["points"]) == SLATE_HISTORY_ROWS + 4
 
 
 def test_slate_database_query_count_does_not_grow_per_event(
