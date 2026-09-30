@@ -174,6 +174,34 @@ def _rendered_ticker(
     return re.sub(r'<link rel="stylesheet"[^>]*>', "", html)
 
 
+def _company_panel(issuer: dict[str, Any]) -> str:
+    html = _rendered_ticker(current_overrides={"issuer_risk": issuer})
+    return re.search(r'<dl class="company-facts">.*?</dl>', html, re.S).group(0)
+
+
+def test_company_panel_shows_dollar_cash_as_before() -> None:
+    panel = _company_panel({"issuer_data_available": True, "cash": 3_000_000.0})
+    assert "<dt>Reported cash</dt><dd>$3,000,000.00</dd>" in panel
+
+
+def test_company_panel_shows_non_dollar_cash_with_its_own_currency_code() -> None:
+    panel = _company_panel(
+        {
+            "issuer_data_available": True,
+            "cash": None,
+            "reporting_currency": "EUR",
+            "cash_display": "EUR 1,200,000.00",
+        }
+    )
+    assert "<dt>Reported cash</dt><dd>EUR 1,200,000.00</dd>" in panel
+    assert "$" not in panel
+
+
+def test_company_panel_hides_cash_when_none_was_read() -> None:
+    panel = _company_panel({"issuer_data_available": True, "cash": None, "current_ratio": 1.5})
+    assert "Reported cash" not in panel
+
+
 @pytest.mark.parametrize(
     ("ai_generated", "model"),
     [(True, "test/model-<script>alert(1)</script>"), (True, ""), (False, "test/model")],

@@ -726,6 +726,12 @@ def classify_filing(form: str, ownership: OwnershipSummary | None = None) -> dic
             64,
         ),
         (("SC 13G", "SCHEDULE 13G"), "Beneficial ownership update", "neutral", 58),
+        # SC TO-I (issuer), SC TO-T (third party) and SC TO-C (early notice), with /A.
+        # The form alone does not say who bids or at what price, so the label only
+        # says a tender offer exists and that the terms need reading.
+        (("SC TO-",), "Tender offer · check terms", "neutral", 66),
+        # A 6-K has no item numbers, so its subtype cannot be told from the form.
+        # It stays a plain current report rather than a guess.
         (("8-K", "6-K"), "New current report", "neutral", 68),
         (("10-Q", "10-K", "20-F", "40-F"), "Financial report", "neutral", 48),
     )
