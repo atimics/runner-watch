@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -127,8 +128,14 @@ def freeze_spotlight(
         fact = dict(raw)
         key = fact["concept"]
         value = number(fact["value"])
-        expected_unit = "shares" if key == "shares_outstanding" else "USD"
-        if key in saved_facts or value is None or fact["unit"] != expected_unit:
+        # Money keeps its own currency code (an IFRS filer may report in EUR or
+        # CAD); it is shown with that code and never converted.
+        unit = str(fact["unit"])
+        if key == "shares_outstanding":
+            unit_fits = unit == "shares"
+        else:
+            unit_fits = unit == "USD" or CURRENCY_CODE.fullmatch(unit) is not None
+        if key in saved_facts or value is None or not unit_fits:
             continue
         accession = str(fact["accession"])
         url = (
@@ -175,11 +182,15 @@ def freeze_spotlight(
     }
 
 
+CURRENCY_CODE = re.compile(r"[A-Z]{3}")
+
+
 def _compact(value: Any, unit: str) -> str:
     amount = number(value)
     if amount is None:
         return "Awaiting data"
-    prefix = ("-" if amount < 0 else "") + ("$" if unit == "USD" else "")
+    code = f"{unit} " if CURRENCY_CODE.fullmatch(unit) and unit != "USD" else ""
+    prefix = ("-" if amount < 0 else "") + ("$" if unit == "USD" else code)
     amount = abs(amount)
     for divisor, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
         if abs(amount) >= divisor:

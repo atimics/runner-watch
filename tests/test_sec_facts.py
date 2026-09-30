@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from runner_web.issuer_risk import build_issuer_risk_context
 from runner_web.sec_facts import parse_company_facts
@@ -202,3 +202,114 @@ def test_an_ifrs_filer_is_read_in_its_own_currency() -> None:
     assert context["shares_growth_pct"] == 20.0
     assert context["reporting_currency"] == "CAD"
     assert context["cash"] is None  # never shown as dollars
+
+
+def _share_row(value, end, tag, *, form="20-F", unit="shares", filed=None):
+    return {
+        "concept": "shares_outstanding",
+        "value": value,
+        "unit": unit,
+        "period_start": None,
+        "period_end": end,
+        "filed_at": filed or f"{end}T00:00:00+00:00",
+        "form": form,
+        "source_tag": tag,
+    }
+
+
+COVER = "dei:EntityCommonStockSharesOutstanding"
+NOTE = "ifrs-full:NumberOfSharesOutstanding"
+
+
+def test_foreign_share_growth_is_read_on_one_basis() -> None:
+    rows = [
+        _share_row(200.0, "2025-12-31", NOTE),
+        _share_row(100.0, "2024-12-31", NOTE),
+    ]
+    assert build_issuer_risk_context(rows)["shares_growth_pct"] == 100.0
+
+
+def test_foreign_share_growth_across_two_tags_is_not_checked() -> None:
+    # The latest fact is on the cover page, the older one is an IFRS note. If one
+    # counts ADSs and the other ordinary shares, a jump would be false.
+    rows = [
+        _share_row(2_000.0, "2025-12-31", COVER),
+        _share_row(100.0, "2024-12-31", NOTE),
+    ]
+    context = build_issuer_risk_context(rows)
+    assert context["shares_growth_pct"] is None
+
+    # The standard reads "not checked yet" (None), never "not met" (False).
+    from ratitrust.stock import standards
+
+    result = standards(
+        exchange="Nasdaq",
+        issuer=context,
+        halted_on=None,
+        delisting_on=None,
+        today=date(2026, 9, 27),
+    )
+    dilution = next(item for item in result["standards"] if item["key"] == "dilution")
+    assert dilution["met"] is None
+
+
+def test_domestic_share_growth_is_unchanged_across_tags() -> None:
+    rows = [
+        _share_row(2_000.0, "2025-12-31", COVER, form="10-K"),
+        _share_row(100.0, "2024-12-31", "us-gaap:CommonStockSharesOutstanding", form="10-K"),
+    ]
+    assert build_issuer_risk_context(rows)["shares_growth_pct"] == 1900.0
+
+
+def test_rows_without_a_tag_still_give_the_old_domestic_answer() -> None:
+    rows = [
+        {**_share_row(20.0, "2026-06-30", None, form="10-Q"), "source_tag": None},
+        {**_share_row(10.0, "2025-06-30", None, form="10-Q"), "source_tag": None},
+    ]
+    assert build_issuer_risk_context(rows)["shares_growth_pct"] == 100.0
+
+
+def _money_row(concept, value, unit, form="20-F", start=None):
+    return {
+        "concept": concept,
+        "value": value,
+        "unit": unit,
+        "period_start": start,
+        "period_end": "2025-12-31",
+        "filed_at": "2026-03-10T00:00:00+00:00",
+        "form": form,
+        "source_tag": "ifrs-full:x",
+    }
+
+
+def test_non_dollar_cash_is_shown_with_its_currency_code_and_not_converted() -> None:
+    rows = [
+        _money_row("cash", 1_200_000.0, "EUR"),
+        _money_row("operating_cash_flow", -600_000.0, "EUR", start="2025-01-01"),
+    ]
+    context = build_issuer_risk_context(rows, sic="3690")
+    assert context["cash"] is None
+    assert context["cash_display"] == "EUR 1,200,000.00"
+    assert context["reporting_currency"] == "EUR"
+    assert 23.9 <= context["cash_runway_months"] <= 24.5
+
+
+def test_dollar_cash_has_no_extra_key() -> None:
+    rows = [_money_row("cash", 3_000_000.0, "USD", form="10-K")]
+    context = build_issuer_risk_context(rows)
+    assert context["cash"] == 3_000_000.0
+    assert "cash_display" not in context
+
+
+def test_runway_and_ratios_are_not_computed_across_currencies() -> None:
+    # Burn is in EUR but the only cash is in USD, and debt is in USD.
+    rows = [
+        _money_row("cash", 5_000_000.0, "USD"),
+        _money_row("debt_total", 1_000_000.0, "USD"),
+        _money_row("operating_cash_flow", -600_000.0, "EUR", start="2025-01-01"),
+    ]
+    context = build_issuer_risk_context(rows, sic="3690")
+    assert context["cash"] is None
+    assert "cash_display" not in context
+    assert context["cash_runway_months"] is None
+    assert context["debt_to_cash"] is None

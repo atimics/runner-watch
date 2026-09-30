@@ -30,6 +30,17 @@ def _latest(rows: list[dict[str, Any]], concept: str) -> dict[str, Any] | None:
     return max(matches, key=lambda row: (row["filed_at"], row["period_end"])) if matches else None
 
 
+def currency_amount(value: float, currency: str) -> str:
+    """An amount with the currency of the fact itself, never converted.
+
+    Dollars keep the "$" the page always showed; any other currency shows its
+    code, for example "EUR 1,200,000.00". No exchange rate is ever applied.
+    """
+
+    text = f"{value:,.2f}"
+    return f"${text}" if currency == "USD" else f"{currency} {text}"
+
+
 def _value(row: dict[str, Any] | None) -> float | None:
     return float(row["value"]) if row is not None else None
 
@@ -106,6 +117,17 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
         runway = cash / monthly_burn if monthly_burn > 0 else None
 
     share_rows = [row for row in rows if row["concept"] == "shares_outstanding"]
+    if share_rows and is_foreign_issuer({str(row.get("form") or "").upper() for row in rows}):
+        # A foreign issuer's share facts come from more than one tag (the cover
+        # page, the IFRS note) and may count ordinary shares or ADSs, and RATi
+        # holds no ADS ratio. A growth figure is only read between two facts on
+        # the same tag and unit. Across tags the basis may differ, so growth is
+        # then not checked (never a "not met" from a mismatched basis).
+        newest = max(share_rows, key=lambda row: (str(row["period_end"]), str(row["filed_at"])))
+        basis = (newest.get("source_tag"), newest.get("unit", "shares"))
+        share_rows = [
+            row for row in share_rows if (row.get("source_tag"), row.get("unit", "shares")) == basis
+        ]
     by_period: dict[str, dict[str, Any]] = {}
     for row in share_rows:
         current = by_period.get(str(row["period_end"]))
@@ -132,7 +154,7 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if comparison and float(comparison["value"]) > 0:
             shares_growth = (float(latest_shares["value"]) / float(comparison["value"]) - 1) * 100
 
-    return {
+    context: dict[str, Any] = {
         "issuer_data_available": True,
         "cash": cash if currency == "USD" else None,
         "reporting_currency": currency,
@@ -146,6 +168,10 @@ def _raw_issuer_context(rows: list[dict[str, Any]]) -> dict[str, Any]:
         # The latest quarterly or annual report behind these facts.
         **_latest_periodic(rows),
     }
+    if cash is not None and currency != "USD":
+        # Shown with its own currency code. `cash` itself stays dollars only.
+        context["cash_display"] = currency_amount(cash, currency)
+    return context
 
 
 def _latest_periodic(rows: list[dict[str, Any]]) -> dict[str, Any]:
