@@ -170,10 +170,22 @@ while markets are closed.
 | Standard | US domestic (10-Q/10-K/8-K) | Foreign private issuer (20-F/40-F/6-K) |
 | --- | --- | --- |
 | Listing | NASDAQ, NYSE, NYSE American | Same: this is a US-listing standard |
-| Filings | 10-Q or 10-K within 135 days | 20-F or 40-F within 490 days; interim 6-Ks not read |
-| Cash | us-gaap facts | ifrs-full facts (or us-gaap), in the reporting currency |
+| Filings | 10-Q or 10-K within 135 days | 20-F or 40-F within 490 days; interim 6-Ks not read. With no 20-F or 40-F held, not checked yet (never "not met") |
+| Cash | us-gaap facts; not applied to SIC 6000-6799 | ifrs-full facts (or us-gaap), in the reporting currency. SIC 6000-6799 not applied. With no SIC code read yet, not checked yet |
 | Dilution | Shares outstanding, year on year | Same, usually from annual 20-F figures; ordinary shares, not ADSs |
 | Trading | Nasdaq halts; 8-K item 3.01 | Nasdaq halts; 6-K listing notices read from text. Not checked yet until 6-K texts have been read for the whole 90 days |
+
+Why a foreign issuer can read "not checked yet" where a domestic one reads a
+result (`stock_ratify._foreign_inputs`, foreign issuers only):
+
+- Interim results are furnished on 6-K, which cannot be told from other 6-Ks
+  by form type, so a 6-K is never evidence of an up-to-date report. With no
+  annual report held, the only evidence would be an interim 6-K.
+- EDGAR gives foreign banks and insurers a SIC code like any filer, so the
+  6000-6799 carve-out applies to them once the code is read. Until it is read,
+  a foreign bank cannot be told from an operating company and its operating
+  cash flow is not a burn, so cash is not judged. Whether EDGAR's codes are
+  right for every foreign bank has not been checked against the live data.
 
 The board shows a Ratified mark; the stock page lists every standard as met,
 not met, not checked yet, or not applied. "Not applied" (a dash, with the
