@@ -255,6 +255,72 @@ short desk note and posts it to the room. `TELEGRAM_ROOM_CHAT_ID` names the room
 `DASH_DESK_NOTE_MIN_GAP_SECONDS` (3000) keeps two notes from landing close
 together.
 
+### The decision-model path (`DASH_DECISIONS`)
+
+With `DASH_DECISIONS=1`, a cheap decision model decides what Dash does, and the
+chat model only writes words. It is **off by default**: the endpoint is alpha,
+no live call has been checked yet, and the thresholds are untuned. With it off,
+nothing changes: the tool loop above runs as before.
+
+The flow for one message that passed the attention rules and the hourly caps:
+
+1. **Decide.** One call to OpenRouter's Decisions API
+   (`POST /api/v1/api/alpha/decisions`, model `DASH_DECISION_MODEL`, default
+   `typesafe/jev-1.13`). It is not a text model: it answers typed questions
+   with probabilities. The state is small: the message, the speaker, whether
+   Dash was addressed, the last four lines, his last three actions, the tickers
+   and contract addresses the message names, the session, his budget
+   (`can_call`, `can_comment`, `calls_left`) and the `changes` counts. It is
+   not the world. The questions are `should_engage`, `stop_requested` (yes/no),
+   `action` (reply, react, hold), `needs` (none, board, runners, events, halts,
+   sports, memecoins, ticker, coin) and `call_intent` (none, open_call,
+   close_call, comment). All of it lives in `src/runner_web/decisions.py` (the
+   client and a pure parser) and `src/runner_web/dash_decisions.py` (the
+   questions and the policy).
+2. **Policy in code.** `choose_turn` turns probabilities into one plan.
+   A stop request at or above `DASH_DECISION_CONFIDENCE` (0.6) holds and mutes
+   that person with the usual mute. An action below that bar holds, or reacts
+   when Dash was addressed, so a direct question is still acknowledged. An
+   unaddressed message also needs `should_engage` to pass. `needs` becomes one
+   `dash_expand` node; the ticker or address comes from the message text, never
+   from the model. A Call or comment needs `DASH_DECISION_MUTATION_CONFIDENCE`
+   (0.8), a named ticker, budget left, and a reply to announce it.
+3. **Write.** Only for a reply: one chat call to `DASH_MODEL` with the persona,
+   the prefetched lookups, the loaded node and the result of any action. No
+   tools, one round, about forty words. Code checks the draft: a ticker or
+   contract address with nothing loaded behind it gets one rewrite. React and
+   hold make no chat call at all.
+4. **Act.** `make_call`, `close_call` and `comment_on_ticker` run in code
+   through `dash_once`, so a retried update never posts or pays twice. A comment
+   costs one more chat call for its body, and only the first time.
+
+The desk note uses the same model: after the min-gap and `changes.any` guards,
+a `worth_speaking` score (0 to 3) must reach `DASH_DESK_NOTE_MIN_SCORE` (2.0)
+with confidence at or above `DASH_DECISION_CONFIDENCE`, or no note is written.
+
+**Fallback.** Any decision failure (timeout, network error, 402 out of credits,
+429, 5xx, or an answer that does not parse) falls back to the tool loop for
+that message, or to the old desk-note behaviour, so the room never goes silent.
+The error goes to `worker_state` key `dash_decision_last_error`.
+
+**Log.** Every decision is a row in `dash_decisions`: update id, kind (`turn` or
+`desk_note`), source (`decision` or `fallback`), chosen action, answers and
+probabilities, the plan, model, cost, and error. Use it to tune the thresholds:
+
+```sql
+SELECT action, COUNT(*), AVG(cost) FROM dash_decisions
+WHERE kind='turn' AND source='decision' GROUP BY action;
+```
+
+**Alpha risk.** The Decisions API is marked alpha. Its URL, body or answer
+shape may change without notice. That is why every detail of it is in one file
+with a strict parser: a changed shape is refused whole and falls back, rather
+than being half read. The request sends `provider: {"zdr": true}` like every
+other Dash call. The documented schema accepts `zdr`, but whether
+`typesafe/jev-1.13` has any zero-data-retention endpoint is not known. If it has
+none, every call fails and falls back; check `dash_decision_last_error` after
+turning the flag on.
+
 The daily free-report cap lives in `TELEGRAM_RUNNER_REPORTS_PER_DAY` (20) and
 the per-batch pick in `TELEGRAM_RUNNER_REPORTS_PER_RUN` (3), staggered by
 `TELEGRAM_RUNNER_REPORT_STAGGER_MINUTES`.
