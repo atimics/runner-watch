@@ -96,6 +96,11 @@ SCORE_MODELS = {
     "nhl": {"total": 6.1, "exponent": 2.0, "decimals": 1},
 }
 BOVADA_BOOKMAKER_KEY = "bovada"
+# List rows read only the newest row of each prediction series, so the slate
+# carries a few recent rows, not every saved one. Each row is about 1 KB and an
+# event can hold 160 of them; the full slate reached 10 MB and no longer fit the
+# shared cache. Game detail loads its own longer history in sports_event.
+SLATE_HISTORY_ROWS = 6
 MODEL_RECORD_CACHE_TTL_SECONDS = 300.0
 _MODEL_RECORD_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 _MODEL_RECORD_CACHE_LOCK = threading.Lock()
@@ -2814,9 +2819,12 @@ def _event_rows(database: Any, rows: list[Any]) -> list[dict[str, Any]]:
         for venue in venues_by_event.get(event_id, []):
             venue_history[venue["source"]].append(venue)
         event["prediction_markets"] = [history[-1] for history in venue_history.values()]
-        event["prediction_market_history"] = dict(venue_history)
+        event["prediction_market_history"] = {
+            source: history[-SLATE_HISTORY_ROWS:] for source, history in venue_history.items()
+        }
         event["prediction_history"] = [
-            _prediction_item(row) for row in reversed(prediction_history.get(event_id, []))
+            _prediction_item(row)
+            for row in reversed(prediction_history.get(event_id, [])[:SLATE_HISTORY_ROWS])
         ]
         event["news"] = news_history.get(event_id, [])
         event["edge_history"] = _edge_sparkline_from_rows(
@@ -2915,7 +2923,9 @@ def golf_slate(limit: int = 6, leaderboard_limit: int = 10) -> dict[str, Any]:
             from runner_web.golf_markets import quote_history
 
             event["analysis"] = saved_cup_analysis()
-            event["contract_quotes"] = quote_history(event["id"])
+            # List rows read the latest quote of each series; the Cup alone held
+            # 2.4 MB of quote history. Detail (golf_event) keeps the full history.
+            event["contract_quotes"] = quote_history(event["id"], latest=True)
     return {
         "events": events,
         "sport": "golf",

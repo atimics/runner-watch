@@ -181,3 +181,24 @@ reason) is a standard that does not fit the company, such as cash runway for a
 financial company: it is left out of the count ("4 of 4 met · 1 not applied")
 and does not block. "Not checked yet" means missing data, and does block. Missing financials leave a standard unknown, so the
 stock is not ratified.
+
+## Flash forecast settlement and clocks
+
+A Flash forecast is scored on the US regular session close (16:00
+America/New_York), for every ticker. This is a rule of the Call, not of the
+company, and it is unchanged. A foreign issuer (files 20-F, 40-F or 6-K and
+never 10-Q or 10-K) can trade in its home market at other hours, so news can
+move its shares before the US open. Its forecast card therefore adds
+"Scored on the US session only..." (`market_forecasts.FOREIGN_SETTLEMENT_NOTE`).
+Every forecast row carries `settlement_basis`. The card does not say whether a
+gap happened: RATi holds no home-market prices. Forecasts already settled are
+not touched.
+
+Time zones. Market rules use America/New_York on purpose: the session clock
+(`market_clock`), the halt feed (`nasdaq_halts`), the forecast close and the
+"your day" boundary for Calls. Times shown to readers in those places carry an
+explicit zone label ("ET", "EDT", "EST"), so a time is never shown as if it were
+local. Not done: showing times in the reader's own zone. That needs the reader's
+zone from the browser and would change the byte-for-byte output for US readers,
+so it is left open.
+

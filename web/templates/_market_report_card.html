@@ -84,6 +84,7 @@
               </dl>
               <p>{{ forecast.review_reason or forecast.reason }}</p>
               <p>Saved {{ forecast.forecast_at|default('Time unavailable', true) }} · Target: session close. Up hits at or above target; down hits at or below target.</p>
+              {% if forecast.settlement_note %}<p class="market-eod-settlement">{{ forecast.settlement_note }}</p>{% endif %}
               {% if forecast.close_source %}<p>Close source: {{ forecast.close_source|capitalize }} · {{ report.report_day }}</p>{% endif %}
               {% else %}
               <p><b>Target EOD</b> · {{ 'Preparing target' if report.forecast_state in ['queued', 'running'] else 'Earlier report' if report.forecast_state == 'legacy' else 'Forecast window passed' if report.forecast_state == 'expired' else 'Forecast needs review' }}</p>

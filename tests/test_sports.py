@@ -41,6 +41,7 @@ from runner_web.main import (
 )
 from runner_web.market_screens import listing
 from runner_web.sports import (
+    SLATE_HISTORY_ROWS,
     collect_stored_player_appearances,
     create_sports_pick,
     fetch_league,
@@ -571,6 +572,46 @@ def test_golf_tied_match_does_not_name_a_winner() -> None:
         ]
     )
     assert matches[0]["result"] == "Halved"
+
+
+def test_golf_slate_carries_the_latest_cup_quotes_and_detail_keeps_the_history(
+    sports_db,
+) -> None:
+    from runner_web import golf_markets
+
+    current = datetime.now(UTC)
+    raw = {
+        "id": "401824815",
+        "name": "Presidents Cup fixture",
+        "date": (current + timedelta(days=2)).isoformat(),
+        "endDate": (current + timedelta(days=5)).isoformat(),
+        "status": {"type": {"state": "pre", "completed": False}},
+        "competitions": [{"competitors": []}],
+    }
+    event = normalize_golf_event(raw)
+    assert event is not None and event["id"] == "golf:401824815"
+    store_golf_events([event])
+    golf_markets.store_quotes(
+        [
+            {
+                "event_id": event["id"],
+                "contract_key": "winner",
+                "outcome_key": "usa",
+                "source": "kalshi",
+                "probability": 0.8 + step / 100,
+                "observed_at": (current - timedelta(hours=10 - step)).isoformat(),
+                "quality": "quoted",
+            }
+            for step in range(5)
+        ]
+    )
+
+    listed = next(item for item in golf_slate()["events"] if item["id"] == event["id"])
+    detail = golf_event(event["id"])
+
+    assert len(listed["contract_quotes"]) == 1
+    assert listed["contract_quotes"][0]["probability"] == pytest.approx(0.84)
+    assert len(detail["contract_quotes"]) == 5
 
 
 def test_finished_golf_keeps_round_leaders_and_shipley_score(sports_db) -> None:
@@ -1461,6 +1502,30 @@ def test_slate_builds_fixed_side_edge_history(sports_db) -> None:
     assert history["change_pct"] == -3.2
     assert len(history["plot_points"].split()) == 2
     assert "fell 3.2 points" in history["label"]
+
+
+def test_slate_carries_only_the_newest_prediction_rows(sports_db) -> None:
+    """The list needs the latest row of each series; all of them made a 10 MB payload."""
+
+    for step in range(SLATE_HISTORY_ROWS + 4):
+        raw = sample_event()
+        moneyline = raw["competitions"][0]["odds"][0]["moneyline"]
+        moneyline["home"]["close"]["odds"] = str(-120 - step * 5)
+        moneyline["away"]["close"]["odds"] = str(100 + step * 5)
+        stored = normalize_event("mlb", raw)
+        assert stored is not None
+        store_events(
+            [stored],
+            observed_at=datetime(2026, 8, 26, 18, 0, tzinfo=UTC) + timedelta(minutes=step * 10),
+        )
+
+    event = next(item for item in sports_slate("mlb")["events"] if item["id"] == stored["id"])
+    history = event["prediction_history"]
+
+    assert len(history) == SLATE_HISTORY_ROWS
+    assert history[-1]["observed_at"] == event["prediction"]["observed_at"]
+    assert [row["observed_at"] for row in history] == sorted(row["observed_at"] for row in history)
+    assert len(event["edge_history"]["points"]) == SLATE_HISTORY_ROWS + 4
 
 
 def test_slate_database_query_count_does_not_grow_per_event(
