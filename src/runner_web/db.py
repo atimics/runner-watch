@@ -3664,6 +3664,11 @@ def _migration_084_report_spotlight(db: DatabaseConnection) -> None:
     _ensure_column(db, "market_session_reports", "spotlight_json TEXT")
 
 
+def _migration_098_report_sources(db: DatabaseConnection) -> None:
+    _ensure_column(db, "market_session_reports", "sources_json TEXT")
+    _ensure_column(db, "market_session_reports", "version_token TEXT")
+
+
 def _migration_085_attention_shadow(db: DatabaseConnection) -> None:
     # Independent receipts survive ordinary scan and market-bar pruning.
     db.executescript(
@@ -4024,6 +4029,7 @@ MIGRATIONS = (
     Migration(95, "ratification_records", _migration_095_ratification_records),
     Migration(96, "dash_turn_mutations", _migration_096_dash_turn_mutations),
     Migration(97, "dash_decisions", _migration_097_dash_decisions),
+    Migration(98, "report_sources", _migration_098_report_sources),
 )
 
 

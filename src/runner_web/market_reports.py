@@ -17,6 +17,7 @@ from runner_web.market_forecasts import (
 )
 from runner_web.report_company import freeze_company_context
 from runner_web.report_narrative import freeze_story_board
+from runner_web.report_sources import decode_sources, encode_sources, report_sources, version_token
 from runner_web.report_spotlight import decorate_edition, freeze_spotlight
 
 EASTERN = ZoneInfo("America/New_York")
@@ -518,6 +519,8 @@ def _report_record(row: Any) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         spotlight = None
     report["spotlight"] = spotlight if isinstance(spotlight, dict) else None
+    report["sources"] = decode_sources(report.pop("sources_json", None))
+    report["version_token"] = report.pop("version_token", None)
     report["label"] = REPORT_LABELS.get(report["report_type"], str(report["report_type"]))
     try:
         local_as_of = _as_eastern(datetime.fromisoformat(str(report["as_of"])))
@@ -747,6 +750,11 @@ def market_report(report_day: str, report_type: ReportType) -> dict[str, Any] | 
     return report
 
 
+def _comparison_as_of(metrics: dict[str, Any]) -> str | None:
+    value = metrics.get("opening_as_of")
+    return str(value) if value else None
+
+
 def _create_report(
     report_type: ReportType,
     report_day: date,
@@ -769,13 +777,14 @@ def _create_report(
             return None
         timestamp = _iso_utc(current)
         report_id = secrets.token_urlsafe(10)
+        sources = report_sources(payload, _comparison_as_of(payload["metrics"]))
         inserted = database.execute(
             """
             INSERT INTO market_session_reports(
                 id,report_day,report_type,source_scan_run_id,comparison_scan_run_id,
                 as_of,headline,summary,metrics_json,leaders_json,turns_json,
-                created_at,updated_at,spotlight_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                created_at,updated_at,spotlight_json,sources_json,version_token
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(report_day,report_type) DO NOTHING
             """,
             (
@@ -793,6 +802,8 @@ def _create_report(
                 timestamp,
                 timestamp,
                 json.dumps(payload.get("spotlight"), separators=(",", ":")),
+                encode_sources(sources),
+                version_token(sources),
             ),
         ).rowcount
         if inserted:
