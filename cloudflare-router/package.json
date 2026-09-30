@@ -1,0 +1,6 @@
+{
+  "name": "rati-products-router",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

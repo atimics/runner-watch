@@ -39,6 +39,8 @@ jobs:
           for script in web/static/*.js cloudflare-router/src/*.js; do
             node --check "$script"
           done
+      - run: node --test
+        working-directory: cloudflare-router
       - run: uv run pip-audit --local --skip-editable --progress-spinner off --timeout 10 --vulnerability-service osv
       - run: docker compose -f compose.local.yml config --quiet
 
