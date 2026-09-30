@@ -29,7 +29,6 @@ import pandas as pd
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, Field
@@ -334,6 +333,7 @@ from runner_web.sports_routes import (
     SportsRouteDependencies,
     create_sports_routes,
 )
+from runner_web.static_files import NoSourceMapStaticFiles
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.telegram import (
     _api_call as telegram_api_call,
@@ -1180,12 +1180,12 @@ templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 
 templates.env.globals["simple_market_detail"] = simple_market_detail
 templates.env.globals["static_version"] = STATIC_VERSION
-app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="static")
+app.mount("/static", NoSourceMapStaticFiles(directory=str(ROOT / "web" / "static")), name="static")
 DESKTOP_RENDERER_ROOT = ROOT / "desktop" / "dist" / "renderer"
 if DESKTOP_RENDERER_ROOT.is_dir():
     app.mount(
         "/desktop",
-        StaticFiles(directory=str(DESKTOP_RENDERER_ROOT), html=True),
+        NoSourceMapStaticFiles(directory=str(DESKTOP_RENDERER_ROOT), html=True),
         name="desktop",
     )
 
