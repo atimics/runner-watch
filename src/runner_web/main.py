@@ -219,6 +219,7 @@ from runner_web.memecoin_routes import (
 )
 from runner_web.memecoins import (
     REFRESH_SECONDS,
+    is_automated_agent,
     is_memecoin_view,
     memecoin_detail,
     memecoin_market,
@@ -3074,6 +3075,7 @@ async def security_headers(request: Request, call_next: Any) -> Response:
             request.method == "GET"
             and response.status_code < 400
             and is_memecoin_view(request.url.path)
+            and not is_automated_agent(request.headers.get("user-agent", ""))
             and view_note_due(time.monotonic())
         ):
             # Someone is reading memecoins, so the worker keeps its full sampling.

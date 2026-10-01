@@ -12,6 +12,9 @@ from typing import Any
 from runner_web.db import connection
 
 DAILY_CREDIT_CAP = 10_000
+# Prices cost about 1,500 credits a day. Every other read stops this far short of
+# the daily limit, so the forensic reads can never leave the board without prices.
+PRICE_RESERVE = 2_000
 RETENTION_DAYS = 30
 MAX_TRANSACTIONS = 250_000
 PRUNE_BATCH_SIZE = 500
@@ -27,9 +30,16 @@ def credit_limit() -> int:
     return max(0, min(int(os.getenv("HELIUS_DAILY_CREDITS", "10000")), DAILY_CREDIT_CAP))
 
 
-def reserve_credits(credits: int, *, at: datetime | None = None) -> None:
-    current = at or datetime.now(UTC)
+def lane_limit(lane: str) -> int:
+    """The day's ceiling for one lane: prices may use it all, other reads stop short."""
+
     limit = credit_limit()
+    return limit if lane == "price" else limit - min(PRICE_RESERVE, limit // 5)
+
+
+def reserve_credits(credits: int, *, at: datetime | None = None, lane: str = "other") -> None:
+    current = at or datetime.now(UTC)
+    limit = lane_limit(lane)
     if type(credits) is not int or credits <= 0 or credits > limit:
         raise CreditBudgetReached("Helius daily credit budget reached")
     with connection() as database:
@@ -55,6 +65,7 @@ def budget_status(*, at: datetime) -> dict[str, Any]:
     used = row["reserved_credits"] if row else 0
     return {
         "daily_limit": credit_limit(),
+        "price_reserve": credit_limit() - lane_limit("other"),
         "reserved_credits": used,
         "remaining_credits": max(0, credit_limit() - used),
         "day": at.date().isoformat(),

@@ -16,7 +16,7 @@ from typing import Any
 from runner_watch.ingestion import SourceFetch
 from runner_watch.xml_security import read_limited
 from runner_web.db import connection
-from runner_web.helius_discovery import RPC_URL, Rpc, rpc_request
+from runner_web.helius_discovery import RPC_URL, Rpc, price_request, rpc_request
 from runner_web.ingestion import record_source_fetch
 from runner_web.memecoin_chain_ingestion import collect_chain as discover_pools
 from runner_web.memecoin_chain_parser import coin_search_rank, short_address
@@ -542,6 +542,18 @@ def is_memecoin_view(path: str) -> bool:
     )
 
 
+_AUTOMATED_AGENT = re.compile(
+    r"bot|crawl|spider|slurp|preview|monitor|uptime|headless|curl|wget|python|httpx|go-http",
+    re.IGNORECASE,
+)
+
+
+def is_automated_agent(user_agent: str) -> bool:
+    """Crawlers, link previews and uptime checks: no one is reading, so no view."""
+
+    return not user_agent or bool(_AUTOMATED_AGENT.search(user_agent))
+
+
 def view_note_due(now: float) -> bool:
     """Whether this process should record a view now (once a minute at most)."""
 
@@ -984,7 +996,8 @@ def _collect_helius(
             chain = chain_prices(
                 [item for item in allowed.values() if item.get("venue") != "bonding_curve"],
                 curves,
-                rpc=rpc or rpc_request,
+                # Prices spend from their own lane, which other reads cannot use up.
+                rpc=rpc or price_request,
             )
         except Exception:
             LOG.warning("Chain prices failed; quoting from GeckoTerminal", exc_info=True)
