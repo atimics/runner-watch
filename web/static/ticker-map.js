@@ -200,20 +200,28 @@
     return [...people.values()];
   }
   function buildScene(event) {
-    const all = peopleFor(subset());
+    const people = peopleFor(subset());
+    const magnitude = event => event.view === 'ownership' ? event.percent : event.value;
+    const maxAmount = view => Math.max(0, ...people.map(p => p.events[0]).filter(e => e.view === view).map(e => finiteAmount(magnitude(e)) ? magnitude(e) : 0));
+    const radiusOf = person => {
+      const first = person.events[0], top = maxAmount(first.view);
+      return finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (top ? magnitude(first) / top : 0)) : 16;
+    };
+    // The biggest nodes sit nearest the centre, as on the entity map: the size a
+    // node is drawn at also sets its place.
+    const all = people.map((person, order) => ({person, order, radius: radiusOf(person)}))
+      .sort((a, b) => b.radius - a.radius || a.order - b.order).map(entry => entry.person);
     // Every wallet sits on the ring, never a page of it. Past eight the ring
     // becomes the wallet map's spiral, opened on its first turn.
     const shown = all, spiral = all.length > 8;
     const {cx, cy} = metrics(), rx = small.matches ? 150 : 270, ry = 150;
-    const magnitude = event => event.view === 'ownership' ? event.percent : event.value;
-    const maxAmount = view => Math.max(0, ...all.map(p => p.events[0]).filter(e => e.view === view).map(e => finiteAmount(magnitude(e)) ? magnitude(e) : 0));
     return shown.map((person, i) => {
-      const angle = -Math.PI / 2 + i * Math.PI * 2 / (spiral ? 8 : Math.max(1, shown.length)), scale = spiral ? 1 + i / 12 : 1;
+      const angle = window.EntityMapNavigation.spiralAngle(i, shown.length), scale = spiral ? 1 + i / 12 : 1;
       const x = cx + rx * scale * Math.cos(angle);
       const y = cy + ry * scale * Math.sin(angle);
       const first = person.events[0];
       const tones = new Set(person.events.map(e => e.tone));
-      return {id:person.id, wallet_id:person.wallet_id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (maxAmount(first.view) ? magnitude(first)/maxAmount(first.view) : 0)) : 16, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
+      return {id:person.id, wallet_id:person.wallet_id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:radiusOf(person), tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
     });
   }
   function drawScene(nodes) {

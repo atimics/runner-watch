@@ -1,5 +1,6 @@
 """Entity maps retain every holding through orbit, spiral, pan and zoom."""
 
+import math
 import re
 from pathlib import Path
 
@@ -171,6 +172,19 @@ def test_all_holdings_orbit_in_size_order_and_keep_their_distance(page, width, c
     assert all(after == pytest.approx(before) for before, after in distances)
     if count > 8:
         assert all(a[1] < b[1] for a, b in zip(distances, distances[1:], strict=False))
+        # Each turn is staggered: no two holdings share a ray from the centre.
+        rays = graph.evaluate(
+            r"""graph => {
+              const [cx,cy] = graph.dataset.orbitCenter.split(',').map(Number);
+              const [rx,ry] = graph.dataset.orbitTrack.split(',').map(Number);
+              return [...graph.querySelectorAll('[data-entity-stock]')].map(node => {
+                const [x,y] = node.dataset.orbitAnchor.split(',').map(Number);
+                return Math.atan2((y-cy)/ry,(x-cx)/rx);
+              });
+            }"""
+        )
+        gaps = sorted((b - a) % (2 * math.pi) for a in rays for b in rays if a != b)
+        assert gaps[0] > 0.1
         assert float(graph.get_attribute("data-zoom")) > 1
     canvas = graph.bounding_box()
     for link in links.all()[:8]:
