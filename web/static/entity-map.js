@@ -132,7 +132,7 @@
     const nodes = svg('g', {class:'entity-stocks'});
     graph.append(edges,nodes);
     stocks.forEach((stock,index) => {
-      const angle = -Math.PI/2 + index*Math.PI*2/(spiral ? 8 : Math.max(1,stocks.length));
+      const angle = window.EntityMapNavigation.spiralAngle(index,stocks.length);
       const scale = scaleAt(index);
       const x = cx + rx*scale*Math.cos(angle), y = cy + ry*scale*Math.sin(angle);
       const indicator = stockGlyph(stock);

@@ -133,7 +133,7 @@
     }
     const positions = new Map([['launch',{x:cx,y:cy}]]);
     all.forEach((n,i) => {
-      const angle = -Math.PI/2 + i*Math.PI*2/(spiral ? 8 : Math.max(1,all.length)), scale = scaleAt(i);
+      const angle = window.EntityMapNavigation.spiralAngle(i,all.length), scale = scaleAt(i);
       positions.set(n.id,{x:cx+rx*scale*Math.cos(angle),y:cy+ry*scale*Math.sin(angle)});
     });
     (frame?.edges || []).forEach(edge => {const a=positions.get(edge.source),b=positions.get(edge.target); if(a&&b) graph.append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:`map-edge ${edge.role === 'bought' ? 'up' : edge.role === 'sold' ? 'down' : ''}`,'vector-effect':'non-scaling-stroke','data-orbit':''}));});

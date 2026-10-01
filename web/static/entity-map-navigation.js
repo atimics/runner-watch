@@ -94,5 +94,14 @@
     window.addEventListener('blur',()=>{pointers.clear();graph.classList.remove('orbit-interacting');});
     return {fit,zoom};
   }
-  window.EntityMapNavigation = {attach};
+  // Where node `index` of `count` sits on the ring, or on the spiral past eight.
+  // Each turn of the spiral is turned by a golden fraction of the step, so no two
+  // turns share a ray and the lines from the centre never run along one another.
+  const STEP = 8, GOLDEN = 0.381966;
+  function spiralAngle(index, count) {
+    if (count <= STEP) return -Math.PI/2 + index*Math.PI*2/Math.max(1,count);
+    const turn = Math.floor(index/STEP), place = index%STEP + turn*GOLDEN;
+    return -Math.PI/2 + place*Math.PI*2/STEP;
+  }
+  window.EntityMapNavigation = {attach,spiralAngle};
 })();

@@ -200,6 +200,16 @@ def test_every_wallet_sits_on_the_ring_and_none_on_a_page(page, tmp_path):
         assert ((x - 380) / (270 * scale)) ** 2 + ((y - 218) / (150 * scale)) ** 2 == pytest.approx(
             1
         )
+    # Each turn is staggered: no two wallets share a ray, so no line runs along another.
+    rays = [math.atan2((y - 218) / 150, (x - 380) / 270) for x, y in positions]
+    gaps = sorted((b - a) % (2 * math.pi) for a in rays for b in rays if a != b)
+    assert gaps[0] > 0.1
+    # The biggest nodes sit nearest the centre: size never grows with distance.
+    radii = page.locator("[data-person]").evaluate_all(
+        "nodes => nodes.map(n => Number(n.querySelector(':scope > circle').getAttribute('r')))"
+    )
+    assert radii == sorted(radii, reverse=True)
+    assert radii[0] > radii[-1]
     # The first turn is the unit ring; the rest spiral outward from it.
     assert [round(((x - 380) / 270) ** 2 + ((y - 218) / 150) ** 2) for x, y in positions[:1]] == [1]
     assert page.locator("[data-map-graph]").evaluate("g => Number(g.dataset.zoom)") > 1
