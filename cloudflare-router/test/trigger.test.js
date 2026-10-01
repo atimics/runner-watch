@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { appJwt, dispatchWorkflow, notify, tick, WINDOW_MS } from "../src/trigger.js";
+import { appJwt, dispatchWorkflow, notify, runTimer, tick, WINDOW_MS } from "../src/trigger.js";
 import { appEnv, CasBucket, githubStub } from "../testing/helpers.js";
 
 let stub;
@@ -108,4 +108,40 @@ test("if every compare-and-swap loses, nothing is started and nothing throws", a
   assert.equal(await notify(env, T0), false);
   assert.equal(await tick(env, T0), false);
   assert.equal(stub.dispatches(), 0, "a run was started without recording whose turn it was");
+});
+
+const beat = async (env) => JSON.parse(await (await env.AUDITS.get("control/last-tick.json")).text());
+
+test("every timer tick leaves a heartbeat that says what it did", async () => {
+  stub = githubStub();
+  const { env } = await appEnv();
+  assert.equal(await runTimer(env, T0), "nothing pending");
+  assert.deepEqual(await beat(env), { at: new Date(T0).toISOString(), result: "nothing pending" });
+
+  await notify(env, T0 + 1000); // starts at once and records the start
+  await notify(env, T0 + 2000); // marked pending only
+  assert.equal(await runTimer(env, T0 + 60_000), "waiting for the window");
+  assert.equal((await beat(env)).result, "waiting for the window");
+
+  assert.equal(await runTimer(env, T0 + 1000 + WINDOW_MS), "started");
+  assert.equal(stub.dispatches(), 2);
+  assert.equal((await beat(env)).result, "started");
+});
+
+test("a refused start is named in the heartbeat and retried on the next tick", async () => {
+  const { env } = await appEnv({ "control/access-sync.json": JSON.stringify({ pending: true, lastDispatch: 0 }) });
+  stub = githubStub({ failDispatch: true });
+  assert.equal(await runTimer(env, T0), "start refused or failed; will retry");
+  stub.restore();
+  stub = githubStub();
+  assert.equal(await runTimer(env, T0 + 1000), "started");
+});
+
+test("the heartbeat names a missing configuration and survives errors", async () => {
+  const bare = { AUDITS: new CasBucket() };
+  assert.equal(await runTimer(bare, T0), "GitHub App secrets missing");
+  assert.equal((await beat(bare)).result, "GitHub App secrets missing");
+  assert.equal(await runTimer({}, T0), "no bucket binding");
+  const { env } = await appEnv({ "control/access-sync.json": "not json" });
+  assert.match(await runTimer(env, T0), /^error:/);
 });

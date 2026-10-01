@@ -11,6 +11,7 @@
 
 export const WINDOW_MS = 10 * 60 * 1000;
 const CONTROL = "control/access-sync.json";
+const HEARTBEAT = "control/last-tick.json";
 const REPO = "cenetex/ratiaudit";
 const WORKFLOW = "access-sync.yml";
 const API = "https://api.github.com";
@@ -79,27 +80,35 @@ async function update(env, change) {
 }
 
 // If the window is open and work is pending, take the turn: record the start, then start the workflow.
-// A failed start gives the turn back, so the next timer tick tries again.
+// A failed start gives the turn back, so the next timer tick tries again. Returns what happened, in words.
 async function startIfDue(env, nowMs) {
   let previous = 0;
-  let mine = false;
+  let reason = "lost the race";
   const taken = await update(env, (state) => {
-    mine = false;
-    if (!state.pending || nowMs - (state.lastDispatch || 0) < WINDOW_MS) return null;
+    if (!state.pending) {
+      reason = "nothing pending";
+      return null;
+    }
+    if (nowMs - (state.lastDispatch || 0) < WINDOW_MS) {
+      reason = "waiting for the window";
+      return null;
+    }
     previous = state.lastDispatch || 0;
-    mine = true;
+    reason = "taken";
     return { pending: false, lastDispatch: nowMs };
   });
   // update() gives up (null) when every compare-and-swap lost: then the turn was never recorded, so it is not ours.
-  if (taken === null || !mine) return false;
+  if (taken === null) return "could not record the turn";
+  if (reason !== "taken") return reason;
   let started = false;
   try {
     started = await dispatchWorkflow(env, nowMs);
   } catch {
     started = false;
   }
-  if (!started) await update(env, (state) => ({ ...state, pending: true, lastDispatch: previous }));
-  return started;
+  if (started) return "started";
+  await update(env, (state) => ({ ...state, pending: true, lastDispatch: previous }));
+  return "start refused or failed; will retry";
 }
 
 // Something was submitted. Never throws: a failure here must not fail the submission.
@@ -107,7 +116,7 @@ export async function notify(env, nowMs = Date.now()) {
   if (!env.AUDITS || !configured(env)) return false;
   try {
     await update(env, (state) => (state.pending ? null : { ...state, pending: true }));
-    return await startIfDue(env, nowMs);
+    return (await startIfDue(env, nowMs)) === "started";
   } catch {
     return false;
   }
@@ -117,8 +126,29 @@ export async function notify(env, nowMs = Date.now()) {
 export async function tick(env, nowMs = Date.now()) {
   if (!env.AUDITS || !configured(env)) return false;
   try {
-    return await startIfDue(env, nowMs);
+    return (await startIfDue(env, nowMs)) === "started";
   } catch {
     return false;
   }
+}
+
+// What the ten-minute timer runs: the same as tick(), and it always leaves a heartbeat saying what happened,
+// so a timer that is not firing, or fires and does nothing, can be told apart from one that works.
+export async function runTimer(env, nowMs = Date.now()) {
+  let result;
+  try {
+    if (!env.AUDITS) result = "no bucket binding";
+    else if (!configured(env)) result = "GitHub App secrets missing";
+    else result = await startIfDue(env, nowMs);
+  } catch (error) {
+    result = `error: ${error.message}`;
+  }
+  try {
+    await env.AUDITS?.put(HEARTBEAT, JSON.stringify({ at: new Date(nowMs).toISOString(), result }), {
+      httpMetadata: { contentType: "application/json" },
+    });
+  } catch {
+    // The heartbeat is a courtesy; it must not make the timer fail.
+  }
+  return result;
 }
