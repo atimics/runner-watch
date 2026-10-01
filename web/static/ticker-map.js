@@ -64,13 +64,18 @@
   const interestsLayer = svg('g', {class:'map-interests'});
   graph.append(peopleLayer, interestsLayer, ringLayer);
   window.ratiOrbit?.attach(graph);
+  const navigation = window.EntityMapNavigation.attach(graph);
   let pinned = null, hovered = null, focused = null;
   let events = [], cursor = null, selected = null;
-  let cutoff = Infinity, page = 0, pending = false, filingsPageNumber = 0;
+  let cutoff = Infinity, pending = false, filingsPageNumber = 0, fitted = null;
   let ringDirty = true, scene = [], animation = 0, generation = 0;
   const small = window.matchMedia('(max-width:500px)');
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const pageSize = () => small.matches ? 4 : 12;
+  // Wallets whose other holdings are fetched: the first turn of the ring, not every node.
+  const INTEREST_LIMIT = 12;
+  // Older filings are read on in turn, up to this many requests, so the ring holds
+  // the whole record for most stocks; the button covers the rest.
+  const AUTO_LOADS = 10;
   const FILINGS_PAGE_SIZE = 5;
   const ANIMATION_MS = 320;
   const subset = () => events.filter(e => (Date.parse(e.filed_at) || 0) <= cutoff);
@@ -195,16 +200,17 @@
     return [...people.values()];
   }
   function buildScene(event) {
-    const size = pageSize();
     const all = peopleFor(subset());
-    const shown = all.slice(page*size, page*size + size);
+    // Every wallet sits on the ring, never a page of it. Past eight the ring
+    // becomes the wallet map's spiral, opened on its first turn.
+    const shown = all, spiral = all.length > 8;
+    const {cx, cy} = metrics(), rx = small.matches ? 150 : 270, ry = 150;
     const magnitude = event => event.view === 'ownership' ? event.percent : event.value;
     const maxAmount = view => Math.max(0, ...all.map(p => p.events[0]).filter(e => e.view === view).map(e => finiteAmount(magnitude(e)) ? magnitude(e) : 0));
     return shown.map((person, i) => {
-      const left = i % 2 === 0;
-      const angle = -Math.PI / 2 + i * Math.PI * 2 / shown.length;
-      const x = small.matches ? (left ? 85 : 275) : 380 + 270 * Math.cos(angle);
-      const y = small.matches ? 64 + Math.floor(i/2)*210 : 218 + 150 * Math.sin(angle);
+      const angle = -Math.PI / 2 + i * Math.PI * 2 / (spiral ? 8 : Math.max(1, shown.length)), scale = spiral ? 1 + i / 12 : 1;
+      const x = cx + rx * scale * Math.cos(angle);
+      const y = cy + ry * scale * Math.sin(angle);
       const first = person.events[0];
       const tones = new Set(person.events.map(e => e.tone));
       return {id:person.id, wallet_id:person.wallet_id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (maxAmount(first.view) ? magnitude(first)/maxAmount(first.view) : 0)) : 16, tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
@@ -214,12 +220,11 @@
     peopleLayer.replaceChildren();
     const {cx, cy} = metrics();
     graph.dataset.orbitCenter = `${cx},${cy}`;
-    // Desktop wallets sit on this ellipse; nodes travel along it so the ring
-    // stays put instead of swinging around with them. Mobile stacks columns,
-    // so it stays still.
-    if (small.matches) delete graph.dataset.orbitTrack;
-    else graph.dataset.orbitTrack = '270,150';
-    const orbiting = !small.matches;
+    // Wallets sit on this ellipse (a spiral past eight); nodes travel along it so
+    // the ring stays put instead of swinging around with them.
+    graph.dataset.orbitTrack = small.matches ? '150,150' : '270,150';
+    graph.dataset.layout = nodes.length > 8 ? 'spiral' : 'ring';
+    const orbiting = true;
     nodes.forEach(node => {
       const opacity = node.opacity ?? 1;
       node.events.forEach((event, index) => {
@@ -318,8 +323,7 @@
     finally {interestRequests.delete(controller);}
   }
   function loadVisibleInterests() {
-    const shown = peopleFor(subset()).slice(page*pageSize(),(page+1)*pageSize());
-    shown.forEach(loadInterests);
+    peopleFor(subset()).slice(0, INTEREST_LIMIT).forEach(loadInterests);
   }
   window.addEventListener('pagehide',()=>interestRequests.forEach(controller=>controller.abort()));
 
@@ -334,13 +338,20 @@
       return {...start, opacity:1 - t};
     });
   }
+  // Fit the view to the ring once per layout, so a redraw keeps the reader's zoom.
+  function fitScene(count) {
+    const layout = `${small.matches}:${count > 8 ? count : 0}`;
+    if (layout === fitted) return;
+    fitted = layout;
+    const {cx, cy} = metrics(), rx = small.matches ? 150 : 270, ry = 150, spiral = count > 8;
+    const scaleAt = index => spiral ? 1 + index / 12 : 1;
+    const extent = scaleAt(Math.max(0, count - 1)), margin = 96;
+    navigation.fit({x:cx-rx*extent-margin, y:cy-ry*extent-margin, width:2*(rx*extent+margin), height:2*(ry*extent+margin)});
+    if (spiral) navigation.zoom((rx*extent+margin)/(rx*scaleAt(7)+margin));
+  }
   function renderPeople(event, animate, restoreFocus, focusSelector) {
-    const people = peopleFor(subset()), size = pageSize();
-    page = Math.min(page, Math.max(0, Math.ceil(people.length / size) - 1));
     const target = buildScene(event);
-    $('paging').hidden = people.length <= size;
-    $('page').textContent = people.length ? `${page*size+1}–${page*size+target.length} of ${people.length} wallets` : '';
-    $('previous').disabled = page === 0; $('next').disabled = (page+1)*size >= people.length;
+    fitScene(target.length);
     const duration = animate && !motion.matches && scene.length ? ANIMATION_MS : 0;
     cancelAnimationFrame(animation);
     const run = ++generation, first = scene, start = performance.now();
@@ -383,8 +394,6 @@
       const at = events.findIndex(row => row.id === event.id);
       if (at >= 0) filingsPageNumber = Math.floor(at / FILINGS_PAGE_SIZE);
     }
-    const people = peopleFor(subset()), at = people.findIndex(p => p.id === (personId || event?.people[0]?.id));
-    if (at >= 0) page = Math.floor(at / pageSize());
     ringDirty = true;
     render(false, true);
   }
@@ -393,8 +402,6 @@
     selected = event.id;
     if (Number.isFinite(time) && time !== cutoff) {
       cutoff = time;
-      const people = peopleFor(subset()), at = people.findIndex(p => p.events.some(row => row.id === event.id));
-      page = at >= 0 ? Math.floor(at / pageSize()) : 0;
     }
     const at = events.findIndex(row => row.id === event.id);
     if (at >= 0) filingsPageNumber = Math.floor(at / FILINGS_PAGE_SIZE);
@@ -402,7 +409,6 @@
     $('events').querySelector(`[data-event-id="${CSS.escape(event.id)}"]`)?.focus({preventScroll:true});
   }
   function render(restoreFocus = true, animate = true) {
-    graph.setAttribute('viewBox', small.matches ? '0 0 360 350' : '0 0 760 440');
     const active = document.activeElement;
     const focusSelector = active?.hasAttribute('data-score-key') ? `[data-score-key="${CSS.escape(active.dataset.scoreKey)}"]` : active?.hasAttribute('data-person') ? `[data-person="${CSS.escape(active.dataset.person)}"]` : active?.hasAttribute('data-map-score-center') ? '[data-map-score-center]' : active?.hasAttribute('data-event-id') ? `[data-event-id="${CSS.escape(active.dataset.eventId)}"]` : null;
     if (ringDirty) { drawRing(); ringDirty = false; }
@@ -415,26 +421,28 @@
   }
   async function load() {
     if (pending) return; pending = true; $('load').disabled = true;
-    $('status').textContent = events.length ? 'Loading older filings…' : 'Loading saved SEC filings…';
+    let loads = 0;
     try {
-      const res = await fetch(`/api/stocks/${encodeURIComponent(root.dataset.ticker)}/map${cursor ? '?cursor='+encodeURIComponent(cursor) : ''}`,{headers:{Accept:'application/json'}});
-      if (!res.ok) throw new Error('load');
-      const data = await res.json(); if (data.ticker !== root.dataset.ticker) throw new Error('subject');
-      const unique = new Map(events.map(e => [e.id,e])); data.events.forEach(e => unique.set(e.id,e));
-      events = [...unique.values()].sort((a,b) => Date.parse(b.filed_at)-Date.parse(a.filed_at) || b.id.localeCompare(a.id));
-      cursor = data.next_cursor;
-      $('load').hidden = !cursor; $('load').textContent = 'Load older filings';
-      $('status').textContent = '';
-      render(false, true);
+      do {
+        $('status').textContent = events.length ? 'Loading older filings…' : 'Loading saved SEC filings…';
+        const res = await fetch(`/api/stocks/${encodeURIComponent(root.dataset.ticker)}/map${cursor ? '?cursor='+encodeURIComponent(cursor) : ''}`,{headers:{Accept:'application/json'}});
+        if (!res.ok) throw new Error('load');
+        const data = await res.json(); if (data.ticker !== root.dataset.ticker) throw new Error('subject');
+        const unique = new Map(events.map(e => [e.id,e])); data.events.forEach(e => unique.set(e.id,e));
+        events = [...unique.values()].sort((a,b) => Date.parse(b.filed_at)-Date.parse(a.filed_at) || b.id.localeCompare(a.id));
+        cursor = data.next_cursor;
+        $('load').hidden = !cursor; $('load').textContent = 'Load older filings';
+        $('status').textContent = '';
+        render(false, true);
+      } while (cursor && ++loads < AUTO_LOADS);
     } catch (_) { $('status').textContent = 'Please retry to load the saved filings.'; $('load').hidden = false; $('load').textContent = 'Retry loading filings'; }
     finally {pending = false; $('load').disabled = false;}
   }
   $('filings-previous').addEventListener('click',() => {filingsPageNumber--;renderFilings();}); $('filings-next').addEventListener('click',() => {filingsPageNumber++;renderFilings();});
-  $('previous').addEventListener('click',() => {page--;render(true,true);}); $('next').addEventListener('click',() => {page++;render(true,true);});
   $('load').addEventListener('click',load);
   $('score-return').addEventListener('click', overview);
   root.addEventListener('keydown', event => {if (event.key === 'Escape' && (pinned || selected)) {event.preventDefault(); overview();}});
-  small.addEventListener('change',() => {page = 0; ringDirty = true; render(false,false);});
+  small.addEventListener('change',() => {ringDirty = true; render(false,false);});
   motion.addEventListener('change', () => render(false,false));
   screenNode?.addEventListener('rati:screen-detail', event => {
     const next = event.detail;

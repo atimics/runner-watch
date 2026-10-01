@@ -19,6 +19,9 @@ from runner_web.wallet_registry import register_people as register_wallet_people
 from runner_web.wallet_registry import register_person as register_wallet_person
 from runner_web.wallet_registry import wallet as resolve_wallet
 
+# Stocks given a price and score on an entity page, newest filing first.
+ENTITY_ENRICHED = 60
+
 
 @dataclass(frozen=True)
 class WalletRouteDependencies:
@@ -148,7 +151,7 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
 
         from runner_web.entity_view import entity_view
         from runner_web.market_screens import listing
-        from runner_web.stock_map import person_connections
+        from runner_web.stock_map import entity_events, person_connections
 
         dependencies.enforce_rate(request, "stock-wallet", limit=60, seconds=60)
         resolved = resolve_wallet(wallet_id)
@@ -166,9 +169,24 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
             (entry for event in events for entry in event["people"] if entry["id"] == person_id),
             {"name": "Wallet", "id": person_id},
         )
-        stocks = sorted({event["ticker"] for event in events})
+        # The map and the tracked worth read the whole record (up to a bound), not
+        # the page of events listed below; older events only extend the list.
+        try:
+            map_events, complete = entity_events(
+                scope, person_id, connections if not cursor else None
+            )
+        except ValueError as exc:
+            raise HTTPException(400, "Invalid wallet request") from exc
+        if cursor:
+            map_events = list({event["id"]: event for event in [*events, *map_events]}.values())
+        newest = sorted(map_events, key=lambda event: event["filed_at"], reverse=True)
+        stocks = list(dict.fromkeys(event["ticker"] for event in newest))
+        # Prices and scores are looked up for the newest stocks only; the rest
+        # stay on the map as holdings without a value.
         items = [
-            dependencies.direct_ticker_item(symbol, []) or {"ticker": symbol} for symbol in stocks
+            (dependencies.direct_ticker_item(symbol, []) if index < ENTITY_ENRICHED else None)
+            or {"ticker": symbol}
+            for index, symbol in enumerate(stocks)
         ]
         screen = listing("stocks", items)
         return dependencies.templates.TemplateResponse(
@@ -184,7 +202,7 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
                 wallet_cursor=connections["next_cursor"],
                 wallet_ticker=scope,
                 wallet_id=wallet_id,
-                entity=entity_view(events, items, person_id),
+                entity={**entity_view(map_events, items, person_id), "complete": complete},
             ),
         )
 

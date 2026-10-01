@@ -424,6 +424,33 @@ def person_connections(
     }
 
 
+ENTITY_MAX_PAGES = 5
+
+
+def entity_events(
+    ticker: str, person_id: str, first: dict[str, Any] | None = None
+) -> tuple[list[dict[str, Any]], bool]:
+    """Every event the entity map and tracked worth are drawn from, newest first.
+
+    Reads the connection pages in turn, up to ENTITY_MAX_PAGES (200 candidate
+    filings each), so the map is not just the first page of a long record. The
+    flag says whether the whole record was read. `first` is an already-read
+    first page, so the caller does not read it twice.
+    """
+
+    page = first or person_connections(ticker, person_id)
+    events = list(page["events"])
+    cursor = page["next_cursor"]
+    pages = 1
+    while cursor and pages < ENTITY_MAX_PAGES:
+        page = person_connections(ticker, person_id, cursor)
+        events.extend(page["events"])
+        cursor = page["next_cursor"]
+        pages += 1
+    unique = {event["id"]: event for event in events}
+    return list(unique.values()), cursor is None
+
+
 def restore_archived_map_evidence(limit: int = 20) -> int:
     """Replay a bounded batch of saved XML documents during the collector cycle."""
     restored = 0

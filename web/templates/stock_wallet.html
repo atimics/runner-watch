@@ -8,7 +8,7 @@
 <section class="entity-worth" aria-label="Tracked worth">
 <p class="eyebrow">Tracked worth</p>
 <strong class="entity-worth-value">{{ '$' ~ '{:,.0f}'.format(entity.value) if entity.value is not none else '—' }}</strong>
-<p class="wallet-scope">{{ entity.basis }} · {{ entity.covered }} of {{ entity.tracked }} stocks valued · Loaded filings</p>
+<p class="wallet-scope">{{ entity.basis }} · {{ entity.covered }} of {{ entity.tracked }} stocks valued · {{ 'All filings read' if entity.complete else 'Newest filings only: older ones are not counted' }}</p>
 <svg class="entity-worth-chart" viewBox="0 0 760 180" role="img" aria-label="Reported holdings at latest saved prices over filing dates" hidden></svg>
 <p class="wallet-scope" data-worth-pending hidden>Tracked worth appears as holdings and prices arrive.</p>
 <p class="wallet-scope" data-worth-date></p>

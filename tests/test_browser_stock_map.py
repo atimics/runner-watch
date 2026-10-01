@@ -70,6 +70,7 @@ def open_map(
     states=None,
     history=None,
     connections_handler=None,
+    older=False,
 ):
     page.set_viewport_size({"width": width, "height": 900})
     page.emulate_media(reduced_motion="reduce")
@@ -114,6 +115,8 @@ def open_map(
         lambda route: route.fulfill(json={**screen, "points": screen.get("series") or []}),
     )
     data = map_payload()
+    if not older:
+        data = {**data, "next_cursor": None}
     page.route("**/api/stocks/TEST/map", map_handler or (lambda route: route.fulfill(json=data)))
     old = filing_events(filing_row("old", filed_at="2026-08-01T18:00:00Z"))
     page.route(
@@ -137,7 +140,7 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width, tm
     open_map(page, width)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     expect(page.locator("[data-map-graph]")).to_be_visible()
-    expect(page.locator("[data-person]")).to_have_count(4 if width <= 500 else 11)
+    expect(page.locator("[data-person]")).to_have_count(11)
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
@@ -165,12 +168,9 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width, tm
         "href", re.compile(r"^https://www\.sec\.gov/Archives/edgar/data/")
     )
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
-    if width <= 500:
-        page.get_by_role("button", name="Next wallets").click()
-        expect(page.locator("[data-person]")).to_have_count(4)
-    else:
-        expect(page.locator("[data-map-page]")).to_have_text("1–11 of 11 wallets")
-        expect(page.locator("[data-map-paging]")).to_be_hidden()
+    # Every wallet is on the ring; there is no page of wallets to turn.
+    expect(page.locator("[data-person]")).to_have_count(11)
+    expect(page.get_by_role("button", name="Next wallets")).to_have_count(0)
     page.get_by_role("button", name="Next filings").click()
     expect(page.locator("[data-map-filings-page]")).to_have_text("6–10 of 11")
     page.locator("[data-map-events] button").first.click()
@@ -178,13 +178,15 @@ def test_ticker_map_layout_keyboard_sources_and_shared_selection(page, width, tm
     assert not errors
 
 
-def test_desktop_wallets_fill_one_orbit_before_paging(page, tmp_path):
+def test_every_wallet_sits_on_the_ring_and_none_on_a_page(page, tmp_path):
     open_map(page, 1280)
 
     expect(page.locator("[data-person]")).to_have_count(11)
     expect(page.locator("[data-person].dense")).to_have_count(11)
-    expect(page.locator("[data-map-page]")).to_have_text("1–11 of 11 wallets")
-    expect(page.locator("[data-map-paging]")).to_be_hidden()
+    expect(page.get_by_role("button", name="Next wallets")).to_have_count(0)
+    expect(page.locator("[data-map-paging]")).to_have_count(0)
+    # Past eight the ring becomes the wallet map's spiral, as on the coin page.
+    expect(page.locator("[data-map-graph]")).to_have_attribute("data-layout", "spiral")
 
     positions = page.locator("[data-person]").evaluate_all(
         """nodes => nodes.map(node => {
@@ -193,13 +195,23 @@ def test_desktop_wallets_fill_one_orbit_before_paging(page, tmp_path):
         })"""
     )
     assert len(set(map(tuple, positions))) == 11
-    for x, y in positions:
-        assert ((x - 380) / 270) ** 2 + ((y - 218) / 150) ** 2 == pytest.approx(1)
-    assert min(x for x, _ in positions) < 120
-    assert max(x for x, _ in positions) > 640
-    assert min(y for _, y in positions) == pytest.approx(68)
-    assert max(y for _, y in positions) > 360
+    for index, (x, y) in enumerate(positions):
+        scale = 1 + index / 12
+        assert ((x - 380) / (270 * scale)) ** 2 + ((y - 218) / (150 * scale)) ** 2 == pytest.approx(
+            1
+        )
+    # The first turn is the unit ring; the rest spiral outward from it.
+    assert [round(((x - 380) / 270) ** 2 + ((y - 218) / 150) ** 2) for x, y in positions[:1]] == [1]
+    assert page.locator("[data-map-graph]").evaluate("g => Number(g.dataset.zoom)") > 1
     page.locator("[data-map-graph]").screenshot(path=str(tmp_path / "wallet-orbit.png"))
+
+
+def test_a_small_ring_holds_every_wallet_too(page):
+    open_map(page, 390)
+
+    expect(page.locator("[data-person]")).to_have_count(11)
+    expect(page.get_by_role("button", name="Next wallets")).to_have_count(0)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
 def _oldest_filing(page: Page) -> None:
@@ -225,8 +237,6 @@ def test_clicking_a_filing_scrubs_the_map(page):
     oldest.click()
     expect(oldest).to_have_attribute("aria-pressed", "true")
     expect(page.locator("[data-person]")).to_have_count(1)
-    expect(page.locator("[data-map-page]")).to_have_text("1–1 of 1 wallets")
-    expect(page.locator("[data-map-paging]")).to_be_hidden()
     expect(page.locator("[data-map-selection] h3")).not_to_have_text(re.compile(r"^\d+$"))
     expect(page.locator(".chart-filing-marker")).to_have_count(1)
     assert (
@@ -236,14 +246,18 @@ def test_clicking_a_filing_scrubs_the_map(page):
         == geometry
     )
 
-    page.get_by_role("button", name="Load older filings").click()
-    expect(page.locator("[data-map-filings-page]")).to_have_text("11–12 of 12")
-    expect(page.locator("[data-person]")).to_have_count(1)
-
     page.get_by_role("button", name="Return to score overview").click()
     expect(page.locator(".map-center-score")).to_have_text("45")
     expect(page.locator("[data-map-events] [aria-pressed=true]")).to_have_count(0)
     expect(page.locator("[data-person][aria-pressed=true]")).to_have_count(0)
+
+
+def test_older_filings_are_read_on_without_a_click(page):
+    open_map(page, older=True)
+
+    expect(page.locator("[data-map-filings-page]")).to_have_text("1–5 of 12")
+    expect(page.get_by_role("button", name="Load older filings")).to_be_hidden()
+    expect(page.locator("[data-person]")).to_have_count(11)
 
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
@@ -556,10 +570,7 @@ def test_live_refresh_preserves_wallets_selection_and_updates_metadata_only(page
             page.clock.fast_forward(60000)
 
     page.get_by_role("button", name="Next filings").click()
-    if width <= 500:
-        page.get_by_role("button", name="Next wallets").click()
     page.locator(".map-edge").first.dispatch_event("click")
-    wallet_page = page.locator("[data-map-page]").text_content()
     filing_page = page.locator("[data-map-filings-page]").text_content()
     title = page.locator("[data-map-selection] h3").text_content()
     page.evaluate("window.savedPerson = document.querySelector('[data-person]')")
@@ -582,7 +593,6 @@ def test_live_refresh_preserves_wallets_selection_and_updates_metadata_only(page
     poll()
     expect(risk).to_have_count(0)
     expect(page.locator("[data-map-score-center]")).to_be_focused()
-    expect(page.locator("[data-map-page]")).to_have_text(wallet_page)
     expect(page.locator("[data-map-filings-page]")).to_have_text(filing_page)
     page.locator('[data-score-key="evidence"]').press("Enter")
     source.update(score=80)
@@ -832,6 +842,7 @@ def test_wallet_opens_portfolio_and_repeated_events_share_one_bubble(page):
     data = map_payload()
     base = data["events"][0]
     data["events"] = [base, {**base, "id": "second", "action": "Sold", "tone": "down"}]
+    data["next_cursor"] = None
     open_map(page, map_handler=lambda route: route.fulfill(json=data))
     expect(page.locator("[data-person]")).to_have_count(1)
     expect(page.locator(".map-edge")).to_have_count(2)
