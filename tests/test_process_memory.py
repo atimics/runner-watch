@@ -87,3 +87,26 @@ def test_heap_figures_are_absent_without_glibc(monkeypatch):
 
     assert process_memory.heap_mb() is None
     process_memory.trim_heap()  # nothing to trim, and no error
+
+
+def test_the_trace_names_the_lines_holding_and_adding_memory(monkeypatch, caplog):
+    import tracemalloc
+
+    monkeypatch.setattr(process_memory, "_traced_before", {})
+    tracemalloc.start(1)
+    try:
+        held = [bytearray(1024) for _ in range(2000)]
+        with caplog.at_level(logging.WARNING, logger="runner_web.process_memory"):
+            process_memory.log_trace()
+    finally:
+        tracemalloc.stop()
+    assert held
+    assert "memory_trace traced_mb=" in caplog.text
+    assert "test_process_memory.py:" in caplog.text
+
+
+def test_no_trace_line_unless_tracing(caplog):
+    with caplog.at_level(logging.WARNING, logger="runner_web.process_memory"):
+        process_memory.log_trace()
+
+    assert "memory_trace" not in caplog.text

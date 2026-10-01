@@ -15,6 +15,7 @@ import os
 import resource
 import sys
 import time
+import tracemalloc
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -26,6 +27,12 @@ GROWTH_LOG_MB = max(1.0, float(os.getenv("WORKER_MEMORY_GROWTH_LOG_MB", "25")))
 TREND_LOG_SECONDS = max(30.0, float(os.getenv("WORKER_MEMORY_TREND_SECONDS", "300")))
 
 _last_trend_at: float | None = None
+# WORKER_MEMORY_TRACE=1 records where Python memory was allocated, one frame
+# deep, and the trend line names the code lines holding and adding the most.
+# It costs memory and time, so it is for an hour of diagnosis, not always on.
+TRACE = os.getenv("WORKER_MEMORY_TRACE", "0") == "1"
+TRACE_LINES = 8
+_traced_before: dict[str, int] = {}
 
 T = TypeVar("T")
 
@@ -164,7 +171,43 @@ def log_memory_trend(*, clock: Callable[[], float] = time.monotonic) -> None:
         blocks,
         _rounded(rss_mb()),
     )
+    log_trace()
+
+
+def start_trace() -> None:
+    if TRACE and not tracemalloc.is_tracing():
+        tracemalloc.start(1)
+
+
+def _trace_line(frame: tracemalloc.Frame) -> str:
+    return f"{frame.filename.rsplit('/site-packages/', 1)[-1]}:{frame.lineno}"
+
+
+def log_trace() -> None:
+    """The code lines holding the most traced memory, and those that grew most."""
+
+    global _traced_before
+    if not tracemalloc.is_tracing():
+        return
+    stats = tracemalloc.take_snapshot().statistics("lineno")
+    sizes = {_trace_line(stat.traceback[0]): stat.size for stat in stats[:500]}
+    growth = sorted(
+        ((size - _traced_before.get(line, 0), line) for line, size in sizes.items()),
+        reverse=True,
+    )
+    held = sorted(((size, line) for line, size in sizes.items()), reverse=True)
+    LOG.warning(
+        "memory_trace traced_mb=%.0f held=%s grew=%s",
+        sum(stat.size for stat in stats) / 2**20,
+        " ".join(f"{line}={size / 2**20:.1f}" for size, line in held[:TRACE_LINES]),
+        " ".join(f"{line}=+{size / 2**20:.1f}" for size, line in growth[:TRACE_LINES] if size > 0),
+    )
+    _traced_before = sizes
 
 
 def _rounded(value: float | None) -> str:
     return "unknown" if value is None else f"{value:.0f}"
+
+
+# Start as early as the process imports this, so the trace sees what loads later.
+start_trace()
