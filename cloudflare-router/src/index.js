@@ -1,4 +1,5 @@
 import { handleAudits } from "./audits.js";
+import { tick } from "./trigger.js";
 
 const UPSTREAM_HOST = "runner-watch-ratimics.fly.dev";
 const PUBLIC_HOSTS = new Set(["runners.rati.chat", "sports.rati.chat", "trust.rati.chat"]);
@@ -38,5 +39,10 @@ export default {
       redirect: "manual",
     });
     return fetch(upstreamRequest);
+  },
+
+  // The ten-minute timer (see wrangler.jsonc): start the access sync if a request is waiting.
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(tick(env));
   },
 };
