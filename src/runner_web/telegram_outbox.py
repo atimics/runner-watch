@@ -332,7 +332,8 @@ def queue_stock_filings(database, config, *, origin: str, at: datetime) -> int:
 
 # Halt Desk / Filing Desk inventory. Events older than the window are no longer
 # news, so the query stops selecting them.
-TELEGRAM_EVENT_TYPES = ("trading_halt", "news_article", "social_spike")
+# Halts are left out: the channel is for names about to run, not ones stopped.
+TELEGRAM_EVENT_TYPES = ("news_article", "social_spike")
 
 
 def _event_age_label(value, current: datetime) -> str:
@@ -408,45 +409,8 @@ def event_card(event: dict, *, origin: str) -> dict:
     }
 
 
-def _followed_halt_tickers(database, rows: list[dict]) -> set[str]:
-    """Halted tickers worth a post: ratified at the last check, or an active Call.
-
-    A halt usually ends a stock's ratification, so the state kept before the
-    halt is what says it was one the room follows.
-    """
-
-    tickers = sorted(
-        {
-            str(row.get("ticker") or "").upper()
-            for row in rows
-            if row.get("event_type") == "trading_halt"
-        }
-        - {""}
-    )
-    if not tickers:
-        return set()
-    marks = ",".join("?" for _ in tickers)
-    followed = {
-        str(row["subject"]).upper()
-        for row in database.execute(
-            "SELECT subject FROM transition_state WHERE market='stock' AND ratified=1 "
-            f"AND subject IN ({marks})",
-            tickers,
-        ).fetchall()
-    }
-    followed |= {
-        str(row["ticker"]).upper()
-        for row in database.execute(
-            f"SELECT DISTINCT ticker FROM community_calls WHERE status='active' "
-            f"AND ticker IN ({marks})",
-            tickers,
-        ).fetchall()
-    }
-    return followed
-
-
 def queue_events(database, config, *, origin: str, at: datetime) -> int:
-    """Queue halts, coverage and social spikes from the recent window."""
+    """Queue coverage and social spikes from the recent window."""
 
     cutoff = (at - timedelta(minutes=_setting("TELEGRAM_EVENT_WINDOW_MINUTES", 360))).isoformat()
     placeholders = ",".join("?" for _ in TELEGRAM_EVENT_TYPES)
@@ -457,16 +421,12 @@ def queue_events(database, config, *, origin: str, at: datetime) -> int:
         FROM public_market_events
         WHERE event_at>?
           AND event_type IN ({placeholders})
-          AND NOT (event_type='trading_halt' AND status='resume_announced')
         ORDER BY event_at DESC LIMIT 20
         """,
         (cutoff, *TELEGRAM_EVENT_TYPES),
     ).fetchall()
-    followed = _followed_halt_tickers(database, [dict(row) for row in rows])
     cards = []
     for row in rows:
-        if row["event_type"] == "trading_halt" and str(row["ticker"] or "").upper() not in followed:
-            continue
         card = event_card(_channel_event(dict(row), at), origin=origin)
         if card["text"]:
             cards.append(card)
