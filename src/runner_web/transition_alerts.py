@@ -193,6 +193,23 @@ def _stock_observations(database: Any, at: datetime) -> dict[str, dict[str, Any]
     return observed
 
 
+def _coin_ratified(rated: dict[str, Any] | None) -> bool | None:
+    """Ratified, not ratified, or unknown while a standard is unchecked and none failed.
+
+    A failed chain read leaves standards unchecked; that is not news, so it must
+    not read as a lost ratification.
+    """
+
+    if not rated:
+        return None
+    if rated.get("ratified"):
+        return True
+    standards = [item for item in rated.get("standards") or [] if isinstance(item, dict)]
+    if any(item.get("applies", True) and item.get("met") is False for item in standards):
+        return False
+    return None if rated.get("unchecked") else False
+
+
 def _memecoin_observations(database: Any, at: datetime) -> dict[str, dict[str, Any]]:
     cutoff = (at - BOARD_WINDOW).isoformat()
     observed = {}
@@ -215,7 +232,7 @@ def _memecoin_observations(database: Any, at: datetime) -> dict[str, dict[str, A
             "subject": mint,
             "coin_id": str(raw["coin_id"]),
             "tag": normalize_tag(early.get("state")),
-            "ratified": bool(rated.get("ratified")) if rated else None,
+            "ratified": _coin_ratified(rated),
             "met": (rated or {}).get("met"),
             "total": (rated or {}).get("total"),
             "score": early.get("score"),
