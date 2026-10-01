@@ -80,7 +80,6 @@ play.
 | **The Closing Bell** | 4:20 p.m. ET, appointment | frozen post-market report | `/reports/{day}/post` |
 | **The Scoreboard** | after the close, daily | Flash's record, community calls | `/flash/record` *(needs a card)* |
 | **Transition Desk** | rotating, best first | a ratified name or coin changed state (see below) | `/t/{ticker}` or the coin page |
-| **Halt Desk** | interrupt | `market_events` halts on a ratified stock or one with an active Call | `/t/{ticker}` |
 | **Filing Desk** | interrupt, capped | `market_events` EDGAR / disclosures | `/t/{ticker}` |
 | **Sports Desk** | rotating | game decisions, alpha, receipts | `/sports/game/{id}` *(needs a card)* |
 
@@ -90,12 +89,11 @@ play.
 same time every weekday, 20 minutes into pre-market and 20 minutes after the
 close. Everything else rotates around them.
 
-**Halts are the most radio-worthy thing that happens all day.** The Halt Desk is
-live: `_pending_event_rows` feeds `format_event_post_md` from
-`public_market_events` (halts, news, social spikes) inside a
-`TELEGRAM_EVENT_WINDOW_MINUTES` window, and the rundown rotates it in after the
-session briefings. Resume notices are skipped so the desk reports the halt, not
-the recovery. EDGAR and house-disclosure events will join the same segment when
+**No halts.** The channel is for coins and stocks about to run and for sports
+bets; a halted stock is not one, so halts never post (turned off 2026-10-01).
+`_pending_event_rows` feeds `format_event_post_md` from `public_market_events`
+(news, social spikes) inside a `TELEGRAM_EVENT_WINDOW_MINUTES` window, and the
+rundown rotates it in after the session briefings. EDGAR and house-disclosure events will join the same segment when
 their feeds populate `market_events`.
 
 **The Transition Desk replaces the noise.** Halts on names nobody follows and
@@ -186,8 +184,7 @@ speaks once a day. The per-ticker quiet window (`TELEGRAM_TICKER_QUIET_SECONDS`,
 `⚠️ $SOUN lost its ratification`, one metrics line, one link. A coin leads with
 its contract address, never the creator-set name.
 
-**Quieter halts and bundles.** A halt posts only when the stock was ratified at
-its last check or has an active Call. The memecoin bundle and creator-selling post
+**Quieter bundles.** The memecoin bundle and creator-selling post
 goes out only for a coin with an active Call; for everyone else a launch bundle
 shows up as a lost ratification.
 
