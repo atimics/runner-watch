@@ -14,18 +14,27 @@ Failed requests retain their reservation as a conservative allowance. The cap
 survives restarts and applies across workers running this ingestion pipeline.
 Other applications using the same Helius account have their own usage.
 
-Each five-minute cycle reads two pages and one wallet page, each with a
-limit of 100 full transactions. Every third cycle the second page reads the
-graduation stream instead of a program: the history of Pump's migration
-authority (`39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg`, the Global
-account's `withdraw_authority`), which takes part in every graduation to
+Prices come first. Every read except prices stops 2,000 credits short of the
+daily limit, so the forensic reads can never leave the board without prices
+(they cost about 1,500 credits a day). When the budget is spent, the refresh
+skips the paid transaction pages and keeps pricing from saved discovery.
+
+Paid transaction pages run at most once every 15 minutes, each with a limit of
+100 full transactions: the graduation stream every time, one sample from a
+rotation, and one wallet page. The graduation stream is the history of Pump's
+migration authority (`39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg`, the
+Global account's `withdraw_authority`), which takes part in every graduation to
 PumpSwap. About a thousand graduations a day fit in a page every 15 minutes,
-where sampling the programs caught about eleven. Graduated pools that traded
-last cycle keep up to 60 of the 100 pool slots, busiest first, so a runner is
-not pushed out by newer graduations. Under Helius's current documented metering, that
-uses at most 30 credits per cycle, or 8,640 credits per day. The program pages
-rotate across the three supported programs. Wallet pages rotate across observed
-creators and buyers. `MEMECOINS_ENABLED=false` pauses collection.
+where sampling the programs caught about eleven. The rotation reads the launch
+stream every other turn, since it feeds the bonding-curve list, and the three
+program samples in between. Graduated pools that traded last cycle keep up to
+60 of the 100 pool slots, busiest first, so a runner is not pushed out by newer
+graduations. That is at most 30 credits every 15 minutes, or 2,880 credits per
+day. With nobody reading memecoin pages for half an hour, only the graduation
+page is read (960 credits a day). Crawlers, link previews and uptime checks do
+not count as readers. Wallet pages rotate across observed creators and buyers.
+Launch-bundle checks (up to 13 credits each) run only for coins tagged SETUP,
+RUNNING or EXTENDED. `MEMECOINS_ENABLED=false` pauses collection.
 
 Each stream keeps a fixed time window and a pagination cursor. A page commits
 its transaction receipts, decoded events and next cursor in one transaction.

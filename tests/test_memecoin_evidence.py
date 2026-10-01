@@ -57,7 +57,7 @@ def test_budget_is_shared_atomic_and_resets_at_utc_day_boundary(monkeypatch):
 
     def reserve(_):
         try:
-            evidence.reserve_credits(10, at=AT)
+            evidence.reserve_credits(10, at=AT, lane="price")
             return True
         except evidence.CreditBudgetReached:
             return False
@@ -71,10 +71,21 @@ def test_budget_is_shared_atomic_and_resets_at_utc_day_boundary(monkeypatch):
 
 def test_budget_cannot_exceed_user_cap(monkeypatch):
     monkeypatch.setenv("HELIUS_DAILY_CREDITS", "1000000")
-    evidence.reserve_credits(10000, at=AT)
+    evidence.reserve_credits(10000, at=AT, lane="price")
+    with pytest.raises(evidence.CreditBudgetReached):
+        evidence.reserve_credits(1, at=AT, lane="price")
+    assert evidence.credit_limit() == 10000
+
+
+def test_other_reads_leave_the_price_reserve(monkeypatch):
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "10000")
+    evidence.reserve_credits(8000, at=AT)
     with pytest.raises(evidence.CreditBudgetReached):
         evidence.reserve_credits(1, at=AT)
-    assert evidence.credit_limit() == 10000
+    # Prices still have their 2,000 credits.
+    evidence.reserve_credits(2000, at=AT, lane="price")
+    assert evidence.budget_status(at=AT)["remaining_credits"] == 0
+    assert evidence.budget_status(at=AT)["price_reserve"] == 2000
 
 
 def test_cursor_and_receipts_commit_together_and_replay_is_idempotent():

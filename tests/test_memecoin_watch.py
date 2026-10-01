@@ -291,10 +291,24 @@ def test_a_coin_whose_check_keeps_failing_is_given_up():
     def failing(body, *, credits):
         raise RuntimeError("provider down")
 
+    tagged = row(early={"state": "setup"})
     checked = {}
     for attempt in range(BUNDLE_MAX_ATTEMPTS):
-        _, checked = launch_bundles([row()], checked, rpc=failing, at=AT)
+        _, checked = launch_bundles([tagged], checked, rpc=failing, at=AT)
         done = bool(checked[MINT].get("checked_at"))
         assert done is (attempt == BUNDLE_MAX_ATTEMPTS - 1)
     # Once given up, the coin costs nothing more.
-    _, checked = launch_bundles([row()], checked, rpc=lambda *_a, **_k: pytest.fail("read"), at=AT)
+    _, checked = launch_bundles([tagged], checked, rpc=lambda *_a, **_k: pytest.fail("read"), at=AT)
+
+
+def test_only_tagged_coins_get_a_launch_check():
+    from runner_web.memecoin_watch import launch_bundles
+
+    untagged = row()
+    watched = row(early={"state": "watch"})
+    _, checked = launch_bundles(
+        [untagged, watched], {}, rpc=lambda *_a, **_k: pytest.fail("read"), at=AT
+    )
+
+    # A check costs up to 13 credits; untagged coins cost nothing.
+    assert checked == {}
