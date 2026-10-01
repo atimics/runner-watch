@@ -14,6 +14,8 @@
 // Objects are written by `ratiaudit upload` (atimics/ratiaudit), never by this
 // code. Any path that is not an audit path returns null and is proxied on.
 
+import { notify } from "./trigger.js";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 // An Arweave transaction id is 43 base64url characters.
 const BUNDLE = /^(?:[0-9a-f]{64}|[A-Za-z0-9_-]{43})$/;
@@ -42,6 +44,8 @@ export const PAGE_CSP =
 const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const WALLET = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const MAX_REVIEW_BYTES = 4096;
+const MAX_REQUEST_BYTES = 2048;
+const HEX64 = /^[0-9a-f]{64}$/;
 const TRUST_ORIGIN = "https://trust.rati.chat";
 
 // Base58 to exactly `length` bytes, or null.
@@ -81,6 +85,8 @@ async function verifyEd25519(wallet, signature, message) {
     return false;
   }
 }
+
+const enrolStatement = (audit, encPub) => `ratiaudit enrol v1\naudit: ${audit}\nencryption key: ${encPub}`;
 
 const reply = (request, status, body) =>
   respond(request, JSON.stringify(body), { status, type: "application/json; charset=utf-8" });
@@ -126,6 +132,50 @@ async function submitReview(request, uuid, env) {
   await env.AUDITS.put(`inbox/${uuid}/${wallet}.json`, JSON.stringify({ wallet, message, signature }), {
     httpMetadata: { contentType: "application/json" },
   });
+  await notify(env);
+  return reply(request, 200, { ok: true });
+}
+
+// A wallet the auditor already listed asks to be let in. Only a known wallet (the draft publishes the list
+// as hashes) with a valid signature on the enrolment statement is kept, in the inbox; the sync job checks it
+// again, adds the wallet and seals the report for it. Any other wallet is turned away and stores nothing.
+async function submitAccessRequest(request, uuid, env) {
+  const origin = request.headers.get("Origin");
+  if (origin && origin !== TRUST_ORIGIN) return reply(request, 403, { error: "Cross-origin submissions are refused." });
+  if ((request.headers.get("Content-Type") || "").split(";")[0].trim() !== "application/json") {
+    return reply(request, 415, { error: "Send JSON." });
+  }
+  const body = await request.text();
+  if (new TextEncoder().encode(body).length > MAX_REQUEST_BYTES) return reply(request, 413, { error: "Too large." });
+  let enrolment;
+  try {
+    enrolment = JSON.parse(body);
+  } catch {
+    return reply(request, 400, { error: "That is not JSON." });
+  }
+  const { audit, wallet, enc_pub: encPub, signature } = enrolment ?? {};
+  if (![audit, wallet, encPub, signature].every((v) => typeof v === "string") || !WALLET.test(wallet) || !HEX64.test(encPub)) {
+    return reply(request, 400, { error: "Expected audit, wallet, enc_pub and signature." });
+  }
+  const statusObject = await env.AUDITS.get(`draft/${uuid}/status.json`);
+  if (!statusObject) return reply(request, 404, { error: "No such audit." });
+  let status;
+  try {
+    status = JSON.parse(await statusObject.text());
+  } catch {
+    return reply(request, 404, { error: "No such audit." });
+  }
+  if (!Array.isArray(status.known) || !status.known.includes(await sha256Hex(new TextEncoder().encode(wallet)))) {
+    return reply(request, 403, { error: "This wallet is not on the list for this audit." });
+  }
+  if (audit !== status.review?.audit) return reply(request, 400, { error: "That request is for another audit." });
+  if (!(await verifyEd25519(wallet, signature, enrolStatement(audit, encPub)))) {
+    return reply(request, 400, { error: "The signature does not match this wallet." });
+  }
+  await env.AUDITS.put(`inbox/${uuid}/enrol-${wallet}.json`, JSON.stringify({ audit, wallet, enc_pub: encPub, signature }), {
+    httpMetadata: { contentType: "application/json" },
+  });
+  await notify(env);
   return reply(request, 200, { ok: true });
 }
 
@@ -284,8 +334,9 @@ async function loadBundle(id, env) {
 // Returns a Response for an audit path, or null for anything else.
 export async function handleAudits(request, env) {
   const parts = new URL(request.url).pathname.split("/").slice(1);
-  if (request.method === "POST" && parts.length === 3 && parts[0] === "draft" && parts[2] === "review") {
-    return UUID.test(parts[1]) ? submitReview(request, parts[1], env) : notFound(request);
+  if (request.method === "POST" && parts.length === 3 && parts[0] === "draft") {
+    if (parts[2] === "review") return UUID.test(parts[1]) ? submitReview(request, parts[1], env) : notFound(request);
+    if (parts[2] === "access-request") return UUID.test(parts[1]) ? submitAccessRequest(request, parts[1], env) : notFound(request);
   }
   if (request.method !== "GET" && request.method !== "HEAD") return null;
 

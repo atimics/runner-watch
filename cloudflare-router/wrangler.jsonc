@@ -4,6 +4,7 @@
   "main": "src/index.js",
   "compatibility_date": "2026-08-26",
   "r2_buckets": [{ "binding": "AUDITS", "bucket_name": "rati-audits" }],
+  "triggers": { "crons": ["*/10 * * * *"] },
   "routes": [
     {
       "pattern": "runners.rati.chat/*",
