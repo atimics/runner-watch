@@ -1,23 +1,10 @@
-# Memecoin replay and channel GIFs
+# Memecoin replay
 
-This PR implements the requested details-page replay and GIF attachment for new
-memecoin announcements. The runner-watch team owns review, integration, and
-channel activation. Development validation uses local fixtures and fake Telegram
-receivers.
-
-Production enables this delivery path with `TELEGRAM_MEMECOIN_ALERTS=1` in
-`fly.toml`. Other environments default to off. Delivery requires `TELEGRAM_API_TOKEN` (or
-`TELEGRAM_BOT_TOKEN`) and `TELEGRAM_CHAT_ID`. The configured chat is captured when
-a new token enters the saved market. Existing tokens form a quiet baseline.
-
-One `sendAnimation` request contains the stored GIF and a caption led by the full
-contract address, then the launch evidence status, saved event count, and link to
-the exact replay revision on the details page. The caption leaves out the
-launch's name and symbol: the creator chose them, and a launch can copy a famous
-coin's name. Pages show that text only as a marked, unverified claim beneath
-the address. A delivery record holds the
-replay ID, GIF hash, destination, attempt count, and returned message ID. Tests
-exercise this request through an injected receiver.
+The details page shows a replay of a new memecoin's launch, with a GIF and a
+verifiable evidence package. The Telegram channel no longer posts these GIFs
+("New coin detected"): they were removed as noise. The channel now hears about
+memecoins through transition alerts (docs/telegram-channel.md). The
+`memecoin_replay_posts` table stays for old rows, and nothing writes to it.
 
 Replay records provide a stable starting point for a later Flash monitoring
 flow. Pricing and additional collection budgets belong to that integration.
@@ -72,21 +59,11 @@ Runtime verification checks the receipt hashes, decoded event window, source
 links, subject, chronology, geometry, policy, package hash, and receipt Merkle
 root. A failed check retains the evidence and records a short failure code.
 Rendering runs under a database lease. A temporary render failure retries from
-the saved evidence. The channel adapter uses an atomic claim per token and a
-maximum of three attempts for explicit rate-limit responses. Lost responses and
-interrupted sends remain `uncertain` for review. Recipient changes leave the
-original queued destination intact.
-
+the saved evidence. 
 ## Team integration
 
-The replay worker renders saved evidence, dispatches up to two queued GIFs,
-then waits 15 seconds before its next cycle. Saved GIF delivery continues when
-a rendering cycle fails. Each delivery cycle records its result under
-`memecoin_replay_last_delivery` and its error under
-`memecoin_replay_delivery_error` in worker state. The worker is included in the
-required process heartbeat. Per-token records retain the actual delivery outcome
-and Telegram message ID. Setting `TELEGRAM_MEMECOIN_ALERTS=0` pauses delivery.
+The replay worker renders saved evidence, then waits 15 seconds before its next
+cycle. The worker is included in the required process heartbeat.
 
 Validation uses the existing Python/Pillow stack and the repository's browser
-test suite. [Telegram's sendAnimation API](https://core.telegram.org/bots/api#sendanimation)
-documents the multipart upload used by the adapter.
+test suite.
