@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -15,6 +17,8 @@ from runner_web.memecoin_replay_gif import render_gif_isolated
 
 LOG = logging.getLogger(__name__)
 MAX_REVISIONS_PER_COIN = 16
+# Two replays at a five-minute lease each, plus the GIF child's own limit.
+JOB_TIMEOUT_SECONDS = 600
 
 
 def queue_replay(database, coin: dict, collected: str) -> None:
@@ -296,3 +300,29 @@ def render_pending_replays(
                 )
             result["deferred"] += 1
     return result
+
+
+def render_pending_replays_isolated() -> dict:
+    """render_pending_replays in a short-lived child process.
+
+    Loading and decoding a replay's receipts grew the worker 30-280 MB a job,
+    and Python keeps freed memory, so the worker's 1 GB machine hit the OOM
+    killer every few minutes and took the price refresh down with it. The child
+    hands all of it back when it exits.
+    """
+
+    done = subprocess.run(
+        [sys.executable, "-m", __name__],
+        capture_output=True,
+        timeout=JOB_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if done.returncode:
+        lines = done.stderr.decode(errors="replace").strip().splitlines()
+        raise RuntimeError(lines[-1] if lines else "Replay job failed")
+    lines = done.stdout.decode(errors="replace").strip().splitlines()
+    return json.loads(lines[-1]) if lines else {}
+
+
+if __name__ == "__main__":
+    print(json.dumps(render_pending_replays()))

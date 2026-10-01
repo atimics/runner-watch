@@ -2991,11 +2991,11 @@ async def memecoin_worker() -> None:
 
 async def memecoin_replay_worker() -> None:
     """Render saved replay evidence so the coin page can show it."""
-    from runner_web.memecoin_replay_store import render_pending_replays
+    from runner_web.memecoin_replay_store import render_pending_replays_isolated
 
     while True:
         try:
-            await run_in_threadpool(render_pending_replays)
+            await run_in_threadpool(render_pending_replays_isolated)
         except asyncio.CancelledError:
             raise
         except Exception:
