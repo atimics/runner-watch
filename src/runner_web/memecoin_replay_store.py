@@ -12,7 +12,6 @@ from runner_web.db import connection
 from runner_web.helius_discovery import _address
 from runner_web.memecoin_replay import build_replay, canonical, verify_replay
 from runner_web.memecoin_replay_gif import render_gif_isolated
-from runner_web.telegram import config_from_env, memecoin_alerts_enabled
 
 LOG = logging.getLogger(__name__)
 MAX_REVISIONS_PER_COIN = 16
@@ -30,19 +29,6 @@ def queue_replay(database, coin: dict, collected: str) -> None:
         "ON CONFLICT(coin_id) DO UPDATE SET requested_at=excluded.requested_at "
         "WHERE memecoin_replay_cases.requested_at<excluded.requested_at",
         (coin["id"], collected),
-    )
-    config = config_from_env()
-    announce = memecoin_alerts_enabled() and config.configured
-    database.execute(
-        "INSERT INTO memecoin_replay_posts(coin_id,chat_id,status,created_at,updated_at) "
-        "VALUES(?,?,?,?,?) ON CONFLICT(coin_id) DO NOTHING",
-        (
-            coin["id"],
-            config.chat_id if announce else "",
-            "pending" if announce else "baseline",
-            collected,
-            collected,
-        ),
     )
 
 
@@ -275,11 +261,6 @@ def render_pending_replays(
                             stamp,
                         ),
                     )
-                database.execute(
-                    "UPDATE memecoin_replay_posts SET replay_id=? WHERE coin_id=? "
-                    "AND status='pending' AND replay_id IS NULL",
-                    (payload["id"], coin_id),
-                )
             result["ready"] += 1
         except Exception as exc:
             code = (

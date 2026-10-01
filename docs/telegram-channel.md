@@ -37,8 +37,7 @@ Pages that already carry a card:
 | `/t/{ticker}` | `/t/{ticker}/card.png` |
 | `/research/{public_id}` | `/research/{public_id}/card.png` |
 
-A memecoin replay is better than a card: `sendAnimation` puts the GIF itself in
-the room, with the caption carrying the single link.
+Memecoin replay GIFs are no longer posted to the channel.
 
 ### One story per message, never a list
 
@@ -83,7 +82,6 @@ play.
 | **Transition Desk** | rotating, best first | a ratified name or coin changed state (see below) | `/t/{ticker}` or the coin page |
 | **Halt Desk** | interrupt | `market_events` halts on a ratified stock or one with an active Call | `/t/{ticker}` |
 | **Filing Desk** | interrupt, capped | `market_events` EDGAR / disclosures | `/t/{ticker}` |
-| **Memecoin Replay** | rotating | rendered replay awaiting delivery | the GIF itself |
 | **Sports Desk** | rotating | game decisions, alpha, receipts | `/sports/game/{id}` *(needs a card)* |
 
 ### Why these, in this order

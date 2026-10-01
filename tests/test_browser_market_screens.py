@@ -686,7 +686,10 @@ def test_chart_scopes_magnitude_and_period_separately_from_daily_quote(page, wid
     # The move is already next to the price, so the scope line is just the date.
     scope = page.locator(".quote-scope")
     expect(scope).not_to_contain_text("Daily change")
-    expect(scope.locator(".quote-time")).to_contain_text("Sep")
+    # The sample quote is stamped now, so any month will do.
+    expect(scope.locator(".quote-time")).to_contain_text(
+        re.compile(r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec")
+    )
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 

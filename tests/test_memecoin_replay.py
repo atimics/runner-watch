@@ -26,9 +26,7 @@ from runner_web.memecoin_chain_parser import (
     parse_events,
 )
 from runner_web.memecoin_replay_gif import RINGS, render_gif, render_gif_isolated
-from runner_web.memecoin_replay_posts import caption, dispatch_memecoin_replays
 from runner_web.memecoin_store import save_memecoin_snapshot
-from runner_web.telegram import AnimationDeliveryError
 
 AT = datetime(2026, 9, 12, 18, tzinfo=UTC)
 MINT, WALLET, POOL, OTHER = [_encode(bytes([i]) * 32) for i in (9, 10, 11, 12)]
@@ -393,180 +391,6 @@ def test_concurrent_render_claim_has_one_owner_and_recovers_after_lease():
         assert future.result()["ready"] == 1
 
 
-def test_new_detection_queues_one_frozen_gif_and_delivers_once(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
-    collect()
-    store.render_pending_replays(at=AT)
-    sent = []
-
-    def receiver(config, gif, caption):
-        sent.append((config.chat_id, gif, caption))
-        return 42
-
-    for _ in range(2):
-        dispatch_memecoin_replays(origin="https://app.test", at=AT, sender=receiver)
-    assert len(sent) == 1
-    assert sent[0][0] == "test-channel"
-    assert sent[0][1] == store.saved_replay(COIN["id"], with_gif=True)["gif"]
-    assert f"`{MINT}`" in sent[0][2]
-    assert "New coin detected" in sent[0][2] and "?replay=" in sent[0][2]
-    collect(at=AT + timedelta(minutes=5))
-    store.render_pending_replays(at=AT + timedelta(minutes=5))
-    assert dispatch_memecoin_replays(origin="https://app.test", at=AT, sender=receiver)["sent"] == 0
-
-
-def test_channel_opt_in_and_destination_are_bound_to_the_new_detection(monkeypatch):
-    collect()
-    store.render_pending_replays(at=AT)
-    assert dispatch_memecoin_replays(origin="https://app.test")["status"] == "disabled"
-    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
-    assert (
-        dispatch_memecoin_replays(
-            origin="https://app.test", at=AT, sender=lambda *_: pytest.fail("baseline sent")
-        )["sent"]
-        == 0
-    )
-
-
-def test_concurrent_channel_claims_send_one_gif(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
-    collect()
-    store.render_pending_replays(at=AT)
-    entered, finish = Event(), Event()
-    calls = []
-
-    def receiver(*args):
-        calls.append(args)
-        entered.set()
-        assert finish.wait(10)
-        return 42
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(
-            dispatch_memecoin_replays, origin="https://app.test", at=AT, sender=receiver
-        )
-        assert entered.wait(10)
-        assert (
-            dispatch_memecoin_replays(origin="https://app.test", at=AT, sender=receiver)["sent"]
-            == 0
-        )
-        finish.set()
-        assert first.result()["sent"] == 1
-    assert len(calls) == 1
-
-
-@pytest.mark.parametrize("render_fails", [False, True])
-def test_scheduled_worker_delivers_saved_gif_and_records_its_result(monkeypatch, render_fails):
-    from runner_web import main
-    from runner_web import memecoin_replay_posts as posts
-
-    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
-    collect()
-    if render_fails:
-        store.render_pending_replays(at=AT)
-    stages, messages = [], []
-    original_render = store.render_pending_replays
-
-    def render():
-        stages.append("render")
-        if render_fails:
-            raise RuntimeError("temporary renderer failure")
-        return original_render(at=AT)
-
-    def receiver(config, gif, caption):
-        messages.append((config.chat_id, gif, caption))
-        return 73
-
-    def deliver(*, origin):
-        stages.append("deliver")
-        assert origin == main.RUNNERS_ORIGIN
-        return dispatch_memecoin_replays(origin=origin, at=AT, sender=receiver)
-
-    async def inline(function, *args, **kwargs):
-        return function(*args, **kwargs)
-
-    async def stop(seconds):
-        assert seconds == 15
-        raise asyncio.CancelledError
-
-    monkeypatch.setattr(store, "render_pending_replays", render)
-    monkeypatch.setattr(posts, "dispatch_memecoin_replays", deliver)
-    monkeypatch.setattr(main, "run_in_threadpool", inline)
-    monkeypatch.setattr(main.asyncio, "sleep", stop)
-    with pytest.raises(asyncio.CancelledError):
-        asyncio.run(main.memecoin_replay_worker())
-    assert stages == ["render", "deliver"]
-    assert len(messages) == 1 and messages[0][1].startswith(b"GIF")
-    with db.connection() as database:
-        row = database.execute("SELECT status,message_id FROM memecoin_replay_posts").fetchone()
-        state = dict(
-            database.execute(
-                "SELECT key,value FROM worker_state WHERE key LIKE ?", ("memecoin_replay_%",)
-            ).fetchall()
-        )
-    assert row["status"] == "sent" and row["message_id"] == 73
-    assert json.loads(state["memecoin_replay_last_delivery"]) == {"status": "checked", "sent": 1}
-    assert state["memecoin_replay_delivery_error"] == ""
-
-
-def test_scheduled_delivery_recovers_after_a_failed_cycle(monkeypatch):
-    from runner_web import main
-    from runner_web import memecoin_replay_posts as posts
-
-    outcomes, errors = [], []
-
-    def deliver(**kwargs):
-        outcomes.append(kwargs)
-        if len(outcomes) == 1:
-            raise RuntimeError("temporary database failure")
-        return {"status": "checked", "sent": 0}
-
-    async def inline(function, *args, **kwargs):
-        return function(*args, **kwargs)
-
-    async def next_cycle(seconds):
-        with db.connection() as database:
-            errors.append(
-                database.execute(
-                    "SELECT value FROM worker_state WHERE key='memecoin_replay_delivery_error'"
-                ).fetchone()[0]
-            )
-        if len(outcomes) == 2:
-            raise asyncio.CancelledError
-
-    monkeypatch.setattr(store, "render_pending_replays", lambda: {})
-    monkeypatch.setattr(posts, "dispatch_memecoin_replays", deliver)
-    monkeypatch.setattr(main, "run_in_threadpool", inline)
-    monkeypatch.setattr(main.asyncio, "sleep", next_cycle)
-    with pytest.raises(asyncio.CancelledError):
-        asyncio.run(main.memecoin_replay_worker())
-    assert errors == ["delivery_cycle_failed", ""]
-
-
-@pytest.mark.parametrize("cancel_at", ["render", "deliver"])
-def test_scheduled_worker_propagates_cancellation(monkeypatch, cancel_at):
-    from runner_web import main
-    from runner_web import memecoin_replay_posts as posts
-
-    calls = []
-
-    def action(name):
-        calls.append(name)
-        if name == cancel_at:
-            raise asyncio.CancelledError
-        return {}
-
-    async def inline(function, *args, **kwargs):
-        return function(*args, **kwargs)
-
-    monkeypatch.setattr(store, "render_pending_replays", lambda: action("render"))
-    monkeypatch.setattr(posts, "dispatch_memecoin_replays", lambda **_: action("deliver"))
-    monkeypatch.setattr(main, "run_in_threadpool", inline)
-    with pytest.raises(asyncio.CancelledError):
-        asyncio.run(main.memecoin_replay_worker())
-    assert calls == (["render"] if cancel_at == "render" else ["render", "deliver"])
-
-
 def test_replay_worker_is_required_for_process_health():
     from runner_web.main import _worker_heartbeat_detail
 
@@ -587,40 +411,6 @@ def test_archive_capacity_retains_the_saved_version_and_new_source_evidence(monk
     status = store.replay_status(COIN["id"])
     assert status["id"] == original and status["collection_status"] == "archive_capacity"
     assert evidence.transaction_receipt(transaction("buy", 3)["transaction"]["signatures"][0])
-
-
-@pytest.mark.parametrize(
-    "outcome,expected", [("retry", "retry"), ("uncertain", "uncertain"), ("failed", "failed")]
-)
-def test_delivery_records_retry_and_uncertain_outcomes(monkeypatch, outcome, expected):
-    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
-    monkeypatch.setenv("TELEGRAM_CHANNEL_INTERVAL_SECONDS", "0")
-    monkeypatch.setenv("TELEGRAM_TICKER_QUIET_SECONDS", "0")
-    collect()
-    store.render_pending_replays(at=AT)
-
-    def receiver(*_):
-        raise AnimationDeliveryError(outcome, retry_after=60)
-
-    dispatch_memecoin_replays(origin="https://app.test", at=AT, sender=receiver)
-    with db.connection() as database:
-        row = database.execute("SELECT status,attempts FROM memecoin_replay_posts").fetchone()
-    assert row["status"] == expected and row["attempts"] == 1
-    assert (
-        dispatch_memecoin_replays(
-            origin="https://app.test",
-            at=AT + timedelta(seconds=30),
-            sender=lambda *_: pytest.fail("premature retry"),
-        )["sent"]
-        == 0
-    )
-    if outcome == "retry":
-        assert (
-            dispatch_memecoin_replays(
-                origin="https://app.test", at=AT + timedelta(seconds=61), sender=lambda *_: 42
-            )["sent"]
-            == 1
-        )
 
 
 def test_details_routes_return_the_same_saved_gif_and_package(monkeypatch):
@@ -659,56 +449,27 @@ def test_details_routes_return_the_same_saved_gif_and_package(monkeypatch):
         client.close()
 
 
-def test_coin_gif_uses_the_shared_channel_schedule(monkeypatch):
-    from runner_web.telegram import config_from_env
-    from runner_web.telegram_outbox import reserve_channel_slot
+def test_replay_worker_renders_and_never_posts_to_the_channel(monkeypatch):
+    from runner_web import main
 
-    monkeypatch.setenv("TELEGRAM_MEMECOIN_ALERTS", "1")
-    monkeypatch.setenv("TELEGRAM_CHANNEL_INTERVAL_SECONDS", "300")
+    calls = []
+
+    async def inline(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    async def stop(seconds):
+        assert seconds == 15
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(store, "render_pending_replays", lambda: calls.append("render") or {})
+    monkeypatch.setattr(main, "run_in_threadpool", inline)
+    monkeypatch.setattr(main.asyncio, "sleep", stop)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main.memecoin_replay_worker())
+    assert calls == ["render"]
+
+
+def test_a_new_detection_queues_no_channel_post():
     collect()
-    store.render_pending_replays(at=AT)
     with db.connection() as database:
-        assert reserve_channel_slot(database, config_from_env().chat_id, ["AAAA"], AT)
-    assert (
-        dispatch_memecoin_replays(
-            origin="https://app.test", at=AT, sender=lambda *_: pytest.fail("early send")
-        )["sent"]
-        == 0
-    )
-    assert (
-        dispatch_memecoin_replays(
-            origin="https://app.test", at=AT + timedelta(seconds=301), sender=lambda *_: 42
-        )["sent"]
-        == 1
-    )
-    with db.connection() as database:
-        row = database.execute(
-            "SELECT caption_text,message_id FROM memecoin_replay_posts"
-        ).fetchone()
-        assert "?replay=" in row["caption_text"] and row["message_id"] == 42
-
-
-def test_the_replay_caption_links_the_coin_page_instead_of_pasting_the_url() -> None:
-    """A bare URL is not valid Markdown V2 — its dots and hyphens are reserved.
-    sendAnimation has no plain-text retry, so a caption that fails to parse
-    loses the GIF with it."""
-
-    text = caption(
-        {
-            "symbol": "P-NUT",
-            "token_address": "abc123def456",
-            "launch": True,
-            "events": [1, 2, 3],
-            "coin_id": "sol:abc-123",
-            "id": "r-9",
-        },
-        origin="https://app.test",
-    )
-    # The address leads; the creator-set symbol stays off the channel.
-    assert "`abc123def456`" in text
-    assert "NUT" not in text
-    assert text.endswith(
-        "[Open the coin page](https://app.test/memecoins/coin/sol%3Aabc-123"
-        "?replay=r-9#token-replay)"
-    ), text
-    assert "\n\nhttps://" not in text
+        assert database.execute("SELECT COUNT(*) FROM memecoin_replay_posts").fetchone()[0] == 0
