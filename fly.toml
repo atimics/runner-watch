@@ -30,6 +30,9 @@ kill_timeout = 30
   processes = ["worker"]
 
 [env]
+  # Jobs run on many threads, and glibc gives each thread its own heap arena that
+  # it seldom returns; the 1 GB worker crept to ~690 MB and was OOM-killed.
+  MALLOC_ARENA_MAX = "2"
   APP_ORIGIN = "https://runners.rati.chat"
   RUNNERS_ORIGIN = "https://runners.rati.chat"
   SPORTS_ORIGIN = "https://sports.rati.chat"
