@@ -9,6 +9,7 @@ sticks to one job name is where to look.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import resource
@@ -50,6 +51,62 @@ def peak_rss_mb() -> float:
     return peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024
 
 
+class _MallInfo2(ctypes.Structure):
+    _fields_ = [
+        (name, ctypes.c_size_t)
+        for name in (
+            "arena",
+            "ordblks",
+            "smblks",
+            "hblks",
+            "hblkhd",
+            "usmblks",
+            "fsmblks",
+            "uordblks",
+            "fordblks",
+            "keepcost",
+        )
+    ]
+
+
+def _libc() -> Any:
+    """glibc, or None where there is none (macOS, musl)."""
+
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.mallinfo2.restype = _MallInfo2
+        libc.malloc_trim.argtypes = [ctypes.c_size_t]
+        return libc
+    except (OSError, AttributeError):
+        return None
+
+
+_LIBC = _libc()
+
+
+def heap_mb() -> dict[str, float] | None:
+    """glibc's view of the heap: in use, freed but kept, and large mmapped blocks.
+
+    Freed-but-kept growing while in-use stays flat is fragmentation, not a leak.
+    """
+
+    if _LIBC is None:
+        return None
+    info = _LIBC.mallinfo2()
+    return {
+        "used": info.uordblks / 2**20,
+        "free": info.fordblks / 2**20,
+        "mmap": info.hblkhd / 2**20,
+    }
+
+
+def trim_heap() -> None:
+    """Hand freed heap pages back to the system."""
+
+    if _LIBC is not None:
+        _LIBC.malloc_trim(0)
+
+
 def job_name(func: Callable[..., Any]) -> str:
     return f"{getattr(func, '__module__', '?')}.{getattr(func, '__qualname__', repr(func))}"
 
@@ -88,9 +145,25 @@ def log_memory_trend(*, clock: Callable[[], float] = time.monotonic) -> None:
     if _last_trend_at is not None and current - _last_trend_at < TREND_LOG_SECONDS:
         return
     _last_trend_at = current
+    before = rss_mb()
+    heap = heap_mb()
+    trim_heap()
+    # Live Python objects: flat while resident memory climbs means freed memory
+    # the allocator kept, not objects something holds.
+    blocks = sys.getallocatedblocks()
     # Warning, not info: nothing configures logging, so the worker only prints
     # warnings and above, and an info line would never reach the Fly logs.
-    LOG.warning("memory_trend rss_mb=%s peak_mb=%.0f", _rounded(rss_mb()), peak_rss_mb())
+    LOG.warning(
+        "memory_trend rss_mb=%s peak_mb=%.0f heap_used_mb=%s heap_free_mb=%s "
+        "heap_mmap_mb=%s py_blocks=%d trimmed_rss_mb=%s",
+        _rounded(before),
+        peak_rss_mb(),
+        _rounded(heap["used"] if heap else None),
+        _rounded(heap["free"] if heap else None),
+        _rounded(heap["mmap"] if heap else None),
+        blocks,
+        _rounded(rss_mb()),
+    )
 
 
 def _rounded(value: float | None) -> str:
