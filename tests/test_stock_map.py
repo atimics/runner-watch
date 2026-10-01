@@ -404,6 +404,31 @@ def test_person_connections_match_joint_cik_and_preserve_separate_interests(data
     assert result["identity_scope"] == "SEC CIK"
 
 
+def test_entity_events_read_past_the_first_page_and_say_when_they_stop(database, monkeypatch):
+    from runner_web import stock_map
+    from runner_web.stock_map import entity_events, person_connections
+
+    data = json.dumps(evidence())
+    for number in range(450):
+        insert(
+            filing_row(
+                f"acc-{number:04d}",
+                ticker=f"T{number:03d}",
+                filed_at=f"2026-09-05T18:{number // 60:02d}:{number % 60:02d}+00:00",
+                evidence_json=data,
+            )
+        )
+    first = person_connections("T000", "sec:101")
+    assert first["next_cursor"]  # one page of 200 does not hold the record
+    events, complete = entity_events("T000", "sec:101", first)
+    assert complete
+    assert len({event["ticker"] for event in events}) == 450
+    monkeypatch.setattr(stock_map, "ENTITY_MAX_PAGES", 2)
+    events, complete = entity_events("T000", "sec:101")
+    assert not complete
+    assert len({event["ticker"] for event in events}) == 400
+
+
 def test_person_connections_stake_owner_cik_and_ticker_scoped_names(database):
     from runner_web.stock_map import person_connections
 

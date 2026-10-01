@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 
@@ -151,3 +152,41 @@ def test_a_wallet_page_needs_no_stock_in_its_path(database, monkeypatch):
     scoped_page = client.get(f"/wallet/{scoped}")
     assert scoped_page.status_code == 200
     assert 'href="/stock/ONE"' in scoped_page.text
+
+
+def _entity_data(html: str) -> dict:
+    match = re.search(r'<script type="application/json" id="entityData"[^>]*>(.*?)</script>', html)
+    assert match
+    return json.loads(match.group(1))
+
+
+def test_the_entity_map_covers_the_whole_record_not_the_first_page(database, monkeypatch):
+    from runner_web import stock_map
+    from tests.test_stock_map import evidence, filing_row, insert
+
+    client = _ticker_client(monkeypatch)
+    payload = json.dumps(evidence())
+    for number in range(450):
+        insert(
+            filing_row(
+                f"acc-{number:04d}",
+                ticker=f"T{number:03d}",
+                filed_at=f"2026-09-05T18:{number // 60:02d}:{number % 60:02d}+00:00",
+                evidence_json=payload,
+            )
+        )
+    wallet_id = register_person("sec:101", database=database)
+    database.commit()
+
+    page = client.get(f"/wallet/{wallet_id}")
+
+    assert page.status_code == 200
+    # One page of the list is 200 candidate filings; the map is every stock.
+    assert len(_entity_data(page.text)["entity"]["stocks"]) == 450
+    assert "All filings read" in page.text
+    assert "data-wallet-more" in page.text  # the event list itself still pages
+
+    monkeypatch.setattr(stock_map, "ENTITY_MAX_PAGES", 2)
+    bounded = client.get(f"/wallet/{wallet_id}")
+    assert len(_entity_data(bounded.text)["entity"]["stocks"]) == 400
+    assert "Newest filings only" in bounded.text
