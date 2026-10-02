@@ -82,9 +82,13 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
             if address:
                 return RedirectResponse("/wallet/" + register_chain(address), status_code=303)
         return dependencies.templates.TemplateResponse(
-            request, "onchain_wallet_list.html",
+            request,
+            "onchain_wallet_list.html",
             dependencies.page_context(
-                request, runner_session, nav_product="memecoins", screen=listing("memecoins", []),
+                request,
+                runner_session,
+                nav_product="memecoins",
+                screen=listing("memecoins", []),
                 catalog=wallet_catalog(q),
             ),
         )
@@ -101,6 +105,7 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
     @router.get("/api/wallets/{wallet_id}/pnl")
     def wallet_pnl_api(wallet_id: str, request: Request) -> Response:
         from runner_web.onchain_wallets import saved_wallet
+
         dependencies.enforce_rate(request, "chain-wallet-pnl", limit=60, seconds=60)
         resolved = resolve_wallet(wallet_id)
         if not resolved or resolved["kind"] != "solana":
@@ -110,6 +115,7 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
     @router.post("/api/wallets/{wallet_id}/refresh")
     def wallet_pnl_refresh_api(wallet_id: str, request: Request) -> Response:
         from runner_web.onchain_wallets import refresh_wallet
+
         dependencies.require_origin(request)
         dependencies.enforce_rate(request, "chain-wallet-refresh", limit=3, seconds=60)
         resolved = resolve_wallet(wallet_id)
@@ -211,11 +217,16 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
         resolved = resolve_wallet(wallet_id)
         if resolved and resolved["kind"] == "solana":
             from runner_web.onchain_wallets import saved_wallet
+
             return dependencies.templates.TemplateResponse(
-                request, "onchain_wallet.html",
+                request,
+                "onchain_wallet.html",
                 dependencies.page_context(
-                    request, runner_session, nav_product="memecoins",
-                    screen=listing("memecoins", []), wallet_id=wallet_id,
+                    request,
+                    runner_session,
+                    nav_product="memecoins",
+                    screen=listing("memecoins", []),
+                    wallet_id=wallet_id,
                     wallet=saved_wallet(resolved["address"]),
                 ),
             )

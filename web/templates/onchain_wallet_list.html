@@ -12,7 +12,7 @@
 <p class="chain-note">{{ catalog.wallets|length }} wallets · Labels from {{ catalog.label_date }} · <a href="https://github.com/sn3ll/KOL-Wallets-BULLX/blob/2712bbd655e226ee3fefdfcb2705fe765547ad96/Import.json" target="_blank" rel="noopener noreferrer">Source list ↗</a></p>
 <div class="chain-wallet-list" aria-label="Tracked wallets">
 {% for row in catalog.wallets %}
-<a class="chain-wallet-row" href="{{ row.href }}"><span class="chain-avatar" aria-hidden="true">{{ row.emoji }}</span><span><strong>{{ row.name }}</strong><small>{{ row.address[:6] }}…{{ row.address[-6:] }}</small></span><span class="chain-row-value">{% if row.snapshot %}<strong>{{ '%+.4f'|format(row.snapshot.pnl[0].realized) }} SOL</strong><small>Realized · known costs</small>{% else %}<strong>Open wallet</strong><small>View chain PnL</small>{% endif %}</span><span aria-hidden="true">↗</span></a>
+<a class="chain-wallet-row" href="{{ row.href }}"><span class="chain-avatar" aria-hidden="true">{{ row.emoji }}</span><span><strong>{{ row.name }}</strong><small>{{ row.address[:6] }}…{{ row.address[-6:] }}</small></span><span class="chain-row-value">{% if row.snapshot and row.snapshot.pnl[0].realized is not none %}<strong>{{ '%+.4f'|format(row.snapshot.pnl[0].realized) }} SOL</strong><small>Realized · known costs</small><small>{{ row.snapshot.updated_at[:16]|replace('T', ' ') }} UTC</small>{% else %}<strong>Open wallet</strong><small>View chain PnL</small>{% endif %}</span><span aria-hidden="true">↗</span></a>
 {% else %}<p class="chain-note">Try another name or enter a full Solana address.</p>{% endfor %}
 </div>
 </div>

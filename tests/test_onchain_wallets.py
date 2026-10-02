@@ -39,8 +39,7 @@ def database(tmp_path, monkeypatch):
 
 
 def token_balance(mint, amount):
-    return {"mint": mint, "owner": ADDRESS,
-            "uiTokenAmount": {"amount": str(amount), "decimals": 0}}
+    return {"mint": mint, "owner": ADDRESS, "uiTokenAmount": {"amount": str(amount), "decimals": 0}}
 
 
 def transaction(index, before, after, cash, *, quote=SOL, transfer=False, failed=False):
@@ -49,23 +48,29 @@ def transaction(index, before, after, cash, *, quote=SOL, transfer=False, failed
         pre.append(token_balance(USDC, 100))
         post.append(token_balance(USDC, 100 + cash))
     instruction = {
-        "programId": PUMP_SWAP, "accounts": [POOL, ADDRESS, POOL, MINT],
+        "programId": PUMP_SWAP,
+        "accounts": [POOL, ADDRESS, POOL, MINT],
         "data": _encode((BUY if after > before else SELL) + bytes(16)),
     }
     return {
-        "slot": 100 + index, "transactionIndex": index,
+        "slot": 100 + index,
+        "transactionIndex": index,
         "blockTime": int(AT.timestamp()) - 300 + index,
         "transaction": {
             "signatures": [_encode(bytes([index + 1]) * 64)],
-            "message": {"accountKeys": [{"pubkey": ADDRESS}],
-                        "instructions": [] if transfer else [instruction]},
+            "message": {
+                "accountKeys": [{"pubkey": ADDRESS}],
+                "instructions": [] if transfer else [instruction],
+            },
         },
         "meta": {
-            "err": {"InstructionError": [0, "test"]} if failed else None, "fee": 5000,
+            "err": {"InstructionError": [0, "test"]} if failed else None,
+            "fee": 5000,
             "preBalances": [10_000_000_000],
-            "postBalances": [10_000_000_000 + int(cash * 10**9) if quote == SOL
-                             else 9_999_995_000],
-            "preTokenBalances": pre, "postTokenBalances": post, "innerInstructions": [],
+            "postBalances": [10_000_000_000 + int(cash * 10**9) if quote == SOL else 9_999_995_000],
+            "preTokenBalances": pre,
+            "postTokenBalances": post,
+            "innerInstructions": [],
         },
     }
 
@@ -92,11 +97,11 @@ def test_weighted_cost_partial_sell_and_current_mark():
 
 
 def test_transfer_and_missing_opening_cost_stay_unknown():
-    entries = [transaction(1, 0, 100, 0, transfer=True),
-               transaction(2, 100, 50, 2)]
+    entries = [transaction(1, 0, 100, 0, transfer=True), transaction(2, 100, 50, 2)]
     result = wallets.calculate_pnl(ADDRESS, entries, {MINT: Decimal(50)}, QUOTES)
     assert result["unknown_sales"] == 1
     assert result["unknown_holdings"] == 1
+    assert result["pnl"][0]["realized"] is None
     assert result["trades"][0]["realized"] is None
     assert result["holdings"][0]["cost"] is None
     opening = wallets.calculate_pnl(
@@ -106,9 +111,11 @@ def test_transfer_and_missing_opening_cost_stay_unknown():
 
 
 def test_outbound_transfer_reduces_cost_without_realizing_profit():
-    entries = [transaction(1, 0, 100, -2),
-               transaction(2, 100, 50, 0, transfer=True),
-               transaction(3, 50, 0, 2)]
+    entries = [
+        transaction(1, 0, 100, -2),
+        transaction(2, 100, 50, 0, transfer=True),
+        transaction(3, 50, 0, 2),
+    ]
     result = wallets.calculate_pnl(ADDRESS, entries, {}, QUOTES)
     assert result["pnl"][0]["realized"] == 1
     assert len(result["trades"]) == 2
@@ -126,8 +133,7 @@ def test_failed_trade_preserves_inventory_and_paid_fees():
 
 
 def test_usdc_results_keep_their_own_unit():
-    entries = [transaction(1, 0, 100, -40, quote=USDC),
-               transaction(2, 100, 50, 30, quote=USDC)]
+    entries = [transaction(1, 0, 100, -40, quote=USDC), transaction(2, 100, 50, 30, quote=USDC)]
     result = wallets.calculate_pnl(ADDRESS, entries, {MINT: Decimal(50)}, QUOTES)
     assert result["pnl"][0]["realized"] == 0
     assert result["pnl"][1]["realized"] == 10
@@ -187,18 +193,39 @@ def fake_rpc(seen):
             return {"result": {"context": {"slot": 110}, "value": 8_000_000_000}}
         if method == "getTokenAccountsByOwner":
             program = body["params"][1]["programId"]
-            rows = [{"account": {"data": {"parsed": {"info": {
-                "mint": MINT, "owner": ADDRESS, "tokenAmount": {"amount": "100", "decimals": 0}
-            }}}}}] if program == TOKEN_PROGRAM else []
+            rows = (
+                [
+                    {
+                        "account": {
+                            "data": {
+                                "parsed": {
+                                    "info": {
+                                        "mint": MINT,
+                                        "owner": ADDRESS,
+                                        "tokenAmount": {"amount": "100", "decimals": 0},
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ]
+                if program == TOKEN_PROGRAM
+                else []
+            )
             return {"result": {"value": rows}}
         raise AssertionError(method)
+
     return call
 
 
 def download(*_):
-    return json.dumps({"data": [
-        {"id": "solana_" + mint, "attributes": fields} for mint, fields in QUOTES.items()
-    ]}).encode()
+    return json.dumps(
+        {
+            "data": [
+                {"id": "solana_" + mint, "attributes": fields} for mint, fields in QUOTES.items()
+            ]
+        }
+    ).encode()
 
 
 def test_collector_uses_finalized_history_both_token_programs_and_bounded_prices():
@@ -218,13 +245,19 @@ def test_collector_uses_finalized_history_both_token_programs_and_bounded_prices
 def test_paging_continues_on_partial_pages_and_stops_at_bound():
     seen = []
     original = fake_rpc(seen)
+
     def rpc(body, *, credits):
         if body["method"] == "getTransactionsForAddress":
             seen.append((body, credits))
             cursor = body["params"][1].get("paginationToken")
-            return {"result": {"data": [transaction(1 if not cursor else 2, 0, 100, -2)],
-                               "paginationToken": "100:1" if not cursor else "90:1"}}
+            return {
+                "result": {
+                    "data": [transaction(1 if not cursor else 2, 0, 100, -2)],
+                    "paginationToken": "100:1" if not cursor else "90:1",
+                }
+            }
         return original(body, credits=credits)
+
     result = wallets.collect_wallet(ADDRESS, at=AT, rpc=rpc, download=download)
     assert result["has_more"]
     assert len([body for body, _ in seen if body["method"] == "getTransactionsForAddress"]) == 2
@@ -245,21 +278,30 @@ def test_refresh_is_durable_and_shares_cooldown(database):
 def test_concurrent_refreshes_claim_one_paid_read(database, monkeypatch):
     seen = []
     original = wallets.collect_wallet
+
     def collect(address, **kwargs):
         seen.append(address)
         return original(address, **kwargs)
+
     monkeypatch.setattr(wallets, "collect_wallet", collect)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda _: wallets.refresh_wallet(
-            ADDRESS, at=AT, rpc=fake_rpc([]), download=download
-        ), range(4)))
+        list(
+            pool.map(
+                lambda _: wallets.refresh_wallet(
+                    ADDRESS, at=AT, rpc=fake_rpc([]), download=download
+                ),
+                range(4),
+            )
+        )
     assert len(seen) == 1
 
 
 def test_failure_keeps_saved_data_and_hides_provider_keys(database):
     wallets.refresh_wallet(ADDRESS, at=AT, rpc=fake_rpc([]), download=download)
+
     def fail(*_, **__):
         raise ValueError("https://private-provider/?api-key=secret")
+
     result = wallets.refresh_wallet(
         ADDRESS, at=AT + timedelta(minutes=20), rpc=fail, download=download
     )

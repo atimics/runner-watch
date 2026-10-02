@@ -165,8 +165,14 @@ def register_chain(address: str) -> str:
             "provisional_group", dedupe_key=wallet_id, created_at=moment, connection=db
         )
         attach_reference(
-            str(entity["id"]), "wallet", address, chain="solana", network="solana",
-            issuing_system="solana", learned_at=moment, connection=db,
+            str(entity["id"]),
+            "wallet",
+            address,
+            chain="solana",
+            network="solana",
+            issuing_system="solana",
+            learned_at=moment,
+            connection=db,
         )
     return wallet_id
 

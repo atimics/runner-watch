@@ -1,6 +1,6 @@
 {% extends "market_screen.html" %}
-{% macro amount(value, unit='', signed=false) -%}
-{{ ('%+.4f' if signed else '%.4f')|format(value) ~ (' ' ~ unit if unit else '') if value is not none else 'Pending' }}
+{% macro amount(value, unit='', signed=false, places=4) -%}
+{{ (('%+.' if signed else '%.') ~ places ~ 'f')|format(value) ~ (' ' ~ unit if unit else '') if value is not none else 'Pending' }}
 {%- endmacro %}
 {% block screen_title %}{{ wallet.label.name }} · Wallet · RATi{% endblock %}
 {% block detail_head %}<link rel="stylesheet" href="/static/onchain-wallet.css?v={{ static_version }}">{% endblock %}
@@ -11,21 +11,21 @@
 <p class="chain-address">{{ wallet.address }}</p>
 {% if wallet.label.label_date is defined %}<p class="chain-note">Source label · {{ wallet.label.label_date }} · <a href="{{ wallet.label.source_url }}" target="_blank" rel="noopener noreferrer">List entry ↗</a></p>{% endif %}
 <div class="chain-actions"><a href="https://solscan.io/account/{{ wallet.address }}" target="_blank" rel="noopener noreferrer">View on Solscan ↗</a><button type="button" data-wallet-refresh>{{ 'Refresh chain data' if wallet.updated_at is defined else 'Load chain data' }}</button></div>
-<p class="chain-note" role="status" data-wallet-status>{% if wallet.error %}{{ wallet.error }}{% elif wallet.status == 'pending' %}Chain history is waiting for its first read.{% elif wallet.status == 'stale' %}Saved data · {{ wallet.updated_at }}. Refresh for the latest holdings.{% else %}Updated {{ wallet.updated_at }} · {{ wallet.commitment|title }}{% endif %}</p>
+<p class="chain-note" role="status" data-wallet-status>{% if wallet.error %}{{ wallet.error }}{% elif wallet.status == 'pending' %}Chain history is waiting for its first read.{% elif wallet.status == 'stale' %}Saved data · {{ wallet.updated_at[:16]|replace('T', ' ') }} UTC. Refresh for the latest holdings.{% else %}Updated {{ wallet.updated_at[:16]|replace('T', ' ') }} UTC · {{ wallet.commitment|title }}{% endif %}</p>
 </header>
 {% if wallet.pnl is defined %}
 <section aria-label="Profit and loss" class="chain-pnl">
 {% for result in wallet.pnl %}
-<article><p class="eyebrow">Realized · {{ result.unit }}</p><strong class="{{ 'up' if result.realized >= 0 else 'down' }}">{{ amount(result.realized, result.unit, true) }}</strong><p>{{ result.closed_trades }} sales with known costs</p></article>
+<article><p class="eyebrow">Realized · {{ result.unit }}</p><strong class="{{ 'up' if result.realized is not none and result.realized >= 0 else 'down' if result.realized is not none else '' }}">{{ amount(result.realized, result.unit, true) }}</strong><p>{{ result.closed_trades }} sales with known costs</p></article>
 <article><p class="eyebrow">Open gains · {{ result.unit }}</p><strong class="{{ 'up' if result.unrealized is not none and result.unrealized >= 0 else 'down' if result.unrealized is not none else '' }}">{{ amount(result.unrealized, result.unit, true) }}</strong><p>{{ result.priced_positions }} positions with known costs and prices</p></article>
 {% endfor %}
 </section>
 <section class="chain-summary" aria-label="Wallet balances">
-<div><span>SOL balance</span><strong>{{ amount(wallet.balance_sol, 'SOL') }}</strong></div><div><span>Priced token holdings</span><strong>{{ '$' ~ '{:,.2f}'.format(wallet.holdings_value_usd) if wallet.holdings_value_usd is not none else 'Pending' }}</strong></div><div><span>Chain fees in loaded history</span><strong>{{ amount(wallet.fees_sol, 'SOL') }}</strong></div>
+<div><span>SOL balance</span><strong>{{ amount(wallet.balance_sol, 'SOL') }}</strong></div><div><span>Priced token holdings</span><strong>{{ '$' ~ '{:,.2f}'.format(wallet.holdings_value_usd) if wallet.holdings_value_usd is not none else 'Pending' }}</strong></div><div><span>Chain fees in loaded history</span><strong>{{ amount(wallet.fees_sol, 'SOL', places=8) }}</strong></div>
 </section>
 <details class="chain-coverage" open><summary>History and cost coverage</summary><p>{{ wallet.transactions }} transactions loaded{% if wallet.has_more %} · Older history available on Solscan{% endif %}. {{ wallet.unknown_sales }} sales and {{ wallet.unknown_holdings }} holdings have an unknown buying cost. {{ wallet.excluded_transactions }} transactions need more detail.</p>
-{% if wallet.oldest_at %}<p>{{ wallet.oldest_at }} to {{ wallet.newest_at }}</p>{% endif %}
-<p>Average buying cost from loaded trades. Transfers keep their cost pending. SOL trades include wallet fees and account costs. Holdings use current GeckoTerminal prices. PnL covers trades with known costs.</p></details>
+{% if wallet.oldest_at %}<p>{{ wallet.oldest_at[:16]|replace('T', ' ') }} to {{ wallet.newest_at[:16]|replace('T', ' ') }} UTC</p>{% endif %}
+<p>Average buying cost from loaded trades. Transfers keep their cost pending. SOL trades include wallet fees and account costs. Holdings use current GeckoTerminal prices. PnL covers trades with known costs. Trade venues: Pump, PumpSwap and Raydium CPMM.</p></details>
 <section aria-label="Token holdings"><h2>Holdings</h2><div class="chain-table-wrap"><table class="chain-table"><thead><tr><th>Token</th><th>Amount</th><th>Value</th><th>Buying cost</th><th>Open gain</th></tr></thead><tbody>{% for row in wallet.holdings %}<tr><td><a href="{{ row.href }}" target="_blank" rel="noopener noreferrer" title="{{ row.mint }}">{{ row.name }} ↗</a></td><td>{{ amount(row.quantity) }}</td><td>{{ '$' ~ '{:,.2f}'.format(row.value_usd) if row.value_usd is not none else 'Pending' }}</td><td>{{ amount(row.cost, row.unit) }}</td><td class="{{ 'up' if row.unrealized is not none and row.unrealized >= 0 else 'down' if row.unrealized is not none else '' }}">{{ amount(row.unrealized, row.unit, true) }}</td></tr>{% else %}<tr><td colspan="5">Token holdings will appear here.</td></tr>{% endfor %}</tbody></table></div></section>
 <section aria-label="Wallet trades"><h2>Trades</h2><div class="chain-table-wrap"><table class="chain-table"><thead><tr><th>Token</th><th>Trade</th><th>Paid / received</th><th>Realized PnL</th><th>Evidence</th></tr></thead><tbody>{% for row in wallet.trades %}<tr><td>{{ row.name }}</td><td>{{ row.side }} {{ amount(row.quantity) }}</td><td>{{ amount(row.cash, row.unit) }}</td><td>{{ amount(row.realized, row.unit, true) if row.side == 'Sell' else '—' }}</td><td><a href="{{ row.href }}" target="_blank" rel="noopener noreferrer">{{ row.at[:16]|replace('T', ' ') }} ↗</a></td></tr>{% else %}<tr><td colspan="5">Trades will appear as chain history arrives.</td></tr>{% endfor %}</tbody></table></div></section>
 <details class="chain-coverage"><summary>Transaction receipts</summary><ul class="chain-receipts">{% for row in wallet.receipts %}<li><a href="{{ row.href }}" target="_blank" rel="noopener noreferrer">{{ row.at[:16]|replace('T', ' ') }} · Slot {{ row.slot }} · {{ 'Failed' if row.failed else 'Confirmed' }} ↗</a></li>{% endfor %}</ul><p>History receipt {{ wallet.history_hash }}</p></details>
