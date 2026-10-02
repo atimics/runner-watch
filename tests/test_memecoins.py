@@ -243,7 +243,8 @@ def test_worker_refresh_runs_in_a_thread_and_cancels(monkeypatch):
         return []
 
     async def sleep(seconds):
-        assert seconds == memecoins.REFRESH_SECONDS
+        # Start to start: the sleep is the interval less what the refresh used.
+        assert memecoins.REFRESH_SECONDS < seconds <= memecoins.REFRESH_SECONDS + 1
         raise asyncio.CancelledError
 
     monkeypatch.setattr(main, "run_in_threadpool", run_refresh)

@@ -10,6 +10,61 @@ from runner_web.memecoin_replay_store import queue_replay
 HISTORY_DAYS = 7
 MAX_HISTORY_POINTS = 250_000
 MAX_DETAIL_HISTORY = 2016
+# Prices read on the fast loop, kept apart from the slow snapshot so neither
+# loop can overwrite the other: {"prices": {coin_id: {price, liquidity_usd, ...}}}.
+FAST_PRICES_KEY = "memecoin_fast_prices"
+
+
+def with_fast_price(
+    row: dict[str, Any], fast: dict[str, Any] | None, collected_at: Any
+) -> tuple[dict[str, Any], Any]:
+    """A row with its newer fast-loop price laid over it, and the time that price was read.
+
+    Only the price moves. Market cap and FDV follow it; the activity windows stay
+    as the slow loop saw them. A row with no newer fast price comes back as given.
+    """
+
+    entry = ((fast or {}).get("prices") or {}).get(row.get("id"))
+    if not isinstance(entry, dict):
+        return row, collected_at
+    try:
+        seen = datetime.fromisoformat(entry["observed_at"])
+        before = datetime.fromisoformat(row["observed_at"]) if row.get("observed_at") else None
+        price = float(entry["price"])
+        if price <= 0 or (before is not None and before >= seen):
+            return row, collected_at
+        merged = {**row, "price": price, "observed_at": entry["observed_at"]}
+        merged["liquidity_usd"] = entry.get("liquidity_usd", row.get("liquidity_usd"))
+        merged["time_basis"] = "chain_read"
+        merged["source"] = "Solana (Helius)"
+        old = row.get("price")
+        if old and old > 0:
+            for key in ("market_cap", "fully_diluted_valuation"):
+                if row.get(key) is not None:
+                    merged[key] = row[key] * price / old
+        return merged, entry["observed_at"]
+    except (KeyError, TypeError, ValueError):
+        return row, collected_at
+
+
+def save_fast_quotes(quotes: list[dict[str, Any]], *, observed_at: datetime) -> None:
+    """History points for fast-loop prices, so charts and Call fills see them."""
+
+    stamp = observed_at.isoformat()
+    with connection() as database:
+        for quote in quotes:
+            asset = database.execute(
+                "SELECT run_id FROM memecoin_assets WHERE coin_id=?", (quote["coin_id"],)
+            ).fetchone()
+            if asset is None:
+                continue
+            database.execute(
+                """
+                INSERT INTO memecoin_quote_history(coin_id,observed_at,collected_at,price,run_id)
+                VALUES(?,?,?,?,?) ON CONFLICT(coin_id,observed_at) DO NOTHING
+                """,
+                (quote["coin_id"], stamp, stamp, quote["price"], asset["run_id"]),
+            )
 
 
 def save_memecoin_snapshot(
