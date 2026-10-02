@@ -37,18 +37,7 @@ jobs:
     timeout-minutes: 4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
-        with:
-          python-version: "3.13"
-          enable-cache: true
+      # HTTP probes only. Browser rendering runs hourly in production-screens.yml
+      # and remains a blocking post-deploy/rollback gate in fly.yml.
       - run: scripts/smoke-production https://runners.rati.chat
       - run: scripts/smoke-production https://sports.rati.chat
-      - name: Render every production screen
-        run: scripts/test-live-screens
-      - name: Save failure screenshots
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: production-screen-failures
-          path: test-results/live-screens
-          if-no-files-found: ignore
