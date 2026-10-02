@@ -1,0 +1,19 @@
+{% extends "market_screen.html" %}
+{% block screen_title %}Wallets · RATi{% endblock %}
+{% block detail_head %}<link rel="stylesheet" href="/static/onchain-wallet.css?v={{ static_version }}">{% endblock %}
+{% block screen_main %}
+<div class="chain-wallet">
+<a class="back" href="/memecoins">← Memecoins</a>
+<header class="chain-heading"><p class="eyebrow">Solana</p><h1>Wallets</h1><p>Follow trades, holdings, and profit and loss.</p></header>
+<form action="/wallets" method="get" class="chain-search" role="search" aria-label="Wallet search">
+<label for="walletSearch">Find a name or enter a wallet address</label>
+<div><input id="walletSearch" name="q" type="search" maxlength="80" value="{{ catalog.query }}" placeholder="Name or Solana address" autocomplete="off"><button type="submit">Open</button></div>
+</form>
+<p class="chain-note">{{ catalog.wallets|length }} wallets · Labels from {{ catalog.label_date }} · <a href="https://github.com/sn3ll/KOL-Wallets-BULLX/blob/2712bbd655e226ee3fefdfcb2705fe765547ad96/Import.json" target="_blank" rel="noopener noreferrer">Source list ↗</a></p>
+<div class="chain-wallet-list" aria-label="Tracked wallets">
+{% for row in catalog.wallets %}
+<a class="chain-wallet-row" href="{{ row.href }}"><span class="chain-avatar" aria-hidden="true">{{ row.emoji }}</span><span><strong>{{ row.name }}</strong><small>{{ row.address[:6] }}…{{ row.address[-6:] }}</small></span><span class="chain-row-value">{% if row.snapshot %}<strong>{{ '%+.4f'|format(row.snapshot.pnl[0].realized) }} SOL</strong><small>Realized · known costs</small>{% else %}<strong>Open wallet</strong><small>View chain PnL</small>{% endif %}</span><span aria-hidden="true">↗</span></a>
+{% else %}<p class="chain-note">Try another name or enter a full Solana address.</p>{% endfor %}
+</div>
+</div>
+{% endblock %}
