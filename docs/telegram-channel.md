@@ -121,8 +121,13 @@ what is pending" but "pick the next segment".
 `next_segment` picks what plays next, and it is the whole of the variety rule:
 
 - **Priority.** `SEGMENT_ORDER` puts session briefings first (appointment
-  listening), then a published Flash report, a structured SEC filing, and the everyday runner
-  inventory that fills the gaps between them.
+  listening), then transitions and runners (the names about to run), then a
+  published Flash report and a structured SEC filing. News and social spikes
+  (`event`) only fill in when nothing else is waiting.
+- **Digest.** Ratifications arrive in bursts after the close. Newly ratified
+  names waiting in the same market go out as one post (up to 10), which counts
+  once against the daily cap; one post each let most of a burst expire unheard.
+- **Expiry.** A post still waiting after a day is retired as stale.
 - **Rotation.** While something else is waiting, the room never hears the same
   kind twice running. A runner follows the briefing; a briefing does not follow
   a briefing. No curation and no randomness — just "skip the kind you just

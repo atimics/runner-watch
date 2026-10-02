@@ -867,7 +867,8 @@ def test_the_rundown_rotates_away_from_the_kind_it_just_played(
         for _ in range(3)
     ]
 
-    assert kinds == ["research_report", "runner", "runner"]
+    # Runners outrank research, and rotation still gives the report its turn.
+    assert kinds == ["runner", "research_report", "runner"]
     assert len(sent) == 3
 
 
@@ -994,9 +995,9 @@ def test_the_rundown_picks_by_priority_then_rotates() -> None:
     report = [{"public_id": "one"}]
     briefing = [{"id": "pre-1"}]
 
-    # Priority: a session briefing outranks research, which outranks a runner.
+    # Priority: a session briefing outranks a runner, which outranks research.
     assert telegram.next_segment({"market_report": briefing, "runner": runner}) == "market_report"
-    assert telegram.next_segment({"research_report": report, "runner": runner}) == "research_report"
+    assert telegram.next_segment({"research_report": report, "runner": runner}) == "runner"
     assert telegram.next_segment({"runner": runner}) == "runner"
 
     # Rotation: skip the kind just played while something else is waiting.
