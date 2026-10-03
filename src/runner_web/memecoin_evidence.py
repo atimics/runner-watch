@@ -15,6 +15,7 @@ DAILY_CREDIT_CAP = 10_000
 # Prices cost about 1,500 credits a day. Every other read stops this far short of
 # the daily limit, so the forensic reads can never leave the board without prices.
 PRICE_RESERVE = 2_000
+WALLET_CREDIT_CAP = 2_000
 RETENTION_DAYS = 30
 MAX_TRANSACTIONS = 250_000
 PRUNE_BATCH_SIZE = 500
@@ -42,24 +43,54 @@ def reserve_credits(credits: int, *, at: datetime | None = None, lane: str = "ot
     limit = lane_limit(lane)
     if type(credits) is not int or credits <= 0 or credits > limit:
         raise CreditBudgetReached("Helius daily credit budget reached")
+    wallet_credits = credits if lane == "wallet" else 0
     with connection() as database:
         reserved = database.execute(
-            "INSERT INTO memecoin_helius_budget(day,reserved_credits,request_count,updated_at) "
-            "VALUES(?,?,1,?) ON CONFLICT(day) DO UPDATE SET "
+            "INSERT INTO memecoin_helius_budget"
+            "(day,reserved_credits,request_count,updated_at,wallet_credits) "
+            "VALUES(?,?,1,?,?) ON CONFLICT(day) DO UPDATE SET "
             "reserved_credits=memecoin_helius_budget.reserved_credits+excluded.reserved_credits,"
+            "wallet_credits=memecoin_helius_budget.wallet_credits+excluded.wallet_credits,"
             "request_count=memecoin_helius_budget.request_count+1,updated_at=excluded.updated_at "
-            "WHERE memecoin_helius_budget.reserved_credits+excluded.reserved_credits<=? "
+            "WHERE memecoin_helius_budget.reserved_credits+excluded.reserved_credits<=? AND "
+            "(?=0 OR memecoin_helius_budget.wallet_credits+excluded.wallet_credits<=?) "
             "RETURNING day",
-            (current.date().isoformat(), credits, current.isoformat(), limit),
+            (
+                current.date().isoformat(),
+                credits,
+                current.isoformat(),
+                wallet_credits,
+                limit,
+                wallet_credits,
+                wallet_credit_limit(),
+            ),
         ).fetchone()
     if reserved is None:
         raise CreditBudgetReached("Helius daily credit budget reached")
 
 
+def wallet_credit_limit() -> int:
+    return min(WALLET_CREDIT_CAP, max(0, lane_limit("other") // 4))
+
+
+def release_wallet_credits(credits: int, *, at: datetime) -> None:
+    """Settle a short wallet page against its ceiling on the charged UTC day."""
+    if credits <= 0:
+        return
+    with connection() as database:
+        database.execute(
+            "UPDATE memecoin_helius_budget SET reserved_credits=reserved_credits-?,"
+            "wallet_credits=wallet_credits-? "
+            "WHERE day=? AND reserved_credits>=? AND wallet_credits>=?",
+            (credits, credits, at.date().isoformat(), credits, credits),
+        )
+
+
 def budget_status(*, at: datetime) -> dict[str, Any]:
     with connection() as database:
         row = database.execute(
-            "SELECT reserved_credits,request_count FROM memecoin_helius_budget WHERE day=?",
+            "SELECT reserved_credits,request_count,wallet_credits "
+            "FROM memecoin_helius_budget WHERE day=?",
             (at.date().isoformat(),),
         ).fetchone()
     used = row["reserved_credits"] if row else 0
@@ -69,6 +100,8 @@ def budget_status(*, at: datetime) -> dict[str, Any]:
         "reserved_credits": used,
         "remaining_credits": max(0, credit_limit() - used),
         "day": at.date().isoformat(),
+        "wallet_credits": row["wallet_credits"] if row else 0,
+        "wallet_daily_limit": wallet_credit_limit(),
     }
 
 

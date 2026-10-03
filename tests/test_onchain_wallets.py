@@ -233,13 +233,19 @@ def test_collector_uses_finalized_history_both_token_programs_and_bounded_prices
     result = wallets.collect_wallet(ADDRESS, at=AT, rpc=fake_rpc(seen), download=download)
     assert result["holdings"][0]["cost"] == 2
     assert result["balance_sol"] == 8
-    assert sum(credits for _, credits in seen) == 13
+    assert sum(credits for _, credits in seen) == 103
     request = seen[0][0]["params"][1]
     assert request["filters"]["tokenAccounts"] == "balanceChanged"
     assert request["filters"]["status"] == "any"
     assert request["commitment"] == "finalized"
     assert request["filters"]["blockTime"]["lte"] == int(AT.timestamp())
-    assert seen[-1][0]["params"][1]["programId"] == TOKEN_2022_PROGRAM
+    assert request["sortOrder"] == "asc"
+    assert request["limit"] == 1000
+    assert {
+        body["params"][1]["programId"]
+        for body, _ in seen
+        if body["method"] == "getTokenAccountsByOwner"
+    } == {TOKEN_PROGRAM, TOKEN_2022_PROGRAM}
 
 
 def test_large_wallet_keeps_full_balances_and_pages_without_more_paid_reads(database):
@@ -282,7 +288,7 @@ def test_large_wallet_keeps_full_balances_and_pages_without_more_paid_reads(data
     assert result["unknown_holdings"] == 2626
     assert result["holdings_value_usd"] == 400
     assert result["pnl"][0]["unrealized"] == 2
-    assert sum(credits for _, credits in seen) == 13
+    assert sum(credits for _, credits in seen) == 103
     assert len(price_requests) == 1
     assert len(price_requests[0]) == 30
     assert price_requests[0][:3] == [SOL, USDC, MINT]
@@ -320,7 +326,7 @@ def test_account_bound_is_checked_before_parsing():
         wallets.collect_wallet(ADDRESS, at=AT, rpc=rpc, download=download)
 
 
-def test_paging_continues_on_partial_pages_and_stops_at_bound():
+def test_paging_continues_on_partial_pages_and_stops_at_bound(database):
     seen = []
     original = fake_rpc(seen)
 
@@ -336,8 +342,16 @@ def test_paging_continues_on_partial_pages_and_stops_at_bound():
             }
         return original(body, credits=credits)
 
-    result = wallets.collect_wallet(ADDRESS, at=AT, rpc=rpc, download=download)
+    result = wallets.refresh_wallet(ADDRESS, at=AT, rpc=rpc, download=download)
     assert result["has_more"]
+    assert result["holdings"][0]["cost"] is None
+    result = wallets.refresh_wallet(
+        ADDRESS, at=AT + timedelta(minutes=1), rpc=rpc, download=download
+    )
+    assert result["transactions"] == 2
+    requests = [body for body, _ in seen if body["method"] == "getTransactionsForAddress"]
+    assert requests[1]["params"][1]["paginationToken"] == "100:1"
+    assert requests[1]["params"][1]["filters"] == requests[0]["params"][1]["filters"]
     assert len([body for body, _ in seen if body["method"] == "getTransactionsForAddress"]) == 2
 
 

@@ -15,7 +15,7 @@
       });
       if (!response.ok) throw new Error('Please try again in a minute.');
       const payload = await response.json();
-      if (payload.status === 'ready' && !payload.error) {
+      if (payload.status === 'ready' && !payload.error && payload.updated_at !== root.dataset.updatedAt) {
         location.reload();
         return;
       }
@@ -28,4 +28,26 @@
   }
   button.addEventListener('click', refresh);
   if (root.dataset.status === 'pending' && root.dataset.providerReady === 'true') refresh();
+  async function progress() {
+    if (!busy) {
+      try {
+        const response = await fetch('/api/wallets/' + encodeURIComponent(root.dataset.walletId) + '/pnl?summary=true', {
+          headers: {'Accept': 'application/json'}, credentials: 'same-origin'
+        });
+        if (response.ok) {
+          const payload = await response.json();
+          if (payload.updated_at && payload.updated_at !== root.dataset.updatedAt) {
+            location.reload();
+            return;
+          }
+          if (payload.error) status.textContent = payload.error;
+          if (payload.backfill?.status === 'complete') return;
+        }
+      } catch {
+        // The next poll can use the saved page while a request recovers.
+      }
+    }
+    setTimeout(progress, 15000);
+  }
+  if (root.dataset.backfill === 'true') setTimeout(progress, 15000);
 })();

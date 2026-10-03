@@ -103,14 +103,19 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
         return RedirectResponse("/wallet/" + wallet_id, status_code=303)
 
     @router.get("/api/wallets/{wallet_id}/pnl")
-    def wallet_pnl_api(wallet_id: str, request: Request) -> Response:
+    def wallet_pnl_api(wallet_id: str, request: Request, summary: bool = False) -> Response:
         from runner_web.onchain_wallets import saved_wallet
 
         dependencies.enforce_rate(request, "chain-wallet-pnl", limit=60, seconds=60)
         resolved = resolve_wallet(wallet_id)
         if not resolved or resolved["kind"] != "solana":
             raise HTTPException(404, "Solana wallet not found")
-        return JSONResponse(saved_wallet(resolved["address"]))
+        snapshot = saved_wallet(resolved["address"])
+        if summary:
+            snapshot = {
+                key: snapshot.get(key) for key in ("status", "error", "updated_at", "backfill")
+            }
+        return JSONResponse(snapshot)
 
     @router.post("/api/wallets/{wallet_id}/refresh")
     def wallet_pnl_refresh_api(wallet_id: str, request: Request) -> Response:
