@@ -910,7 +910,8 @@ class _Stages:
     def log(self, status: str) -> None:
         total = time.monotonic() - self.started
         detail = " ".join(f"{name}={value:.1f}" for name, value in self.seconds.items())
-        LOG.info("memecoin_refresh_stages status=%s total=%.1f %s", status, total, detail)
+        # Warning level: production only prints warnings, and this is one line a cycle.
+        LOG.warning("memecoin_refresh_stages status=%s total=%.1f %s", status, total, detail)
 
 
 def _collect_helius(
