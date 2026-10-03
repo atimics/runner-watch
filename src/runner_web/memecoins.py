@@ -16,7 +16,7 @@ from typing import Any
 from runner_watch.ingestion import SourceFetch
 from runner_watch.xml_security import read_limited
 from runner_web.db import connection
-from runner_web.helius_discovery import RPC_URL, Rpc, rpc_request
+from runner_web.helius_discovery import RPC_URL, Rpc, price_request, rpc_request
 from runner_web.ingestion import record_source_fetch
 from runner_web.memecoin_chain_ingestion import collect_chain as discover_pools
 from runner_web.memecoin_chain_parser import coin_search_rank, short_address
@@ -30,10 +30,12 @@ from runner_web.memecoin_model import assess_memecoin, display_assessment
 from runner_web.memecoin_ratify import ratify_rows
 from runner_web.memecoin_ratify import standards as ratify_standards
 from runner_web.memecoin_store import (
+    FAST_PRICES_KEY,
     memecoin_history,
     memecoin_state_changes,
     save_memecoin_snapshot,
     stored_memecoin,
+    with_fast_price,
 )
 from runner_web.memecoin_watch import creator_sells, launch_bundles, recent_findings
 from runner_web.ratification_records import safely_record
@@ -542,6 +544,18 @@ def is_memecoin_view(path: str) -> bool:
     )
 
 
+_AUTOMATED_AGENT = re.compile(
+    r"bot|crawl|spider|slurp|preview|monitor|uptime|headless|curl|wget|python|httpx|go-http",
+    re.IGNORECASE,
+)
+
+
+def is_automated_agent(user_agent: str) -> bool:
+    """Crawlers, link previews and uptime checks: no one is reading, so no view."""
+
+    return not user_agent or bool(_AUTOMATED_AGENT.search(user_agent))
+
+
 def view_note_due(now: float) -> bool:
     """Whether this process should record a view now (once a minute at most)."""
 
@@ -881,11 +895,32 @@ def _with_chain_prices(
     return sorted(merged, key=lambda row: (-(row.get("volume_24h") or 0), row["id"]))
 
 
+class _Stages:
+    """Seconds each stage of a refresh took, logged as one line so a slow cycle shows where."""
+
+    def __init__(self) -> None:
+        self.started = self.last = time.monotonic()
+        self.seconds: dict[str, float] = {}
+
+    def mark(self, name: str) -> None:
+        now = time.monotonic()
+        self.seconds[name] = self.seconds.get(name, 0.0) + now - self.last
+        self.last = now
+
+    def log(self, status: str) -> None:
+        total = time.monotonic() - self.started
+        detail = " ".join(f"{name}={value:.1f}" for name, value in self.seconds.items())
+        # Warning level: production only prints warnings, and this is one line a cycle.
+        LOG.warning("memecoin_refresh_stages status=%s total=%.1f %s", status, total, detail)
+
+
 def _collect_helius(
-    *, download: Download, at: datetime, rpc: Rpc | None = None
+    *, download: Download, at: datetime, rpc: Rpc | None = None, stages: _Stages | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    stages = stages or _Stages()
     quiet = memecoins_quiet(at)
     discovery = discover_pools(at=at, rpc=rpc, quiet=quiet)
+    stages.mark("discovery")
     with connection() as database:
         saved = database.execute(
             "SELECT value FROM worker_state WHERE key='helius_discovered_pools'"
@@ -937,6 +972,7 @@ def _collect_helius(
         "mode": "resumable",
     }
     _save_state("memecoin_integrity_coverage", coverage, at)
+    stages.mark("forensics")
     curves = _curve_watch(
         discovery.get("curves", []),
         _saved_list("memecoin_curve_watch"),
@@ -957,8 +993,10 @@ def _collect_helius(
     originals, _, _ = find_originals(
         bursts, original_cache, download=download, at=at, pause=0, max_searches=0
     )
+    stages.mark("originals")
     tracked = {item["token_address"] for item in selected + curves}
     searched, looked_up = _searched_pools(tracked, download=download, at=at)
+    stages.mark("searched")
     tracked |= {item["token_address"] for item in searched}
     found = [
         {
@@ -984,10 +1022,12 @@ def _collect_helius(
             chain = chain_prices(
                 [item for item in allowed.values() if item.get("venue") != "bonding_curve"],
                 curves,
-                rpc=rpc or rpc_request,
+                # Prices spend from their own lane, which other reads cannot use up.
+                rpc=rpc or price_request,
             )
         except Exception:
             LOG.warning("Chain prices failed; quoting from GeckoTerminal", exc_info=True)
+    stages.mark("chain_prices")
     addresses = list(allowed)
     if source == "chain" and chain is not None:
         priced = chain["prices"]
@@ -1000,6 +1040,7 @@ def _collect_helius(
         addresses = [address for address in addresses if address not in priced] + shortlist
         extra |= set(shortlist)
     payload = _gecko_quotes(addresses, allowed, extra, download=download, pause_first=looked_up)
+    stages.mark("gecko_quotes")
     rows = normalize_chain_pools({"data": payload}, at=at)
     if chain is not None and source == "shadow":
         _save_state("memecoin_price_check", _price_check(rows, chain, at), at)
@@ -1011,12 +1052,14 @@ def _collect_helius(
         bursts, original_cache, download=download, at=at, pause=QUOTE_PAUSE_SECONDS
     )
     _save_state("memecoin_copycat_originals", original_cache, at)
+    stages.mark("original_search")
     # Creator selling and bundled launches, from one-credit reads; they join the
     # forensic findings so the assessment sets AVOID and shows their receipts.
     analytics["findings"] = analytics["findings"] + _watch_findings(
         rows, rpc=rpc or rpc_request, at=at
     )
     _save_state("memecoin_forensics", analytics, at)
+    stages.mark("watch_findings")
     claims = {
         event["token_address"]: event
         for event in sorted(discovery.get("events", []), key=lambda event: event["observed_at"])
@@ -1044,8 +1087,11 @@ def _collect_helius(
     mark_copycats(rows, bursts, originals)
     for row in rows:
         row["early"] = early_signal(row)
+    stages.mark("assess")
     attach_real_liquidity(rows, download=download)
+    stages.mark("liquidity")
     _ratify(rows, chain, rpc=rpc or rpc_request, at=at)
+    stages.mark("ratify")
     # A pool or curve that traded keeps its slot next cycle, busiest first.
     # Without GeckoTerminal's windows, a chain price that moved since last
     # cycle is the sign of trading.
@@ -1101,9 +1147,13 @@ def refresh_memecoins(
         ).fetchone()
     if not claimed:
         return {"status": "cached"}
+    stages = _Stages()
     try:
-        rows, metadata = _collect_helius(download=download or _download, at=started, rpc=rpc)
+        rows, metadata = _collect_helius(
+            download=download or _download, at=started, rpc=rpc, stages=stages
+        )
     except Exception as exc:
+        stages.log("error")
         LOG.exception("Memecoin refresh failed")
         run_id = record_source_fetch(
             SourceFetch.failure(
@@ -1129,7 +1179,10 @@ def refresh_memecoins(
             partial=metadata.get("partial", False),
         )
     )
+    stages.mark("record")
     save_memecoin_snapshot(rows, run_id=run_id, collected_at=collected_at)
+    stages.mark("save")
+    stages.log("ok")
     return {"status": "ok", "count": len(rows), "run_id": run_id}
 
 
@@ -1228,10 +1281,14 @@ def memecoin_market(
     current = at or datetime.now(UTC)
     states = _market_states()
     snapshot = states.get("memecoins_snapshot") or {}
-    rows = [
-        _quote_display(row, snapshot.get("collected_at"), current)
-        for row in snapshot.get("rows", [])
-    ]
+    fast = _fast_prices()
+    rows = []
+    fast_reads = []
+    for saved_row in snapshot.get("rows", []):
+        priced, read_at = with_fast_price(saved_row, fast, snapshot.get("collected_at"))
+        if priced is not saved_row and (moment := _time(read_at)):
+            fast_reads.append(moment)
+        rows.append(_quote_display(priced, read_at, current))
     findings = (states.get("memecoin_forensics") or {}).get("findings") or []
     for row in rows:
         row["findings"] = [
@@ -1240,6 +1297,9 @@ def memecoin_market(
             if row.get("token_address") and finding.get("token_address") == row["token_address"]
         ]
     collected = _time(snapshot.get("collected_at"))
+    # A fast price read counts as a collection: the board is as fresh as its newest price.
+    if fast_reads and (collected is None or max(fast_reads) > collected):
+        collected = max(fast_reads)
     stale = collected is None or not 0 <= (current - collected).total_seconds() <= STALE_SECONDS
     total = len(rows)
     status = "stale" if rows and (stale or all(row["stale"] for row in rows)) else "ok"
@@ -1291,7 +1351,9 @@ def memecoin_market(
         "status": status,
         "query": query,
         "sort": sort,
-        "collected_at": snapshot.get("collected_at"),
+        "collected_at": collected.isoformat()
+        if fast_reads and collected
+        else snapshot.get("collected_at"),
         "run_id": snapshot.get("run_id"),
         "refresh_failed": bool(states.get("memecoins_error")),
         "currency": "USD",
@@ -1311,6 +1373,26 @@ def memecoin_market(
     }
 
 
+def _fast_prices() -> dict[str, Any] | None:
+    """The fast loop's saved prices; a failed read leaves the board on the slow snapshot."""
+
+    try:
+        saved = _state_dict_value(FAST_PRICES_KEY)
+    except Exception:
+        LOG.warning("Fast prices unreadable", exc_info=True)
+        return None
+    return saved if isinstance(saved, dict) else None
+
+
+def _state_dict_value(key: str) -> Any:
+    with connection() as database:
+        row = database.execute("SELECT value FROM worker_state WHERE key=?", (key,)).fetchone()
+    try:
+        return json.loads(row["value"]) if row else None
+    except (TypeError, ValueError):
+        return None
+
+
 def snapshot_version() -> str:
     """Collected-at of the current quote snapshot; changes on every refresh.
 
@@ -1318,7 +1400,16 @@ def snapshot_version() -> str:
     """
 
     snapshot = _market_states(keys=("memecoins_snapshot",)).get("memecoins_snapshot") or {}
-    return str(snapshot.get("collected_at") or "")
+    # A fast price read changes what the board shows, so it changes the version too.
+    fast = max(
+        (
+            str(entry.get("observed_at") or "")
+            for entry in ((_fast_prices() or {}).get("prices") or {}).values()
+            if isinstance(entry, dict)
+        ),
+        default="",
+    )
+    return str(snapshot.get("collected_at") or "") + (f"+{fast}" if fast else "")
 
 
 def memecoin_detail(
@@ -1339,6 +1430,10 @@ def memecoin_detail(
             "collected_at": snapshot.get("collected_at"),
             "run_id": snapshot.get("run_id"),
         }
+    fast = _fast_prices()
+    priced, read_at = with_fast_price(saved["coin"], fast, saved["collected_at"])
+    if priced is not saved["coin"]:
+        saved = {**saved, "coin": priced, "collected_at": read_at}
     coin = _quote_display(saved["coin"], saved["collected_at"], current)
     coin["findings"] = [
         finding

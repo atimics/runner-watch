@@ -360,12 +360,14 @@ def test_memecoin_observations_read_the_saved_quote():
     assert found[MINT]["tag"] == "setup" and found[MINT]["ratified"] is True
 
 
-def test_halts_are_followed_only_for_ratified_or_called_stocks():
-    with db.connection() as database:
-        run_detect(database, [stock("GOOD", ratified=True), stock("BADD", ratified=False)], AT)
-        rows = [
-            {"ticker": "GOOD", "event_type": "trading_halt"},
-            {"ticker": "BADD", "event_type": "trading_halt"},
-            {"ticker": "NEWS", "event_type": "news_article"},
-        ]
-        assert telegram_outbox._followed_halt_tickers(database, rows) == {"GOOD"}
+def test_an_unchecked_coin_standard_is_unknown_not_a_loss():
+    from runner_web.transition_alerts import _coin_ratified
+
+    unchecked = {"ratified": False, "unchecked": 6, "standards": [{"met": True}, {"met": None}]}
+    failing = {"ratified": False, "unchecked": 6, "standards": [{"met": False}, {"met": None}]}
+
+    # A failed chain read leaves standards unchecked: not news.
+    assert _coin_ratified(unchecked) is None
+    assert _coin_ratified(failing) is False
+    assert _coin_ratified({"ratified": True}) is True
+    assert _coin_ratified(None) is None

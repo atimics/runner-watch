@@ -219,6 +219,7 @@ from runner_web.memecoin_routes import (
 )
 from runner_web.memecoins import (
     REFRESH_SECONDS,
+    is_automated_agent,
     is_memecoin_view,
     memecoin_detail,
     memecoin_market,
@@ -974,6 +975,7 @@ def _start_worker_tasks(
         asyncio.create_task(case_monitor_worker(), name="case-monitor"),
         asyncio.create_task(kol_worker(), name="kol"),
         asyncio.create_task(memecoin_worker(), name="memecoins"),
+        asyncio.create_task(memecoin_fast_price_worker(), name="memecoin-fast-prices"),
         asyncio.create_task(memecoin_replay_worker(), name="memecoin-replays"),
         asyncio.create_task(market_actor_worker(), name="market-actors"),
         asyncio.create_task(call_settlement_worker(), name="call-settlement"),
@@ -2961,8 +2963,23 @@ def settle_open_calls() -> dict[str, Any]:
     }
 
 
+async def memecoin_fast_price_worker() -> None:
+    """Re-price the watched coins on their own short loop, apart from the slow refresh."""
+    from runner_web.memecoin_fast_prices import FAST_PRICE_SECONDS, refresh_watched_prices
+
+    while True:
+        try:
+            await run_in_threadpool(refresh_watched_prices)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("Memecoin fast prices failed")
+        await asyncio.sleep(FAST_PRICE_SECONDS)
+
+
 async def memecoin_worker() -> None:
     while True:
+        cycle_started = time.monotonic()
         try:
             await run_in_threadpool(refresh_memecoins)
         except asyncio.CancelledError:
@@ -2985,16 +3002,17 @@ async def memecoin_worker() -> None:
             raise
         except Exception:
             LOG.exception("Memecoin Call fills failed")
-        await asyncio.sleep(REFRESH_SECONDS)
+        # The interval runs start to start, so a long refresh does not stretch it.
+        await asyncio.sleep(max(30, REFRESH_SECONDS + 1 - (time.monotonic() - cycle_started)))
 
 
 async def memecoin_replay_worker() -> None:
     """Render saved replay evidence so the coin page can show it."""
-    from runner_web.memecoin_replay_store import render_pending_replays
+    from runner_web.memecoin_replay_store import render_pending_replays_isolated
 
     while True:
         try:
-            await run_in_threadpool(render_pending_replays)
+            await run_in_threadpool(render_pending_replays_isolated)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -3074,6 +3092,7 @@ async def security_headers(request: Request, call_next: Any) -> Response:
             request.method == "GET"
             and response.status_code < 400
             and is_memecoin_view(request.url.path)
+            and not is_automated_agent(request.headers.get("user-agent", ""))
             and view_note_due(time.monotonic())
         ):
             # Someone is reading memecoins, so the worker keeps its full sampling.

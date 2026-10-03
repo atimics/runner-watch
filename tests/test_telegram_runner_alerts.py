@@ -821,8 +821,8 @@ def test_each_segment_is_its_own_message_with_its_own_card(
     assert web_main.dispatch_telegram_posts()["status"] == "empty"
 
 
-def test_halt_events_reach_the_channel_once(alert_environment, monkeypatch: MonkeyPatch) -> None:
-    """Halt Desk: the already-written event formatter finally has inventory."""
+def test_halts_stay_off_the_channel(alert_environment, monkeypatch: MonkeyPatch) -> None:
+    """The channel posts names about to run; a halt, even on a ratified stock, is not one."""
 
     sent: list[str] = []
     monkeypatch.setattr(
@@ -839,46 +839,6 @@ def test_halt_events_reach_the_channel_once(alert_environment, monkeypatch: Monk
             "VALUES ('stock','HALT','watch',1,?)",
             (recent,),
         )
-
-    result = web_main.dispatch_telegram_posts()
-
-    assert result["announcement"]["kind"] == "event"
-    assert result["events"]["queued"] == 1
-    assert len(sent) == 1
-    assert "HALT" in sent[0]
-    assert f"{web_main.RUNNERS_ORIGIN}/stock/HALT" in sent[0]
-    # Delivered once, not on every sweep.
-    assert web_main.dispatch_telegram_posts()["status"] == "empty"
-
-
-def test_halts_on_names_nobody_follows_stay_off_the_channel(
-    alert_environment, monkeypatch: MonkeyPatch
-) -> None:
-    sent: list[str] = []
-    monkeypatch.setattr(
-        web_main,
-        "telegram_send_post",
-        lambda config, text, **_kw: sent.append(text),
-    )
-    web_main.dispatch_telegram_posts()
-    _insert_halt("halt-3", "NOBODY", event_at=datetime.now(UTC).isoformat())
-
-    assert web_main.dispatch_telegram_posts()["status"] == "empty"
-    assert sent == []
-
-
-def test_resumed_halt_events_stay_off_the_channel(
-    alert_environment, monkeypatch: MonkeyPatch
-) -> None:
-    sent: list[str] = []
-    monkeypatch.setattr(
-        web_main,
-        "telegram_send_post",
-        lambda config, text, **_kw: sent.append(text),
-    )
-    web_main.dispatch_telegram_posts()
-    recent = datetime.now(UTC).isoformat()
-    _insert_halt("halt-2", "BACK", event_at=recent, status="resume_announced")
 
     assert web_main.dispatch_telegram_posts()["status"] == "empty"
     assert sent == []

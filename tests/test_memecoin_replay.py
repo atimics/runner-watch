@@ -7,6 +7,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 from threading import Event
 
 import pytest
@@ -461,7 +462,9 @@ def test_replay_worker_renders_and_never_posts_to_the_channel(monkeypatch):
         assert seconds == 15
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(store, "render_pending_replays", lambda: calls.append("render") or {})
+    monkeypatch.setattr(
+        store, "render_pending_replays_isolated", lambda: calls.append("render") or {}
+    )
     monkeypatch.setattr(main, "run_in_threadpool", inline)
     monkeypatch.setattr(main.asyncio, "sleep", stop)
     with pytest.raises(asyncio.CancelledError):
@@ -473,3 +476,15 @@ def test_a_new_detection_queues_no_channel_post():
     collect()
     with db.connection() as database:
         assert database.execute("SELECT COUNT(*) FROM memecoin_replay_posts").fetchone()[0] == 0
+
+
+def test_the_replay_job_runs_in_a_child_that_reads_the_same_database(monkeypatch):
+    collect()
+    # The child reads its database and code from the environment, like the worker's.
+    monkeypatch.setenv("DATABASE_PATH", str(db.DATABASE_PATH))
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("PYTHONPATH", str(Path(store.__file__).resolve().parents[1]))
+
+    assert store.render_pending_replays_isolated() == {"ready": 1, "deferred": 0}
+    with db.connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM memecoin_replays").fetchone()[0] == 1
