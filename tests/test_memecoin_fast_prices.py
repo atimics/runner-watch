@@ -146,7 +146,7 @@ def test_open_calls_are_watched_even_when_the_coin_did_not_trade(market_db):
 def test_refresh_logs_where_the_time_went(market_db, caplog):
     body = json.dumps([]).encode()
     with (
-        caplog.at_level("INFO", logger="runner_web.memecoins"),
+        caplog.at_level("WARNING", logger="runner_web.memecoins"),
         patch.object(memecoins, "_collect_helius", side_effect=ValueError("down")),
     ):
         memecoins.refresh_memecoins(download=lambda *_: body, at=AT)
