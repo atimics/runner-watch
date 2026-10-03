@@ -47,6 +47,16 @@ def _call_coin_ids() -> list[str]:
     return [str(row["coin_id"]) for row in rows]
 
 
+def _waiting_coin_ids() -> set[str]:
+    """Coins with a Call order waiting for its next quote."""
+
+    with connection() as database:
+        rows = database.execute(
+            "SELECT DISTINCT coin_id FROM memecoin_call_orders WHERE status='pending'"
+        ).fetchall()
+    return {str(row["coin_id"]) for row in rows}
+
+
 def watched_rows(snapshot_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Open Calls first, then the coins that traded last cycle, busiest first."""
 
@@ -119,5 +129,5 @@ def refresh_watched_prices(*, at: datetime | None = None, rpc: Rpc | None = None
         }
         quotes.append({"coin_id": row["id"], "price": quote["price"]})
     _save_state(FAST_PRICES_KEY, {"prices": prices}, current)
-    save_fast_quotes(quotes, observed_at=current)
+    save_fast_quotes(quotes, observed_at=current, every_tick=_waiting_coin_ids())
     return {"status": "ok", "count": len(quotes)}
