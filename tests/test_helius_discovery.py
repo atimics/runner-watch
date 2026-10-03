@@ -209,13 +209,14 @@ def test_full_refresh_keeps_evidence_before_quotes_arrive(database):
     assert market["rows"] == []
     assert market["integrity_alerts"][0]["net_token_amount"] == "6.000000"
     assert market["integrity_coverage"]["received_transactions"] == 6
+    # Paid reads run every 15 minutes.
     again = memecoins.refresh_memecoins(
-        at=AT + timedelta(minutes=5), rpc=lambda _: reply([sale()]), download=download
+        at=AT + timedelta(minutes=15), rpc=lambda _: reply([sale()]), download=download
     )
     assert again["status"] == "ok"
     assert len(memecoins.memecoin_market(at=AT)["integrity_alerts"]) == 1
     failed = memecoins.refresh_memecoins(
-        at=AT + timedelta(minutes=10), rpc=lambda _: {"error": {}}, download=download
+        at=AT + timedelta(minutes=30), rpc=lambda _: {"error": {}}, download=download
     )
     assert failed["status"] == "error"
     assert memecoins.memecoin_market(at=AT)["integrity_alerts"][0]["signature"]
@@ -295,7 +296,7 @@ def test_a_launch_is_quoted_on_its_bonding_curve_until_it_graduates(database):
 
     # Once the coin graduates to a pool, its curve is no longer quoted.
     requests.clear()
-    later = AT + timedelta(minutes=5)
+    later = AT + timedelta(minutes=15)
     graduation = creation()
     graduation["blockTime"] = int(later.timestamp()) - 120
     _collect_helius(at=later, rpc=lambda _: reply([graduation]), download=download)
@@ -572,11 +573,15 @@ def test_a_searched_address_with_no_pool_is_given_up_on_but_a_failed_lookup_is_n
     assert memecoins._searched_pools(set(), download=failing, at=AT) == ([], False)
 
 
-def test_graduations_are_read_every_third_run_within_the_same_pages(database):
-    from runner_web.memecoin_chain_ingestion import MIGRATION_AUTHORITY, collect_chain
+def test_paid_reads_run_every_15_minutes_with_graduations_each_time(database):
+    from runner_web.memecoin_chain_ingestion import (
+        MIGRATION_AUTHORITY,
+        MINT_AUTHORITY,
+        collect_chain,
+    )
 
     runs = []
-    for number in range(3):
+    for number in range(7):
         addresses = []
 
         def rpc(body, addresses=addresses):
@@ -586,13 +591,26 @@ def test_graduations_are_read_every_third_run_within_the_same_pages(database):
         collect_chain(at=AT + timedelta(minutes=5 * number), rpc=rpc)
         runs.append(addresses)
 
-    # Two pages and at most one wallet page each run, so the credit cost is unchanged.
-    assert all(len(addresses) <= 3 for addresses in runs)
-    assert [MIGRATION_AUTHORITY in addresses for addresses in runs] == [True, False, False]
-    # The launch stream takes the same kind of slot in another run.
-    from runner_web.memecoin_chain_ingestion import MINT_AUTHORITY
+    # Paid at 0, 15 and 30 minutes only; nothing in between.
+    assert [bool(addresses) for addresses in runs] == [True, False, False] * 2 + [True]
+    paid = [addresses for addresses in runs if addresses]
+    # The graduation page and one sample each time, at most 30 credits with a wallet page.
+    assert all(addresses[0] == MIGRATION_AUTHORITY and len(addresses) <= 3 for addresses in paid)
+    # Launches every other paid run; a program sample in between.
+    assert [addresses[1] == MINT_AUTHORITY for addresses in paid] == [True, False, True]
 
-    assert [MINT_AUTHORITY in addresses for addresses in runs] == [False, False, True]
+
+def test_a_spent_budget_skips_paid_reads_and_keeps_saved_events(database, monkeypatch):
+    from runner_web import memecoin_evidence as evidence
+    from runner_web.memecoin_chain_ingestion import collect_chain
+
+    def spent(body):
+        raise evidence.CreditBudgetReached("Helius daily credit budget reached")
+
+    result = collect_chain(at=AT, rpc=spent)
+
+    assert result["errors"] == ["Daily credit budget reached"]
+    assert result["pools"] == []
 
 
 def test_a_graduation_creates_its_pool_from_the_migration(database):
@@ -812,7 +830,7 @@ def test_quiet_runs_read_only_the_graduations(database):
         collect_chain(at=AT + timedelta(minutes=5 * number), rpc=rpc, quiet=True)
         runs.append(addresses)
 
-    # No program or wallet samples: one graduation page every third run.
+    # No program or wallet samples: one graduation page every 15 minutes.
     assert runs == [[MIGRATION_AUTHORITY], [], []]
 
 
@@ -827,6 +845,9 @@ def test_a_view_on_the_site_keeps_the_worker_sampling(database, monkeypatch):
     client = TestClient(main.app)
 
     client.get("/memecoins/coin/chain-missing/card.png")
+    assert memecoins._market_states(keys=("memecoin_last_view",)) == {}
+    # A crawler is not a reader.
+    client.get("/memecoins", headers={"User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1)"})
     assert memecoins._market_states(keys=("memecoin_last_view",)) == {}
     assert client.get("/memecoins").status_code == 200
     assert memecoins._market_states(keys=("memecoin_last_view",))["memecoin_last_view"]

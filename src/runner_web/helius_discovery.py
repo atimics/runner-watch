@@ -47,9 +47,12 @@ def _address(value: Any) -> str:
     return value
 
 
-def rpc_request(body: dict[str, Any], *, credits: int | None = None) -> dict[str, Any]:
+def rpc_request(
+    body: dict[str, Any], *, credits: int | None = None, lane: str = "other"
+) -> dict[str, Any]:
     """One Helius call. `credits` is its cost when known; transaction pages
-    default to 10 credits per 100 transactions."""
+    default to 10 credits per 100 transactions. `lane` "price" may spend the
+    credits kept back for prices."""
 
     key = os.getenv("HELIUS_API_KEY", "").strip()
     if not key:
@@ -60,7 +63,7 @@ def rpc_request(body: dict[str, Any], *, credits: int | None = None) -> dict[str
         options = body.get("params", [None, {}])[1]
         limit = options.get("limit", 100)
         credits = max(10, ((limit + 99) // 100) * 10)
-    reserve_credits(credits)
+    reserve_credits(credits, lane=lane)
     request = urllib.request.Request(
         RPC_URL + "?" + urllib.parse.urlencode({"api-key": key}),
         data=json.dumps(body).encode(),
@@ -76,6 +79,12 @@ def rpc_request(body: dict[str, Any], *, credits: int | None = None) -> dict[str
     if not isinstance(payload, dict) or payload.get("error"):
         raise ValueError("Helius RPC returned an error")
     return payload
+
+
+def price_request(body: dict[str, Any], *, credits: int | None = None) -> dict[str, Any]:
+    """A Helius call for prices, paid from the price lane."""
+
+    return rpc_request(body, credits=credits, lane="price")
 
 
 def pool_creations(entries: list[Any], *, at: datetime) -> list[dict[str, Any]]:

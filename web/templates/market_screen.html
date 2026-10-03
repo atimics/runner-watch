@@ -88,6 +88,7 @@
   {% endblock %}
   <main id="content">
   {% block screen_main %}
+  {% if screen.market == 'memecoins' %}<p class="board-scope"><a href="/wallets">Wallets · on-chain PnL ↗</a></p>{% endif %}
   {% if screen.kind != 'detail' %}
     <div data-live-surface>
     {% if screen.ranking_status %}<p class="ranking-status" role="status">{{ screen.ranking_status }}</p>{% endif %}

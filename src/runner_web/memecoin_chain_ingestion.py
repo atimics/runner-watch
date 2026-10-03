@@ -20,6 +20,18 @@ MIGRATION_AUTHORITY = "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg"
 MINT_AUTHORITY = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM"
 # The launch stream reads the newest launches only: about 100 land in 4 minutes.
 LAUNCH_WINDOW_SECONDS = 240
+# Paid reads at most this often. The graduation page is read every time (about
+# ten graduations land in 15 minutes); the other streams take turns, launches
+# every other turn because they feed the bonding-curve list.
+PAID_READ_SECONDS = 900
+SAMPLE_ROTATION = (
+    ("launches", MINT_AUTHORITY),
+    ("program:pumpswap", PROGRAMS["pumpswap"]),
+    ("launches", MINT_AUTHORITY),
+    ("program:pump", PROGRAMS["pump"]),
+    ("launches", MINT_AUTHORITY),
+    ("program:raydium_cpmm", PROGRAMS["raydium_cpmm"]),
+)
 
 
 def ingest_stream(stream: str, address: str, *, at: datetime, rpc: Rpc) -> dict[str, Any]:
@@ -106,29 +118,25 @@ def ingest_stream(stream: str, address: str, *, at: datetime, rpc: Rpc) -> dict[
 
 
 def collect_chain(*, at: datetime, rpc: Rpc | None = None, quiet: bool = False) -> dict[str, Any]:
-    """One cycle of paid reads, then the saved events they add to.
+    """Paid reads when due, then the saved events they add to.
 
-    Quiet (nobody reading memecoin pages) keeps only the graduation stream, the
-    history early detection needs, and skips the program and wallet samples.
+    Paid reads run at most once every 15 minutes: the graduation page, one
+    sample from the rotation and one wallet page, at most 30 credits. Quiet
+    (nobody reading memecoin pages) keeps only the graduation page. A spent
+    budget skips the reads and returns the saved events, so prices go on.
     """
 
     call = rpc or rpc_request
     schedule = evidence.stream_state("schedule")
     offset = schedule.get("offset", 0)
-    programs = list(PROGRAMS.items())
+    last_paid = schedule.get("paid_at")
+    paid = last_paid is None or not 0 <= at.timestamp() - last_paid < PAID_READ_SECONDS
     transactions = []
     errors = []
     successes = 0
-    # Two pages and one wallet page cost at most 30 credits per run. Every third
-    # run the second page reads the graduations: 100 of them outlast 15 minutes.
-    pages = [("program:" + name, address) for name, address in programs]
-    pages = [pages[offset % len(pages)], pages[(offset + 1) % len(pages)]]
-    if offset == 0:
-        pages[1] = ("graduations", MIGRATION_AUTHORITY)
-    elif offset == 1:
-        pages[1] = ("launches", MINT_AUTHORITY)
-    if quiet:
-        pages = [page for page in pages if page[0] == "graduations"]
+    pages = [("graduations", MIGRATION_AUTHORITY)] if paid else []
+    if paid and not quiet:
+        pages.append(SAMPLE_ROTATION[offset % len(SAMPLE_ROTATION)])
     for stream, address in pages:
         name = stream.split(":", 1)[-1]
         try:
@@ -140,9 +148,20 @@ def collect_chain(*, at: datetime, rpc: Rpc | None = None, quiet: bool = False) 
             break
         except (ValueError, TypeError, KeyError):
             errors.append("Program page failed: " + name)
-    if successes == 0 and errors:
+    spent = "Daily credit budget reached" in errors
+    if successes == 0 and errors and not spent:
         raise ValueError("Helius ingestion deferred: " + "; ".join(errors))
-    evidence.save_batch("schedule", [], [], {"offset": (offset + 2) % len(programs)}, at=at)
+    if paid:
+        evidence.save_batch(
+            "schedule",
+            [],
+            [],
+            {
+                "offset": (offset + (0 if quiet else 1)) % len(SAMPLE_ROTATION),
+                "paid_at": int(at.timestamp()),
+            },
+            at=at,
+        )
     events = evidence.recent_events(at=at)
     context = evidence.recent_events(at=at, kind="pool_created", limit=1000)
     context += evidence.recent_events(at=at, kind="token_launch", limit=1000)
@@ -163,7 +182,7 @@ def collect_chain(*, at: datetime, rpc: Rpc | None = None, quiet: bool = False) 
     }
     if buyers and offset % 3 == 0:
         wallets = buyers
-    if wallets and not quiet:
+    if wallets and paid and not quiet and not spent:
         progress = {row["stream"]: row for row in evidence.evidence_status(at=at)["streams"]}
         wallet = min(
             wallets,

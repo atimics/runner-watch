@@ -243,7 +243,9 @@ def test_the_transition_segment_follows_the_market_report():
     assert next_segment(order) == "market_report"
     order.pop("market_report")
     assert next_segment(order) == "transition"
-    assert next_segment(order, last_kind="transition") == "event"
+    # A runner plays before news and social spikes, which only fill in.
+    assert next_segment(order, last_kind="transition") == "runner"
+    assert next_segment({"transition": True, "event": True}, last_kind="transition") == "event"
 
 
 def test_the_card_is_delivered_with_one_url_and_expires(monkeypatch):
@@ -360,12 +362,65 @@ def test_memecoin_observations_read_the_saved_quote():
     assert found[MINT]["tag"] == "setup" and found[MINT]["ratified"] is True
 
 
-def test_halts_are_followed_only_for_ratified_or_called_stocks():
+def test_an_unchecked_coin_standard_is_unknown_not_a_loss():
+    from runner_web.transition_alerts import _coin_ratified
+
+    unchecked = {"ratified": False, "unchecked": 6, "standards": [{"met": True}, {"met": None}]}
+    failing = {"ratified": False, "unchecked": 6, "standards": [{"met": False}, {"met": None}]}
+
+    # A failed chain read leaves standards unchecked: not news.
+    assert _coin_ratified(unchecked) is None
+    assert _coin_ratified(failing) is False
+    assert _coin_ratified({"ratified": True}) is True
+    assert _coin_ratified(None) is None
+
+
+def test_a_burst_of_ratifications_goes_out_as_one_post(monkeypatch):
+    names = ["LXEO", "DNUT", "VLN", "KLC"]
+    board = board_of(*(stock(name, "watch", ratified=False) for name in names))
+    _patch_board(monkeypatch, board)
     with db.connection() as database:
-        run_detect(database, [stock("GOOD", ratified=True), stock("BADD", ratified=False)], AT)
-        rows = [
-            {"ticker": "GOOD", "event_type": "trading_halt"},
-            {"ticker": "BADD", "event_type": "trading_halt"},
-            {"ticker": "NEWS", "event_type": "news_article"},
-        ]
-        assert telegram_outbox._followed_halt_tickers(database, rows) == {"GOOD"}
+        queue_transitions(database, CONFIG, origin="https://app.test", at=AT)
+    board["rows"] = {name: stock(name, "watch", ratified=True) for name in names}
+    later = AT + timedelta(minutes=5)
+    with db.connection() as database:
+        assert queue_transitions(database, CONFIG, origin="https://app.test", at=later) == 1
+        text = database.execute("SELECT text FROM telegram_outbox").fetchone()["text"]
+        statuses = sorted(row["status"] for row in events(database))
+        # One post holds all four, and it counts once against the daily cap.
+        used = database.execute(
+            "SELECT COUNT(*) AS n FROM transition_events WHERE status='queued'"
+        ).fetchone()["n"]
+    assert "4 stocks newly ratified" in text
+    assert all("$" + name in text for name in names)
+    assert statuses == ["digested", "digested", "digested", "queued"] and used == 1
+
+
+def test_a_lone_ratification_keeps_its_own_post():
+    from runner_web.telegram import format_ratification_digest_md
+
+    item = {**stock("HLLY", ratified=True), "event": "newly_ratified"}
+
+    assert format_ratification_digest_md([item], origin="https://app.test") == (
+        format_transition_post_md(item, origin="https://app.test")
+    )
+
+
+def test_a_post_waiting_over_a_day_is_retired():
+    sent = []
+    with db.connection() as database:
+        telegram_outbox.enqueue_cards(
+            database,
+            CONFIG.chat_id,
+            [{"kind": "stock_filing", "subject": "old", "ticker": "OLD", "text": "old"}],
+            at=AT,
+        )
+    telegram_outbox.deliver_outbox(
+        CONFIG,
+        lambda config, text: sent.append(text) or 1,
+        at=AT + timedelta(days=1, minutes=1),
+        kinds=("stock_filing",),
+    )
+    with db.connection() as database:
+        status = database.execute("SELECT status FROM telegram_outbox").fetchone()["status"]
+    assert sent == [] and status == "stale"

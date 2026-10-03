@@ -9,11 +9,13 @@ sticks to one job name is where to look.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
 import resource
 import sys
 import time
+import tracemalloc
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -25,6 +27,12 @@ GROWTH_LOG_MB = max(1.0, float(os.getenv("WORKER_MEMORY_GROWTH_LOG_MB", "25")))
 TREND_LOG_SECONDS = max(30.0, float(os.getenv("WORKER_MEMORY_TREND_SECONDS", "300")))
 
 _last_trend_at: float | None = None
+# WORKER_MEMORY_TRACE=1 records where Python memory was allocated, one frame
+# deep, and the trend line names the code lines holding and adding the most.
+# It costs memory and time, so it is for an hour of diagnosis, not always on.
+TRACE = os.getenv("WORKER_MEMORY_TRACE", "0") == "1"
+TRACE_LINES = 8
+_traced_before: dict[str, int] = {}
 
 T = TypeVar("T")
 
@@ -48,6 +56,62 @@ def peak_rss_mb() -> float:
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     # Linux reports kilobytes, macOS bytes.
     return peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024
+
+
+class _MallInfo2(ctypes.Structure):
+    _fields_ = [
+        (name, ctypes.c_size_t)
+        for name in (
+            "arena",
+            "ordblks",
+            "smblks",
+            "hblks",
+            "hblkhd",
+            "usmblks",
+            "fsmblks",
+            "uordblks",
+            "fordblks",
+            "keepcost",
+        )
+    ]
+
+
+def _libc() -> Any:
+    """glibc, or None where there is none (macOS, musl)."""
+
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.mallinfo2.restype = _MallInfo2
+        libc.malloc_trim.argtypes = [ctypes.c_size_t]
+        return libc
+    except (OSError, AttributeError):
+        return None
+
+
+_LIBC = _libc()
+
+
+def heap_mb() -> dict[str, float] | None:
+    """glibc's view of the heap: in use, freed but kept, and large mmapped blocks.
+
+    Freed-but-kept growing while in-use stays flat is fragmentation, not a leak.
+    """
+
+    if _LIBC is None:
+        return None
+    info = _LIBC.mallinfo2()
+    return {
+        "used": info.uordblks / 2**20,
+        "free": info.fordblks / 2**20,
+        "mmap": info.hblkhd / 2**20,
+    }
+
+
+def trim_heap() -> None:
+    """Hand freed heap pages back to the system."""
+
+    if _LIBC is not None:
+        _LIBC.malloc_trim(0)
 
 
 def job_name(func: Callable[..., Any]) -> str:
@@ -88,10 +152,62 @@ def log_memory_trend(*, clock: Callable[[], float] = time.monotonic) -> None:
     if _last_trend_at is not None and current - _last_trend_at < TREND_LOG_SECONDS:
         return
     _last_trend_at = current
+    before = rss_mb()
+    heap = heap_mb()
+    trim_heap()
+    # Live Python objects: flat while resident memory climbs means freed memory
+    # the allocator kept, not objects something holds.
+    blocks = sys.getallocatedblocks()
     # Warning, not info: nothing configures logging, so the worker only prints
     # warnings and above, and an info line would never reach the Fly logs.
-    LOG.warning("memory_trend rss_mb=%s peak_mb=%.0f", _rounded(rss_mb()), peak_rss_mb())
+    LOG.warning(
+        "memory_trend rss_mb=%s peak_mb=%.0f heap_used_mb=%s heap_free_mb=%s "
+        "heap_mmap_mb=%s py_blocks=%d trimmed_rss_mb=%s",
+        _rounded(before),
+        peak_rss_mb(),
+        _rounded(heap["used"] if heap else None),
+        _rounded(heap["free"] if heap else None),
+        _rounded(heap["mmap"] if heap else None),
+        blocks,
+        _rounded(rss_mb()),
+    )
+    log_trace()
+
+
+def start_trace() -> None:
+    if TRACE and not tracemalloc.is_tracing():
+        tracemalloc.start(1)
+
+
+def _trace_line(frame: tracemalloc.Frame) -> str:
+    return f"{frame.filename.rsplit('/site-packages/', 1)[-1]}:{frame.lineno}"
+
+
+def log_trace() -> None:
+    """The code lines holding the most traced memory, and those that grew most."""
+
+    global _traced_before
+    if not tracemalloc.is_tracing():
+        return
+    stats = tracemalloc.take_snapshot().statistics("lineno")
+    sizes = {_trace_line(stat.traceback[0]): stat.size for stat in stats[:500]}
+    growth = sorted(
+        ((size - _traced_before.get(line, 0), line) for line, size in sizes.items()),
+        reverse=True,
+    )
+    held = sorted(((size, line) for line, size in sizes.items()), reverse=True)
+    LOG.warning(
+        "memory_trace traced_mb=%.0f held=%s grew=%s",
+        sum(stat.size for stat in stats) / 2**20,
+        " ".join(f"{line}={size / 2**20:.1f}" for size, line in held[:TRACE_LINES]),
+        " ".join(f"{line}=+{size / 2**20:.1f}" for size, line in growth[:TRACE_LINES] if size > 0),
+    )
+    _traced_before = sizes
 
 
 def _rounded(value: float | None) -> str:
     return "unknown" if value is None else f"{value:.0f}"
+
+
+# Start as early as the process imports this, so the trace sees what loads later.
+start_trace()

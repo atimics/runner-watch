@@ -235,13 +235,16 @@ def select_new_runners(
 # The rundown order. Session briefings are appointment listening and go first;
 # a halt is the next most urgent thing the desk has; a published Flash report
 # follows; filings and runners are the everyday inventory; a release is rare.
+# The channel is for names about to run and for bets: ratification and state
+# changes and runners come first; news and social spikes fill in only when
+# nothing else is waiting.
 SEGMENT_ORDER = (
     "market_report",
     "transition",
-    "event",
+    "runner",
     "research_report",
     "stock_filing",
-    "runner",
+    "event",
     "release",
 )
 
@@ -838,6 +841,42 @@ def format_transition_post_md(item, *, origin):
         blocks.append(escape_markdown_v2("  \u00b7  ".join(parts)))
     blocks.append(markdown_link(label, url))
     return _join_blocks(blocks)
+
+
+def format_ratification_digest_md(items, *, origin):
+    """Several names newly ratified at once: one post, one line and link each.
+
+    Ratifications arrive in bursts after the close; one post per name ran
+    past the three-hour window and most were never heard.
+    """
+
+    base = origin.rstrip("/")
+    lines = []
+    for item in items:
+        met, total = int(item.get("met") or 0), item.get("total")
+        standards = (
+            escape_markdown_v2(f"  \u00b7  {met}/{int(total)} standards met") if total else ""
+        )
+        if item.get("market") == "memecoin":
+            mint = str(item.get("subject") or "").strip()
+            coin_id = str(item.get("coin_id") or "").strip()
+            if not mint or not coin_id or not mint.isalnum():
+                continue
+            link = markdown_link("coin page", f"{base}/memecoins/coin/{coin_id}")
+            lines.append(f"`{mint}`  {link}{standards}")
+        else:
+            ticker = str(item.get("ticker") or item.get("subject") or "").strip().upper()
+            if not ticker:
+                continue
+            lines.append(markdown_link(f"${ticker}", f"{base}/t/{ticker}") + standards)
+    if not lines:
+        return ""
+    if len(lines) == 1:
+        return format_transition_post_md(items[0], origin=origin)
+    coin = items[0].get("market") == "memecoin"
+    title = f"{len(lines)} {'memecoins' if coin else 'stocks'} newly ratified"
+    emoji = _TRANSITION_EMOJI.get("newly_ratified") or "\u2705"
+    return _join_blocks([f"{emoji} *{escape_markdown_v2(title)}*", "\n".join(lines)])
 
 
 def format_release_announcement_md(version, notes, *, origin):
