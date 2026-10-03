@@ -398,8 +398,9 @@ def test_filing_stories_rotate_with_runners_across_restarts():
     filing = {**card("filing-1"), "kind": "stock_filing"}
     runner = {**card("runner-1"), "kind": "runner", "entered_at": AT.isoformat()}
     queue([filing, {**filing, "subject": "filing-2"}, runner])
+    # A runner outranks a filing; rotation then gives the filing its turn.
     first = deliver(at=AT)
-    assert first["items"][0]["kind"] == "stock_filing"
+    assert first["items"][0]["kind"] == "runner"
     second = deliver(at=AT + timedelta(seconds=1))
-    assert second["items"][0]["kind"] == "runner"
+    assert second["items"][0]["kind"] == "stock_filing"
     assert deliver(at=AT + timedelta(seconds=2))["items"][0]["kind"] == "stock_filing"

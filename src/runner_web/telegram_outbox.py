@@ -153,6 +153,9 @@ def _mirror(database, cards: list[dict], status: str, attempts: int, stamp: str)
             )
 
 
+OUTBOX_MAX_AGE = timedelta(days=1)
+
+
 def deliver_outbox(
     config, sender, *, at: datetime, kinds: tuple[str, ...], last_kind: str = ""
 ) -> dict:
@@ -174,6 +177,13 @@ def deliver_outbox(
                 ).fetchall()
             ]
             _mirror(database, cards, "uncertain", row["attempts"], stamp)
+        # A post still waiting after a day is not news; retire it so the queue
+        # never carries a backlog of thousands.
+        database.execute(
+            "UPDATE telegram_outbox SET status='stale',updated_at=? "
+            "WHERE chat_id=? AND status IN ('pending','retry') AND created_at<?",
+            (stamp, config.chat_id, (at - OUTBOX_MAX_AGE).isoformat()),
+        )
         latest = database.execute(
             "SELECT i.kind FROM telegram_outbox o JOIN telegram_outbox_items i "
             "ON i.outbox_id=o.id WHERE o.chat_id=? AND o.status='sent' "

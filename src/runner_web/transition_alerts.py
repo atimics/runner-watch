@@ -342,10 +342,37 @@ def _transition_waiting(database: Any) -> bool:
     )
 
 
+DIGEST_LIMIT = 10
+
+
+def _digest_members(database: Any, lead: Any, cooldown: str) -> list[Any]:
+    """Other names in the lead's market newly ratified and still waiting."""
+
+    rows = database.execute(
+        "SELECT key,subject,payload_json FROM transition_events "
+        "WHERE status='pending' AND market=(SELECT market FROM transition_events WHERE key=?) "
+        "AND event='newly_ratified' AND key<>? ORDER BY score DESC,created_at ASC LIMIT ?",
+        (lead["key"], lead["key"], DIGEST_LIMIT - 1),
+    ).fetchall()
+    return [
+        row
+        for row in rows
+        if not database.execute(
+            "SELECT 1 FROM transition_events WHERE subject=? AND status='queued' "
+            "AND created_at>? LIMIT 1",
+            (row["subject"], cooldown),
+        ).fetchone()
+    ]
+
+
 def queue_transitions(database: Any, config: Any, *, origin: str, at: datetime) -> int:
     """Detect changes, then queue the best pending one inside its cap; returns 0 or 1."""
 
-    from runner_web.telegram import format_transition_post_md, memecoin_alerts_enabled
+    from runner_web.telegram import (
+        format_ratification_digest_md,
+        format_transition_post_md,
+        memecoin_alerts_enabled,
+    )
     from runner_web.telegram_outbox import enqueue_cards
 
     markets = ["stock"] + (["memecoin"] if memecoin_alerts_enabled() else [])
@@ -395,7 +422,18 @@ def queue_transitions(database: Any, config: Any, *, origin: str, at: datetime) 
         if recent:
             continue
         payload = json.loads(row["payload_json"])
-        text = format_transition_post_md(payload, origin=origin)
+        joined = (
+            _digest_members(database, row, cooldown)
+            if payload.get("event") == "newly_ratified"
+            else []
+        )
+        if joined:
+            text = format_ratification_digest_md(
+                [payload] + [json.loads(other["payload_json"]) for other in joined],
+                origin=origin,
+            )
+        else:
+            text = format_transition_post_md(payload, origin=origin)
         if not text:
             database.execute(
                 "UPDATE transition_events SET status='dropped' WHERE key=?", (row["key"],)
@@ -417,5 +455,10 @@ def queue_transitions(database: Any, config: Any, *, origin: str, at: datetime) 
             del card["expires_at"]
         queued = enqueue_cards(database, config.chat_id, [card], at=at)
         database.execute("UPDATE transition_events SET status='queued' WHERE key=?", (row["key"],))
+        # The rest of the burst rides in the same post; one post, one count against the cap.
+        for other in joined:
+            database.execute(
+                "UPDATE transition_events SET status='digested' WHERE key=?", (other["key"],)
+            )
         return queued
     return 0
