@@ -242,6 +242,84 @@ def test_collector_uses_finalized_history_both_token_programs_and_bounded_prices
     assert seen[-1][0]["params"][1]["programId"] == TOKEN_2022_PROGRAM
 
 
+def test_large_wallet_keeps_full_balances_and_pages_without_more_paid_reads(database):
+    seen, price_requests = [], []
+    original = fake_rpc(seen)
+    # The live Profit wallet has 2,630 accounts and 2,627 positive mints.
+    accounts = [
+        {
+            "account": {
+                "data": {
+                    "parsed": {
+                        "info": {
+                            "mint": _encode((1000 + index).to_bytes(32, "big")),
+                            "owner": ADDRESS,
+                            "tokenAmount": {"amount": "0" if index < 3 else "1", "decimals": 0},
+                        }
+                    }
+                }
+            }
+        }
+        for index in range(2629)
+    ]
+
+    def rpc(body, *, credits):
+        reply = original(body, credits=credits)
+        if (
+            body["method"] == "getTokenAccountsByOwner"
+            and body["params"][1]["programId"] == TOKEN_PROGRAM
+        ):
+            reply["result"]["value"] = accounts + reply["result"]["value"]
+        return reply
+
+    def prices(url, timeout):
+        price_requests.append(url.rsplit("/", 1)[1].split(","))
+        return download(url, timeout)
+
+    result = wallets.refresh_wallet(ADDRESS, rpc=rpc, download=prices)
+    assert result["status"] == "ready"
+    assert len(result["holdings"]) == 2627
+    assert result["unknown_holdings"] == 2626
+    assert result["holdings_value_usd"] == 400
+    assert result["pnl"][0]["unrealized"] == 2
+    assert sum(credits for _, credits in seen) == 13
+    assert len(price_requests) == 1
+    assert len(price_requests[0]) == 30
+    assert price_requests[0][:3] == [SOL, USDC, MINT]
+
+    client = TestClient(web_main.app)
+    wallet_id = register_chain(ADDRESS)
+    url = "/wallet/" + wallet_id
+    first = client.get(url)
+    assert "2627 tokens · Page 1 of 27" in first.text
+    assert "holdings_page=2#holdings" in first.text
+    holdings = first.text.split('id="holdings"', 1)[1].split("</section>", 1)[0]
+    assert holdings.count("<tr><td>") == 100
+    assert "+2.0000 SOL" in first.text
+    last = client.get(url, params={"holdings_page": 200})
+    assert "2627 tokens · Page 27 of 27" in last.text
+    assert "holdings_page=26#holdings" in last.text
+    holdings = last.text.split('id="holdings"', 1)[1].split("</section>", 1)[0]
+    assert holdings.count("<tr><td>") == 27
+    assert "+2.0000 SOL" in last.text
+    saved = client.get("/api/wallets/" + wallet_id + "/pnl").json()
+    assert len(saved["holdings"]) == 2627
+    assert saved["holdings_value_usd"] == result["holdings_value_usd"]
+
+
+def test_account_bound_is_checked_before_parsing():
+    original = fake_rpc([])
+
+    def rpc(body, *, credits):
+        reply = original(body, credits=credits)
+        if body["method"] == "getTokenAccountsByOwner":
+            reply["result"]["value"] = [{}] * 10_001
+        return reply
+
+    with pytest.raises(ValueError, match="holdings exceed"):
+        wallets.collect_wallet(ADDRESS, at=AT, rpc=rpc, download=download)
+
+
 def test_paging_continues_on_partial_pages_and_stops_at_bound():
     seen = []
     original = fake_rpc(seen)

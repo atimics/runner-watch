@@ -20,7 +20,8 @@ from runner_web.wallet_registry import register_chain, wallet_id_for
 
 PAGE_SIZE = 100
 MAX_PAGES = 2
-MAX_HOLDINGS = 300
+MAX_TOKEN_ACCOUNTS = 10_000
+HOLDINGS_PER_PAGE = 100
 PRICE_LIMIT = 30
 REFRESH_SECONDS = 900
 VERSION = "wallet-pnl-v1"
@@ -107,6 +108,20 @@ def _amount(value: Any) -> Decimal:
     ):
         raise ValueError("Invalid token balance")
     return Decimal(raw).scaleb(-decimals)
+
+
+def holdings_page(snapshot: dict[str, Any], page: int = 1) -> dict[str, Any]:
+    rows = snapshot.get("holdings", [])
+    pages = max(1, (len(rows) + HOLDINGS_PER_PAGE - 1) // HOLDINGS_PER_PAGE)
+    page = min(max(1, page), pages)
+    start = (page - 1) * HOLDINGS_PER_PAGE
+    return {
+        **snapshot,
+        "holdings": rows[start : start + HOLDINGS_PER_PAGE],
+        "holdings_total": len(rows),
+        "holdings_page": page,
+        "holdings_pages": pages,
+    }
 
 
 def _balances(rows: Any, address: str) -> dict[str, Decimal]:
@@ -422,7 +437,7 @@ def collect_wallet(
             1,
         )
         accounts = result.get("value")
-        if not isinstance(accounts, list) or len(accounts) > MAX_HOLDINGS:
+        if not isinstance(accounts, list) or len(accounts) > MAX_TOKEN_ACCOUNTS:
             raise ValueError("Wallet holdings exceed the current view limit")
         for account in accounts:
             info = account["account"]["data"]["parsed"]["info"]
@@ -431,7 +446,17 @@ def collect_wallet(
             quantities[mint] = quantities.get(mint, Decimal(0)) + quantity
     quantities = {mint: value for mint, value in quantities.items() if value > 0}
     # Prices cover a bounded set; each missing mark remains pending.
-    wanted = [SOL, USDC, *list(quantities)[: PRICE_LIMIT - 2]]
+    recent = []
+    for entry in entries:
+        try:
+            for token in entry["meta"]["postTokenBalances"]:
+                if token.get("owner") == address and token.get("mint") in quantities:
+                    recent.append(token["mint"])
+        except (KeyError, TypeError, AttributeError):
+            continue
+    price_mints = list(dict.fromkeys([*recent, *quantities]))
+    price_mints = [mint for mint in price_mints if mint not in QUOTE_UNITS]
+    wanted = [SOL, USDC, *price_mints[: PRICE_LIMIT - 2]]
     quotes = {}
     try:
         url = "https://api.geckoterminal.com/api/v2/networks/solana/tokens/multi/"

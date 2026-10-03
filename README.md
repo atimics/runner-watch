@@ -135,6 +135,9 @@ wallet fees and account costs. Transfers and opening balances with unknown
 cost stay pending. The page shows the loaded date range and cost coverage.
 Current GeckoTerminal prices cover up to 28 holding tokens plus SOL and USDC.
 Each trade links to its chain receipt; saved snapshots also keep receipt hashes.
+Reads support up to 10,000 accounts per token program. Holdings appear in
+pages of 100 tokens. PnL and balance totals use the complete saved holdings.
+Price reads start with tokens touched in the loaded history.
 
 ## Scaling roadmap
 
