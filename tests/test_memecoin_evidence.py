@@ -71,10 +71,30 @@ def test_budget_is_shared_atomic_and_resets_at_utc_day_boundary(monkeypatch):
 
 def test_budget_cannot_exceed_user_cap(monkeypatch):
     monkeypatch.setenv("HELIUS_DAILY_CREDITS", "1000000")
-    evidence.reserve_credits(10000, at=AT, lane="price")
+    evidence.reserve_credits(30000, at=AT, lane="price")
     with pytest.raises(evidence.CreditBudgetReached):
         evidence.reserve_credits(1, at=AT, lane="price")
-    assert evidence.credit_limit() == 10000
+    assert evidence.credit_limit() == 30000
+
+
+def test_raised_budget_preserves_existing_usage_and_price_reserve(monkeypatch):
+    evidence.reserve_credits(1941, at=AT, lane="wallet")
+    evidence.reserve_credits(4597, at=AT)
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "30000")
+    status = evidence.budget_status(at=AT)
+    assert status["daily_limit"] == 30000
+    assert status["reserved_credits"] == 6538
+    assert status["remaining_credits"] == 23462
+    assert status["wallet_daily_limit"] == 7000
+    assert status["price_reserve"] == 2000
+    evidence.reserve_credits(5059, at=AT, lane="wallet")
+    with pytest.raises(evidence.CreditBudgetReached):
+        evidence.reserve_credits(1, at=AT, lane="wallet")
+    evidence.reserve_credits(16403, at=AT)
+    with pytest.raises(evidence.CreditBudgetReached):
+        evidence.reserve_credits(1, at=AT)
+    evidence.reserve_credits(2000, at=AT, lane="price")
+    assert evidence.budget_status(at=AT)["remaining_credits"] == 0
 
 
 def test_other_reads_leave_the_price_reserve(monkeypatch):

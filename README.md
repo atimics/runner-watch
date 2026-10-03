@@ -136,8 +136,11 @@ cost stay pending. The page shows the loaded date range and cost coverage.
 Opened wallets backfill from their first transaction in pages of 1,000. Each
 page saves the buying-cost book and cursor together. The worker continues a
 due wallet every minute; completed histories refresh every 15 minutes.
-History and current balance reads run in parallel. Wallet reads share up to
-2,000 credits per UTC day within the existing Helius budget and price reserve.
+History and current balance reads run in parallel. Production uses a shared
+30,000-credit Helius cap per UTC day, with 2,000 credits reserved for prices.
+Opened wallets share up to 7,000 credits a day. A lower daily cap gives wallets
+one quarter of the allowance after the price reserve. Paused history resumes
+when the budget can cover the next page.
 Short pages settle at their returned transaction count. Progress survives
 restarts, and the page updates as saved history grows. Current buying costs
 and open gains stay pending until history catches up.

@@ -51,6 +51,7 @@ kill_timeout = 30
   # Memecoin prices from their own pools through Helius; GeckoTerminal only for
   # activity windows. gecko or shadow switch back (docs/memecoins.md).
   MEMECOIN_PRICE_SOURCE = "chain"
+  HELIUS_DAILY_CREDITS = "30000"
 
   # The release command runs migrations before this image serves traffic, so a
   # rollback after a schema change must tolerate a database the newer release
