@@ -38,62 +38,71 @@ mod tests {
 }
 
 #[cfg(test)]
-mod urlpattern_tests {
-    use urlpattern::{UrlPattern, UrlPatternInit, UrlPatternMatchInput};
+macro_rules! urlpattern_regressions {
+    ($module:ident, $library:ident) => {
+        mod $module {
+            use $library::{UrlPattern, UrlPatternInit, UrlPatternMatchInput};
 
-    #[test]
-    fn unicode_middle_dot_remains_in_the_group_name() {
-        let pattern = <UrlPattern>::parse(
-            UrlPatternInit {
-                pathname: Some("/:thereisa\u{30FB}middledot.".to_owned()),
-                ..Default::default()
-            },
-            Default::default(),
-        )
-        .unwrap();
-        let matched = pattern
-            .exec(UrlPatternMatchInput::Init(UrlPatternInit {
-                pathname: Some("/value.".to_owned()),
-                ..Default::default()
-            }))
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            matched.pathname.groups["thereisa\u{30FB}middledot"],
-            Some("value".into())
-        );
-    }
+            #[test]
+            fn unicode_middle_dot_remains_in_the_group_name() {
+                let pattern = <UrlPattern>::parse(
+                    UrlPatternInit {
+                        pathname: Some("/:thereisa\u{30FB}middledot.".to_owned()),
+                        ..Default::default()
+                    },
+                    Default::default(),
+                )
+                .unwrap();
+                let matched = pattern
+                    .exec(UrlPatternMatchInput::Init(UrlPatternInit {
+                        pathname: Some("/value.".to_owned()),
+                        ..Default::default()
+                    }))
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    matched.pathname.groups["thereisa\u{30FB}middledot"],
+                    Some("value".into())
+                );
+            }
 
-    #[test]
-    fn ascii_url_scopes_preserve_named_groups_and_host_checks() {
-        let pattern = <UrlPattern>::parse(
-            UrlPatternInit {
-                protocol: Some("https".into()),
-                hostname: Some("example.com".into()),
-                pathname: Some("/coins/:coin_id".into()),
-                ..Default::default()
-            },
-            Default::default(),
-        )
-        .unwrap();
-        let matched = pattern
-            .exec(UrlPatternMatchInput::Init(UrlPatternInit {
-                protocol: Some("https".into()),
-                hostname: Some("example.com".into()),
-                pathname: Some("/coins/dogecoin".into()),
-                ..Default::default()
-            }))
-            .unwrap()
-            .unwrap();
-        assert_eq!(matched.pathname.groups["coin_id"], Some("dogecoin".into()));
-        assert!(pattern
-            .exec(UrlPatternMatchInput::Init(UrlPatternInit {
-                protocol: Some("https".into()),
-                hostname: Some("other.example".into()),
-                pathname: Some("/coins/dogecoin".into()),
-                ..Default::default()
-            }))
-            .unwrap()
-            .is_none());
-    }
+            #[test]
+            fn ascii_url_scopes_preserve_named_groups_and_host_checks() {
+                let pattern = <UrlPattern>::parse(
+                    UrlPatternInit {
+                        protocol: Some("https".into()),
+                        hostname: Some("example.com".into()),
+                        pathname: Some("/coins/:coin_id".into()),
+                        ..Default::default()
+                    },
+                    Default::default(),
+                )
+                .unwrap();
+                let matched = pattern
+                    .exec(UrlPatternMatchInput::Init(UrlPatternInit {
+                        protocol: Some("https".into()),
+                        hostname: Some("example.com".into()),
+                        pathname: Some("/coins/dogecoin".into()),
+                        ..Default::default()
+                    }))
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(matched.pathname.groups["coin_id"], Some("dogecoin".into()));
+                assert!(pattern
+                    .exec(UrlPatternMatchInput::Init(UrlPatternInit {
+                        protocol: Some("https".into()),
+                        hostname: Some("other.example".into()),
+                        pathname: Some("/coins/dogecoin".into()),
+                        ..Default::default()
+                    }))
+                    .unwrap()
+                    .is_none());
+            }
+        }
+    };
 }
+
+#[cfg(test)]
+urlpattern_regressions!(urlpattern_tests, urlpattern);
+#[cfg(test)]
+urlpattern_regressions!(urlpattern_current_tests, urlpattern_current);

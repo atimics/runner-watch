@@ -1,15 +1,102 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
 from runner_web.db import connection
-from runner_web.memecoin_replay_store import queue_replay
+from runner_web.memecoin_replay_store import QUEUE_REPLAY_SQL, replay_request
 
+LOG = logging.getLogger(__name__)
 HISTORY_DAYS = 7
 MAX_HISTORY_POINTS = 250_000
 MAX_DETAIL_HISTORY = 2016
+# Prices read on the fast loop, kept apart from the slow snapshot so neither
+# loop can overwrite the other: {"prices": {coin_id: {price, liquidity_usd, ...}}}.
+FAST_PRICES_KEY = "memecoin_fast_prices"
+
+
+def with_fast_price(
+    row: dict[str, Any], fast: dict[str, Any] | None, collected_at: Any
+) -> tuple[dict[str, Any], Any]:
+    """A row with its newer fast-loop price laid over it, and the time that price was read.
+
+    Only the price moves. Market cap and FDV follow it; the activity windows stay
+    as the slow loop saw them. A row with no newer fast price comes back as given.
+    """
+
+    entry = ((fast or {}).get("prices") or {}).get(row.get("id"))
+    if not isinstance(entry, dict):
+        return row, collected_at
+    try:
+        seen = datetime.fromisoformat(entry["observed_at"])
+        before = datetime.fromisoformat(row["observed_at"]) if row.get("observed_at") else None
+        price = float(entry["price"])
+        if price <= 0 or (before is not None and before >= seen):
+            return row, collected_at
+        merged = {**row, "price": price, "observed_at": entry["observed_at"]}
+        merged["liquidity_usd"] = entry.get("liquidity_usd", row.get("liquidity_usd"))
+        merged["time_basis"] = "chain_read"
+        merged["source"] = "Solana (Helius)"
+        old = row.get("price")
+        if old and old > 0:
+            for key in ("market_cap", "fully_diluted_valuation"):
+                if row.get(key) is not None:
+                    merged[key] = row[key] * price / old
+        return merged, entry["observed_at"]
+    except (KeyError, TypeError, ValueError):
+        return row, collected_at
+
+
+FAST_HISTORY_SECONDS = 300
+
+
+def save_fast_quotes(
+    quotes: list[dict[str, Any]], *, observed_at: datetime, every_tick: set[str] | None = None
+) -> None:
+    """History points for fast-loop prices, so charts and Call fills see them.
+
+    Charts read the newest points, so a point a minute would shrink their span.
+    A coin keeps the five-minute spacing unless a Call order is waiting on its
+    next quote (`every_tick`).
+    """
+
+    stamp = observed_at.isoformat()
+    spaced = (observed_at - timedelta(seconds=FAST_HISTORY_SECONDS)).isoformat()
+    ids = list(dict.fromkeys(quote["coin_id"] for quote in quotes))
+    if not ids:
+        return
+    marks = ",".join("?" * len(ids))
+    with connection() as database:
+        runs = {
+            row["coin_id"]: row["run_id"]
+            for row in database.execute(
+                f"SELECT coin_id,run_id FROM memecoin_assets WHERE coin_id IN ({marks})", ids
+            ).fetchall()
+        }
+        recent = {
+            row["coin_id"]
+            for row in database.execute(
+                "SELECT DISTINCT coin_id FROM memecoin_quote_history "
+                f"WHERE observed_at>? AND coin_id IN ({marks})",
+                (spaced, *ids),
+            ).fetchall()
+        }
+        points = [
+            (quote["coin_id"], stamp, stamp, quote["price"], runs[quote["coin_id"]])
+            for quote in quotes
+            if quote["coin_id"] in runs
+            and (quote["coin_id"] in (every_tick or set()) or quote["coin_id"] not in recent)
+        ]
+        database.executemany(
+            """
+            INSERT INTO memecoin_quote_history(coin_id,observed_at,collected_at,price,run_id)
+            VALUES(?,?,?,?,?) ON CONFLICT(coin_id,observed_at) DO NOTHING
+            """,
+            points,
+        )
 
 
 def save_memecoin_snapshot(
@@ -17,60 +104,82 @@ def save_memecoin_snapshot(
 ) -> None:
     collected = collected_at.isoformat()
     oldest = (collected_at - timedelta(days=HISTORY_DAYS)).isoformat()
-    with connection() as database:
-        for row in rows:
-            database.execute(
-                """
-                INSERT INTO memecoin_assets(coin_id,quote_json,collected_at,run_id)
-                VALUES(?,?,?,?) ON CONFLICT(coin_id) DO UPDATE SET
-                    quote_json=excluded.quote_json,collected_at=excluded.collected_at,
-                    run_id=excluded.run_id
-                WHERE memecoin_assets.collected_at<=excluded.collected_at
-                """,
-                (row["id"], json.dumps(row, allow_nan=False), collected, run_id),
+    started = last = time.monotonic()
+    steps: dict[str, float] = {}
+
+    def mark(name: str) -> None:
+        nonlocal last
+        now = time.monotonic()
+        steps[name] = now - last
+        last = now
+
+    assets, replays, points = [], [], []
+    for row in rows:
+        assets.append((row["id"], json.dumps(row, allow_nan=False), collected, run_id))
+        if request := replay_request(row, collected):
+            replays.append(request)
+        observed = row.get("observed_at")
+        if observed is None:
+            continue
+        observed_time = datetime.fromisoformat(observed)
+        if not -60 <= (collected_at - observed_time).total_seconds() <= HISTORY_DAYS * 86400:
+            continue
+        early = row.get("early") or {}
+        features = (
+            json.dumps(
+                {
+                    "version": early.get("version"),
+                    **early.get("features", {}),
+                    "score": early.get("score"),
+                    "state": early.get("state"),
+                },
+                allow_nan=False,
             )
-            queue_replay(database, row, collected)
-            observed = row.get("observed_at")
-            if observed is None:
-                continue
-            observed_time = datetime.fromisoformat(observed)
-            if not -60 <= (collected_at - observed_time).total_seconds() <= HISTORY_DAYS * 86400:
-                continue
-            early = row.get("early") or {}
-            features = (
-                json.dumps(
-                    {
-                        "version": early.get("version"),
-                        **early.get("features", {}),
-                        "score": early.get("score"),
-                        "state": early.get("state"),
-                    },
-                    allow_nan=False,
-                )
-                if early
-                else None
-            )
-            database.execute(
-                """
-                INSERT INTO memecoin_quote_history(
-                    coin_id,observed_at,collected_at,price,run_id,features_json
-                ) VALUES(?,?,?,?,?,?) ON CONFLICT(coin_id,observed_at) DO UPDATE SET
-                    collected_at=excluded.collected_at,price=excluded.price,run_id=excluded.run_id,
-                    features_json=excluded.features_json
-                WHERE memecoin_quote_history.collected_at<=excluded.collected_at
-                """,
-                (row["id"], observed, collected, row["price"], run_id, features),
-            )
-        database.execute("DELETE FROM memecoin_quote_history WHERE observed_at<?", (oldest,))
-        database.execute(
-            """
-            DELETE FROM memecoin_quote_history WHERE (coin_id,observed_at) NOT IN (
-                SELECT coin_id,observed_at FROM memecoin_quote_history
-                ORDER BY observed_at DESC,coin_id LIMIT ?
-            )
-            """,
-            (MAX_HISTORY_POINTS,),
+            if early
+            else None
         )
+        points.append((row["id"], observed, collected, row["price"], run_id, features))
+    mark("prepare")
+    with connection() as database:
+        # One batched call per table: a slow database round trip is paid once, not per coin.
+        database.executemany(
+            """
+            INSERT INTO memecoin_assets(coin_id,quote_json,collected_at,run_id)
+            VALUES(?,?,?,?) ON CONFLICT(coin_id) DO UPDATE SET
+                quote_json=excluded.quote_json,collected_at=excluded.collected_at,
+                run_id=excluded.run_id
+            WHERE memecoin_assets.collected_at<=excluded.collected_at
+            """,
+            assets,
+        )
+        database.executemany(QUEUE_REPLAY_SQL, replays)
+        database.executemany(
+            """
+            INSERT INTO memecoin_quote_history(
+                coin_id,observed_at,collected_at,price,run_id,features_json
+            ) VALUES(?,?,?,?,?,?) ON CONFLICT(coin_id,observed_at) DO UPDATE SET
+                collected_at=excluded.collected_at,price=excluded.price,run_id=excluded.run_id,
+                features_json=excluded.features_json
+            WHERE memecoin_quote_history.collected_at<=excluded.collected_at
+            """,
+            points,
+        )
+        mark("rows")
+        database.execute("DELETE FROM memecoin_quote_history WHERE observed_at<?", (oldest,))
+        mark("prune_old")
+        # Find the newest point past the cap, then delete everything older than it. This
+        # reads the time index once; a NOT IN over every kept row did not finish in minutes.
+        past_cap = database.execute(
+            "SELECT observed_at FROM memecoin_quote_history "
+            "ORDER BY observed_at DESC,coin_id LIMIT 1 OFFSET ?",
+            (MAX_HISTORY_POINTS,),
+        ).fetchone()
+        if past_cap is not None:
+            database.execute(
+                "DELETE FROM memecoin_quote_history WHERE observed_at<=?",
+                (past_cap["observed_at"],),
+            )
+        mark("prune_cap")
         for key, value in (
             (
                 "memecoins_snapshot",
@@ -86,6 +195,11 @@ def save_memecoin_snapshot(
                 """,
                 (key, json.dumps(value, allow_nan=False), collected),
             )
+        mark("state")
+    total = time.monotonic() - started
+    if total > 30:
+        detail = " ".join(f"{name}={value:.1f}" for name, value in steps.items())
+        LOG.warning("memecoin_snapshot_save slow total=%.1f %s", total, detail)
 
 
 def stored_memecoin(coin_id: str) -> dict[str, Any] | None:

@@ -115,6 +115,41 @@ knobs. Budget caps and intervals (`HELIUS_DAILY_CREDITS`,
 `ODDS_API_MONTHLY_WORKING_LIMIT`, `BACKGROUND_SCAN_INTERVAL_SECONDS`, …) are
 documented in the module that owns them.
 
+## On-chain wallets
+
+Open `/wallets` from Memecoins, search by name, or enter a Solana address.
+Each wallet shows holdings, trades, chain fees, realized PnL, and open gains.
+Coin map wallets also link to this view. The starting list contains 52 wallets
+from [KOL-Wallets-BULLX](https://github.com/sn3ll/KOL-Wallets-BULLX/blob/2712bbd655e226ee3fefdfcb2705fe765547ad96/Import.json).
+Names are dated source labels from January 26, 2025.
+
+Set `HELIUS_API_KEY` to load chain data. Reads use finalized transactions,
+include associated token accounts, and share `HELIUS_DAILY_CREDITS` with other
+chain reads. Each pass adds up to 1,000 transactions and current holdings
+from both Solana token programs. One shared claim per wallet keeps reads
+safe across workers and web processes. Failed reads retry after a minute.
+
+PnL uses average buying cost for Pump, PumpSwap, and Raydium CPMM trades.
+SOL and USDC results keep their own units. SOL trade costs include native
+wallet fees and account costs. Transfers and opening balances with unknown
+cost stay pending. The page shows the loaded date range and cost coverage.
+Opened wallets backfill from their first transaction in pages of 1,000. Each
+page saves the buying-cost book and cursor together. The worker continues a
+due wallet every minute; completed histories refresh every 15 minutes.
+History and current balance reads run in parallel. Production uses a shared
+30,000-credit Helius cap per UTC day, with 2,000 credits reserved for prices.
+Opened wallets share up to 7,000 credits a day. A lower daily cap gives wallets
+one quarter of the allowance after the price reserve. Paused history resumes
+when the budget can cover the next page.
+Short pages settle at their returned transaction count. Progress survives
+restarts, and the page updates as saved history grows. Current buying costs
+and open gains stay pending until history catches up.
+Current GeckoTerminal prices cover up to 28 holding tokens plus SOL and USDC.
+Each trade links to its chain receipt; saved snapshots also keep receipt hashes.
+Reads support up to 10,000 accounts per token program. Holdings appear in
+pages of 100 tokens. PnL and balance totals use the complete saved holdings.
+Price reads start with tokens touched in the loaded history.
+
 ## Scaling roadmap
 
 Runner-watch scales by separating write-heavy collection from read-heavy

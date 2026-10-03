@@ -21,19 +21,29 @@ MAX_REVISIONS_PER_COIN = 16
 JOB_TIMEOUT_SECONDS = 600
 
 
-def queue_replay(database, coin: dict, collected: str) -> None:
+QUEUE_REPLAY_SQL = (
+    "INSERT INTO memecoin_replay_cases(coin_id,requested_at) VALUES(?,?) "
+    "ON CONFLICT(coin_id) DO UPDATE SET requested_at=excluded.requested_at "
+    "WHERE memecoin_replay_cases.requested_at<excluded.requested_at"
+)
+
+
+def replay_request(coin: dict, collected: str) -> tuple[str, str] | None:
+    """The parameters that queue a replay for this coin, or None when it has none."""
+
     if coin.get("network") != "solana":
-        return
+        return None
     try:
         _address(coin.get("token_address"))
     except (TypeError, ValueError):
-        return
-    database.execute(
-        "INSERT INTO memecoin_replay_cases(coin_id,requested_at) VALUES(?,?) "
-        "ON CONFLICT(coin_id) DO UPDATE SET requested_at=excluded.requested_at "
-        "WHERE memecoin_replay_cases.requested_at<excluded.requested_at",
-        (coin["id"], collected),
-    )
+        return None
+    return coin["id"], collected
+
+
+def queue_replay(database, coin: dict, collected: str) -> None:
+    request = replay_request(coin, collected)
+    if request is not None:
+        database.execute(QUEUE_REPLAY_SQL, request)
 
 
 def _load_evidence(mint: str) -> tuple[list[dict], dict]:

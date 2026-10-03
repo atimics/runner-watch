@@ -263,11 +263,47 @@ def _prepare_event(
     }
 
 
+COMPANYFACTS_RETRY_HOURS = 20
+COMPANYFACTS_FAILED_KEY = "edgar_companyfacts_failed"
+COMPANYFACTS_FAILED_KEPT = 500
+
+
+def _failed_companyfacts(now: datetime | None = None) -> dict[str, str]:
+    """CIKs whose company facts failed within the retry window, with when they failed."""
+
+    current = now or datetime.now(UTC)
+    with connection() as db:
+        row = db.execute(
+            "SELECT value FROM worker_state WHERE key=?", (COMPANYFACTS_FAILED_KEY,)
+        ).fetchone()
+    try:
+        saved = json.loads(row["value"]) if row else {}
+    except (TypeError, ValueError):
+        return {}
+    cutoff = current - timedelta(hours=COMPANYFACTS_RETRY_HOURS)
+    recent = {}
+    for cik, failed_at in (saved if isinstance(saved, dict) else {}).items():
+        try:
+            if datetime.fromisoformat(str(failed_at)) > cutoff:
+                recent[str(cik)] = str(failed_at)
+        except ValueError:
+            continue
+    return recent
+
+
+def _note_companyfacts_failure(cik: int, now: datetime | None = None) -> None:
+    current = now or datetime.now(UTC)
+    failed = _failed_companyfacts(current)
+    failed[str(int(cik))] = current.isoformat()
+    newest = sorted(failed.items(), key=lambda item: item[1], reverse=True)
+    _state(COMPANYFACTS_FAILED_KEY, json.dumps(dict(newest[:COMPANYFACTS_FAILED_KEPT])))
+
+
 def _companyfacts_candidate(new_events: list[dict[str, Any]]) -> int | None:
     if new_events:
         return int(new_events[0]["cik"])
     with connection() as db:
-        row = db.execute(
+        rows = db.execute(
             """
             SELECT c.cik,MAX(f.last_collected_at) AS facts_at
             FROM scan_runs r
@@ -278,9 +314,14 @@ def _companyfacts_candidate(new_events: list[dict[str, Any]]) -> int | None:
             GROUP BY c.cik
             ORDER BY MAX(f.last_collected_at) IS NOT NULL,
                      MAX(f.last_collected_at),c.cik
-            LIMIT 1
-            """
-        ).fetchone()
+            LIMIT ?
+            """,
+            (COMPANYFACTS_FAILED_KEPT + 1,),
+        ).fetchall()
+    # A company SEC has no facts for never gets a collected time, so it would sort
+    # first on every cycle and starve the rest; skip it until the retry window passes.
+    failed = _failed_companyfacts()
+    row = next((item for item in rows if str(int(item["cik"])) not in failed), None)
     if not row:
         return None
     facts_at = row["facts_at"]
@@ -470,6 +511,7 @@ def refresh_edgar() -> dict[str, Any]:
             _state("edgar_companyfacts_last_error", "")
         except Exception as exc:
             LOG.warning("Could not refresh SEC company facts for CIK %s: %s", fact_cik, exc)
+            _note_companyfacts_failure(fact_cik)
             _state("edgar_companyfacts_last_error", str(exc)[:500])
 
     _state("edgar_last_refresh", timestamp)

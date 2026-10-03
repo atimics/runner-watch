@@ -95,7 +95,11 @@ def verify_backport(root: Path, package: str = "glib") -> int:
     if manifest.get("patch", {}).get("crates-io", {}).get(package) != {"path": f"vendor/{package}"}:
         raise ValueError(f"Desktop must resolve {package} through the verified local patch")
     lock = tomllib.loads((desktop / "Cargo.lock").read_text())
-    packages = [entry for entry in lock["package"] if entry["name"] == package]
+    packages = [
+        entry
+        for entry in lock["package"]
+        if entry["name"] == package and entry["version"] == version
+    ]
     if len(packages) != 1 or packages[0]["version"] != version or "source" in packages[0]:
         raise ValueError(f"Desktop lock must resolve the local {package} {version} backport")
     return len(files)

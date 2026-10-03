@@ -458,6 +458,7 @@ from runner_web.telegram_routes import (
     create_telegram_routes,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
+from runner_web.wallet_backfill import wallet_backfill_worker
 from runner_web.wallet_routes import WalletRouteDependencies, create_wallet_routes
 from runner_web.worker_supervisor import run_supervised
 
@@ -975,7 +976,9 @@ def _start_worker_tasks(
         asyncio.create_task(case_monitor_worker(), name="case-monitor"),
         asyncio.create_task(kol_worker(), name="kol"),
         asyncio.create_task(memecoin_worker(), name="memecoins"),
+        asyncio.create_task(memecoin_fast_price_worker(), name="memecoin-fast-prices"),
         asyncio.create_task(memecoin_replay_worker(), name="memecoin-replays"),
+        asyncio.create_task(wallet_backfill_worker(), name="wallet-history"),
         asyncio.create_task(market_actor_worker(), name="market-actors"),
         asyncio.create_task(call_settlement_worker(), name="call-settlement"),
     ]
@@ -2962,8 +2965,23 @@ def settle_open_calls() -> dict[str, Any]:
     }
 
 
+async def memecoin_fast_price_worker() -> None:
+    """Re-price the watched coins on their own short loop, apart from the slow refresh."""
+    from runner_web.memecoin_fast_prices import FAST_PRICE_SECONDS, refresh_watched_prices
+
+    while True:
+        try:
+            await run_in_threadpool(refresh_watched_prices)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("Memecoin fast prices failed")
+        await asyncio.sleep(FAST_PRICE_SECONDS)
+
+
 async def memecoin_worker() -> None:
     while True:
+        cycle_started = time.monotonic()
         try:
             await run_in_threadpool(refresh_memecoins)
         except asyncio.CancelledError:
@@ -2986,7 +3004,8 @@ async def memecoin_worker() -> None:
             raise
         except Exception:
             LOG.exception("Memecoin Call fills failed")
-        await asyncio.sleep(REFRESH_SECONDS)
+        # The interval runs start to start, so a long refresh does not stretch it.
+        await asyncio.sleep(max(30, REFRESH_SECONDS + 1 - (time.monotonic() - cycle_started)))
 
 
 async def memecoin_replay_worker() -> None:

@@ -93,7 +93,14 @@
     root.querySelector('.map-workspace').classList.remove('map-overview');
     selected = node.id; $('score-return').hidden = false;
     const panel = $('selection'); panel.replaceChildren(make('h3',node.id === 'launch' ? item.name : node.kind === 'wallet' ? 'Wallet' : node.kind));
-    if (node.id !== 'launch') panel.append(make('p',node.address));
+    if (node.id !== 'launch') {
+      panel.append(make('p',node.address));
+      if (node.kind === 'wallet') {
+        const walletLink = make('a','Open wallet · PnL ↗');
+        walletLink.href = '/wallets/solana/' + encodeURIComponent(node.address);
+        panel.append(walletLink);
+      }
+    }
     const edges = data.frames.at(-1).edges.filter(e => eventId ? e.event_id === eventId : e.source === node.id || e.target === node.id);
     const seen = new Set();
     edges.forEach(edge => {

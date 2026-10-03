@@ -48,7 +48,11 @@ def _address(value: Any) -> str:
 
 
 def rpc_request(
-    body: dict[str, Any], *, credits: int | None = None, lane: str = "other"
+    body: dict[str, Any],
+    *,
+    credits: int | None = None,
+    lane: str = "other",
+    at: datetime | None = None,
 ) -> dict[str, Any]:
     """One Helius call. `credits` is its cost when known; transaction pages
     default to 10 credits per 100 transactions. `lane` "price" may spend the
@@ -63,7 +67,7 @@ def rpc_request(
         options = body.get("params", [None, {}])[1]
         limit = options.get("limit", 100)
         credits = max(10, ((limit + 99) // 100) * 10)
-    reserve_credits(credits, lane=lane)
+    reserve_credits(credits, lane=lane, at=at)
     request = urllib.request.Request(
         RPC_URL + "?" + urllib.parse.urlencode({"api-key": key}),
         data=json.dumps(body).encode(),
