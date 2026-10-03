@@ -115,6 +115,27 @@ knobs. Budget caps and intervals (`HELIUS_DAILY_CREDITS`,
 `ODDS_API_MONTHLY_WORKING_LIMIT`, `BACKGROUND_SCAN_INTERVAL_SECONDS`, …) are
 documented in the module that owns them.
 
+## On-chain wallets
+
+Open `/wallets` from Memecoins, search by name, or enter a Solana address.
+Each wallet shows holdings, trades, chain fees, realized PnL, and open gains.
+Coin map wallets also link to this view. The starting list contains 52 wallets
+from [KOL-Wallets-BULLX](https://github.com/sn3ll/KOL-Wallets-BULLX/blob/2712bbd655e226ee3fefdfcb2705fe765547ad96/Import.json).
+Names are dated source labels from January 26, 2025.
+
+Set `HELIUS_API_KEY` to load chain data. Reads use finalized transactions,
+include associated token accounts, and share `HELIUS_DAILY_CREDITS` with other
+chain reads. Each refresh loads up to 200 recent transactions and current
+holdings from both Solana token programs. The saved view has a shared
+15-minute refresh limit per wallet and a one-minute retry after a failed read.
+
+PnL uses average buying cost for Pump, PumpSwap, and Raydium CPMM trades.
+SOL and USDC results keep their own units. SOL trade costs include native
+wallet fees and account costs. Transfers and opening balances with unknown
+cost stay pending. The page shows the loaded date range and cost coverage.
+Current GeckoTerminal prices cover up to 28 holding tokens plus SOL and USDC.
+Each trade links to its chain receipt; saved snapshots also keep receipt hashes.
+
 ## Scaling roadmap
 
 Runner-watch scales by separating write-heavy collection from read-heavy

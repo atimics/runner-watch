@@ -14,7 +14,7 @@ from runner_web.market_actors import (
     market_actor_detail,
     record_market_actor_comment,
 )
-from runner_web.wallet_registry import WALLET_ID
+from runner_web.wallet_registry import WALLET_ID, register_chain
 from runner_web.wallet_registry import register_people as register_wallet_people
 from runner_web.wallet_registry import register_person as register_wallet_person
 from runner_web.wallet_registry import wallet as resolve_wallet
@@ -62,6 +62,66 @@ class WalletRoutes:
 
 def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
     router = APIRouter()
+
+    @router.get("/wallets", response_class=HTMLResponse)
+    def onchain_wallet_list(
+        request: Request,
+        q: str = Query(default="", max_length=80),
+        runner_session: str | None = Cookie(default=None),
+    ) -> Response:
+        from runner_web.helius_discovery import _address
+        from runner_web.market_screens import listing
+        from runner_web.onchain_wallets import wallet_catalog
+
+        dependencies.enforce_rate(request, "chain-wallet-list", limit=60, seconds=60)
+        if q.strip():
+            try:
+                address = _address(q.strip())
+            except ValueError:
+                address = None
+            if address:
+                return RedirectResponse("/wallet/" + register_chain(address), status_code=303)
+        return dependencies.templates.TemplateResponse(
+            request,
+            "onchain_wallet_list.html",
+            dependencies.page_context(
+                request,
+                runner_session,
+                nav_product="memecoins",
+                screen=listing("memecoins", []),
+                catalog=wallet_catalog(q),
+            ),
+        )
+
+    @router.get("/wallets/solana/{address}")
+    def solana_wallet_redirect(address: str, request: Request) -> Response:
+        dependencies.enforce_rate(request, "chain-wallet-open", limit=60, seconds=60)
+        try:
+            wallet_id = register_chain(address)
+        except ValueError as exc:
+            raise HTTPException(400, "Enter a valid Solana wallet address") from exc
+        return RedirectResponse("/wallet/" + wallet_id, status_code=303)
+
+    @router.get("/api/wallets/{wallet_id}/pnl")
+    def wallet_pnl_api(wallet_id: str, request: Request) -> Response:
+        from runner_web.onchain_wallets import saved_wallet
+
+        dependencies.enforce_rate(request, "chain-wallet-pnl", limit=60, seconds=60)
+        resolved = resolve_wallet(wallet_id)
+        if not resolved or resolved["kind"] != "solana":
+            raise HTTPException(404, "Solana wallet not found")
+        return JSONResponse(saved_wallet(resolved["address"]))
+
+    @router.post("/api/wallets/{wallet_id}/refresh")
+    def wallet_pnl_refresh_api(wallet_id: str, request: Request) -> Response:
+        from runner_web.onchain_wallets import refresh_wallet
+
+        dependencies.require_origin(request)
+        dependencies.enforce_rate(request, "chain-wallet-refresh", limit=3, seconds=60)
+        resolved = resolve_wallet(wallet_id)
+        if not resolved or resolved["kind"] != "solana":
+            raise HTTPException(404, "Solana wallet not found")
+        return JSONResponse(refresh_wallet(resolved["address"]))
 
     @router.get("/api/market-actors")
     def market_actors_api(request: Request, domain: str = "stock") -> dict[str, Any]:
@@ -155,6 +215,21 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
 
         dependencies.enforce_rate(request, "stock-wallet", limit=60, seconds=60)
         resolved = resolve_wallet(wallet_id)
+        if resolved and resolved["kind"] == "solana":
+            from runner_web.onchain_wallets import saved_wallet
+
+            return dependencies.templates.TemplateResponse(
+                request,
+                "onchain_wallet.html",
+                dependencies.page_context(
+                    request,
+                    runner_session,
+                    nav_product="memecoins",
+                    screen=listing("memecoins", []),
+                    wallet_id=wallet_id,
+                    wallet=saved_wallet(resolved["address"]),
+                ),
+            )
         person_id = str(resolved.get("person_id") or "") if resolved else ""
         if not resolved or not person_id:
             raise HTTPException(404, "Wallet not found")

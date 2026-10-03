@@ -120,8 +120,11 @@ def test_keyboard_bubble_opens_evidence_and_returns_to_score(page: Page):
     wallet.first.focus()
     wallet.first.press("Enter")
     expect(wallet.first).to_be_focused()
-    expect(page.locator("[data-replay-selection] a").first).to_have_attribute(
-        "href", re.compile("/api/memecoins/evidence/")
+    expect(
+        page.locator('[data-replay-selection] a[href^="/api/memecoins/evidence/"]').first
+    ).to_have_attribute("href", re.compile("/api/memecoins/evidence/"))
+    expect(page.get_by_role("link", name="Open wallet · PnL ↗")).to_have_attribute(
+        "href", re.compile(r"^/wallets/solana/[1-9A-HJ-NP-Za-km-z]{32,44}$")
     )
     expect(page.locator("[data-replay-selection]")).to_contain_text("9007199254740993 raw units")
     wallet.first.press("Escape")
