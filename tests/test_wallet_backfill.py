@@ -271,10 +271,15 @@ def test_a_full_thousand_record_page_is_saved_and_the_next_page_adds_more(databa
     assert len(json.dumps(state())) < 100_000
 
 
-def test_wallet_allowance_is_atomic_and_preserves_discovery_and_prices(database, monkeypatch):
+@pytest.mark.parametrize(
+    ("daily_limit", "wallet_limit", "other_limit"), [(10000, 2000, 6000), (30000, 7000, 21000)]
+)
+def test_wallet_allowance_is_atomic_and_preserves_discovery_and_prices(
+    database, monkeypatch, daily_limit, wallet_limit, other_limit
+):
     from concurrent.futures import ThreadPoolExecutor
 
-    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "10000")
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", str(daily_limit))
 
     def reserve(_):
         try:
@@ -284,12 +289,78 @@ def test_wallet_allowance_is_atomic_and_preserves_discovery_and_prices(database,
             return False
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        assert sum(pool.map(reserve, range(24))) == 20
-    evidence.reserve_credits(6000, at=AT)
+        assert sum(pool.map(reserve, range(wallet_limit // 100 + 4))) == wallet_limit // 100
+    evidence.reserve_credits(other_limit, at=AT)
     evidence.reserve_credits(2000, at=AT, lane="price")
     status = evidence.budget_status(at=AT)
-    assert status["reserved_credits"] == 10000
-    assert status["wallet_credits"] == status["wallet_daily_limit"] == 2000
+    assert status["reserved_credits"] == daily_limit
+    assert status["wallet_credits"] == status["wallet_daily_limit"] == wallet_limit
+
+
+def test_budget_increase_resumes_saved_wallet_before_midnight(database, monkeypatch):
+    monkeypatch.setenv("HELIUS_API_KEY", "test")
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "10000")
+    rpc = paged_rpc([])
+    wallets.refresh_wallet(ADDRESS, at=AT, rpc=rpc, download=download)
+    before = state()
+    evidence.reserve_credits(1941, at=AT, lane="wallet")
+
+    def exhausted(*_, **__):
+        raise evidence.CreditBudgetReached("budget")
+
+    wallets.refresh_wallet(ADDRESS, at=AT + timedelta(minutes=1), rpc=exhausted, download=download)
+    assert backfill.refresh_opened_wallet(at=AT + timedelta(minutes=2)) is None
+    assert state() == before
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "30000")
+    original = wallets.refresh_wallet
+
+    def refresh(address, *, at):
+        return original(address, at=at, rpc=rpc, download=download)
+
+    monkeypatch.setattr(wallets, "refresh_wallet", refresh)
+    recovered = backfill.refresh_opened_wallet(at=AT + timedelta(minutes=2))
+    assert recovered["transactions"] == 2
+    assert recovered["pnl"][0]["realized"] == 1
+    assert recovered["error"] is None
+    assert recovered["backfill"]["status"] == "complete"
+
+
+def test_budget_pause_waits_for_price_room_and_keeps_other_retries(database, monkeypatch):
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "10000")
+    future = AT + timedelta(hours=1)
+    other = _encode(bytes([9]) * 32)
+    leased = _encode(bytes([10]) * 32)
+    with db.connection() as connection:
+        for address, error, lease in (
+            (ADDRESS, backfill.BUDGET_WAIT_MESSAGE, AT),
+            (other, "Chain data is temporarily unavailable. Try again in a minute.", AT),
+            (leased, backfill.BUDGET_WAIT_MESSAGE, future),
+        ):
+            connection.execute(
+                "INSERT INTO onchain_wallet_backfills"
+                "(address,state_json,next_read_at,lease_until,error,updated_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (address, "{}", future.isoformat(), lease.isoformat(), error, AT.isoformat()),
+            )
+    evidence.reserve_credits(7900, at=AT)
+    backfill.resume_budget_waits(at=AT)
+    with db.connection() as connection:
+        assert all(
+            row["next_read_at"] == future.isoformat()
+            for row in connection.execute("SELECT next_read_at FROM onchain_wallet_backfills")
+        )
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "30000")
+    backfill.resume_budget_waits(at=AT)
+    with db.connection() as connection:
+        jobs = {
+            row["address"]: row["next_read_at"]
+            for row in connection.execute(
+                "SELECT address,next_read_at FROM onchain_wallet_backfills"
+            )
+        }
+    assert jobs[ADDRESS] == AT.isoformat()
+    assert jobs[other] == future.isoformat()
+    assert jobs[leased] == future.isoformat()
 
 
 def test_short_page_settles_on_charged_day_and_budget_wait_keeps_progress(database, monkeypatch):

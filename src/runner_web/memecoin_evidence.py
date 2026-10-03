@@ -11,11 +11,10 @@ from typing import Any
 
 from runner_web.db import connection
 
-DAILY_CREDIT_CAP = 10_000
-# Prices cost about 1,500 credits a day. Every other read stops this far short of
-# the daily limit, so the forensic reads can never leave the board without prices.
+DAILY_CREDIT_CAP = 30_000
+# Prices cost about 1,500 credits a day. Keep 2,000 credits for fresh prices.
 PRICE_RESERVE = 2_000
-WALLET_CREDIT_CAP = 2_000
+WALLET_CREDIT_CAP = 7_000
 RETENTION_DAYS = 30
 MAX_TRANSACTIONS = 250_000
 PRUNE_BATCH_SIZE = 500

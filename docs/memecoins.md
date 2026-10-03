@@ -8,15 +8,17 @@ Metadata, marketing and category labels have zero weight.
 ## Budget and collection
 
 `HELIUS_API_KEY` is a worker secret. The shared daily budget is capped at
-**10,000 Helius credits per UTC day**. `HELIUS_DAILY_CREDITS` can lower that limit.
+**30,000 Helius credits per UTC day**. Production sets `HELIUS_DAILY_CREDITS=30000`.
+The default in other environments is 10,000; this setting can lower the limit.
 The database reserves the maximum documented request cost before each request.
 Failed requests retain their reservation as a conservative allowance. The cap
 survives restarts and applies across workers running this ingestion pipeline.
 Other applications using the same Helius account have their own usage.
 
-Prices come first. Every read except prices stops 2,000 credits short of the
-daily limit, so the forensic reads can never leave the board without prices
-(they cost about 1,500 credits a day). When the budget is spent, the refresh
+Prices come first. A 2,000-credit reserve keeps prices fresh
+(they cost about 1,500 credits a day). Opened wallets share up to 7,000 credits
+within the 30,000-credit budget. Paused wallet history resumes when enough
+credits are available for a full page. When the budget is spent, the refresh
 skips the paid transaction pages and keeps pricing from saved discovery.
 
 Paid transaction pages run at most once every 15 minutes, each with a limit of

@@ -13,12 +13,13 @@ from typing import Any
 
 from runner_web.db import connection
 from runner_web.helius_discovery import _address
-from runner_web.memecoin_evidence import CreditBudgetReached
-from runner_web.onchain_wallets import REFRESH_SECONDS, saved_wallet
+from runner_web.memecoin_evidence import CreditBudgetReached, budget_status
+from runner_web.onchain_wallets import PAGE_SIZE, REFRESH_SECONDS, saved_wallet
 
 LOG = logging.getLogger(__name__)
 BACKFILL_SECONDS = 60
 LEASE_SECONDS = 300
+BUDGET_WAIT_MESSAGE = "Wallet history will continue after the daily credit budget resets."
 
 
 def advance_wallet(
@@ -62,7 +63,7 @@ def advance_wallet(
             next_read = (current + timedelta(days=1)).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
-            message = "Wallet history will continue after the daily credit budget resets."
+            message = BUDGET_WAIT_MESSAGE
         with connection() as database:
             owned = database.execute(
                 "UPDATE onchain_wallet_backfills SET lease_until=?,lease_token=NULL,"
@@ -104,6 +105,25 @@ def advance_wallet(
     return saved_wallet(address, at=current)
 
 
+def resume_budget_waits(*, at: datetime) -> None:
+    """Resume paused history when the allowance can cover a full wallet read."""
+    budget = budget_status(at=at)
+    read_credits = ((PAGE_SIZE + 99) // 100) * 10 + 3
+    available = min(
+        budget["remaining_credits"] - budget["price_reserve"],
+        budget["wallet_daily_limit"] - budget["wallet_credits"],
+    )
+    if available < read_credits:
+        return
+    stamp = at.isoformat()
+    with connection() as database:
+        database.execute(
+            "UPDATE onchain_wallet_backfills SET next_read_at=? "
+            "WHERE error=? AND next_read_at>? AND lease_until<=?",
+            (stamp, BUDGET_WAIT_MESSAGE, stamp, stamp),
+        )
+
+
 def refresh_opened_wallet(*, at: datetime | None = None) -> dict[str, Any] | None:
     """The oldest due wallet with a saved read gets one page per worker pass."""
     if not os.getenv("HELIUS_API_KEY", "").strip():
@@ -111,6 +131,7 @@ def refresh_opened_wallet(*, at: datetime | None = None) -> dict[str, Any] | Non
     from runner_web.onchain_wallets import refresh_wallet
 
     current = at or datetime.now(UTC)
+    resume_budget_waits(at=current)
     with connection() as database:
         row = database.execute(
             "SELECT snapshots.address FROM onchain_wallet_snapshots snapshots "
