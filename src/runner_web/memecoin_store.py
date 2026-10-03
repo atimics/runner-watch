@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
 from runner_web.db import connection
 from runner_web.memecoin_replay_store import queue_replay
 
+LOG = logging.getLogger(__name__)
 HISTORY_DAYS = 7
 MAX_HISTORY_POINTS = 250_000
 MAX_DETAIL_HISTORY = 2016
@@ -47,16 +50,36 @@ def with_fast_price(
         return row, collected_at
 
 
-def save_fast_quotes(quotes: list[dict[str, Any]], *, observed_at: datetime) -> None:
-    """History points for fast-loop prices, so charts and Call fills see them."""
+FAST_HISTORY_SECONDS = 300
+
+
+def save_fast_quotes(
+    quotes: list[dict[str, Any]], *, observed_at: datetime, every_tick: set[str] | None = None
+) -> None:
+    """History points for fast-loop prices, so charts and Call fills see them.
+
+    Charts read the newest points, so a point a minute would shrink their span.
+    A coin keeps the five-minute spacing unless a Call order is waiting on its
+    next quote (`every_tick`).
+    """
 
     stamp = observed_at.isoformat()
+    spaced = (observed_at - timedelta(seconds=FAST_HISTORY_SECONDS)).isoformat()
     with connection() as database:
         for quote in quotes:
             asset = database.execute(
                 "SELECT run_id FROM memecoin_assets WHERE coin_id=?", (quote["coin_id"],)
             ).fetchone()
             if asset is None:
+                continue
+            if (
+                quote["coin_id"] not in (every_tick or set())
+                and database.execute(
+                    "SELECT 1 FROM memecoin_quote_history "
+                    "WHERE coin_id=? AND observed_at>? LIMIT 1",
+                    (quote["coin_id"], spaced),
+                ).fetchone()
+            ):
                 continue
             database.execute(
                 """
@@ -72,6 +95,15 @@ def save_memecoin_snapshot(
 ) -> None:
     collected = collected_at.isoformat()
     oldest = (collected_at - timedelta(days=HISTORY_DAYS)).isoformat()
+    started = last = time.monotonic()
+    steps: dict[str, float] = {}
+
+    def mark(name: str) -> None:
+        nonlocal last
+        now = time.monotonic()
+        steps[name] = now - last
+        last = now
+
     with connection() as database:
         for row in rows:
             database.execute(
@@ -116,16 +148,22 @@ def save_memecoin_snapshot(
                 """,
                 (row["id"], observed, collected, row["price"], run_id, features),
             )
+        mark("rows")
         database.execute("DELETE FROM memecoin_quote_history WHERE observed_at<?", (oldest,))
-        database.execute(
-            """
-            DELETE FROM memecoin_quote_history WHERE (coin_id,observed_at) NOT IN (
-                SELECT coin_id,observed_at FROM memecoin_quote_history
-                ORDER BY observed_at DESC,coin_id LIMIT ?
-            )
-            """,
+        mark("prune_old")
+        # Find the newest point past the cap, then delete everything older than it. This
+        # reads the time index once; a NOT IN over every kept row did not finish in minutes.
+        past_cap = database.execute(
+            "SELECT observed_at FROM memecoin_quote_history "
+            "ORDER BY observed_at DESC,coin_id LIMIT 1 OFFSET ?",
             (MAX_HISTORY_POINTS,),
-        )
+        ).fetchone()
+        if past_cap is not None:
+            database.execute(
+                "DELETE FROM memecoin_quote_history WHERE observed_at<=?",
+                (past_cap["observed_at"],),
+            )
+        mark("prune_cap")
         for key, value in (
             (
                 "memecoins_snapshot",
@@ -141,6 +179,11 @@ def save_memecoin_snapshot(
                 """,
                 (key, json.dumps(value, allow_nan=False), collected),
             )
+        mark("state")
+    total = time.monotonic() - started
+    if total > 30:
+        detail = " ".join(f"{name}={value:.1f}" for name, value in steps.items())
+        LOG.warning("memecoin_snapshot_save slow total=%.1f %s", total, detail)
 
 
 def stored_memecoin(coin_id: str) -> dict[str, Any] | None:

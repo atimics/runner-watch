@@ -146,8 +146,71 @@ def test_open_calls_are_watched_even_when_the_coin_did_not_trade(market_db):
 def test_refresh_logs_where_the_time_went(market_db, caplog):
     body = json.dumps([]).encode()
     with (
-        caplog.at_level("INFO", logger="runner_web.memecoins"),
+        caplog.at_level("WARNING", logger="runner_web.memecoins"),
         patch.object(memecoins, "_collect_helius", side_effect=ValueError("down")),
     ):
         memecoins.refresh_memecoins(download=lambda *_: body, at=AT)
     assert any("memecoin_refresh_stages status=error" in message for message in caplog.messages)
+
+
+def history_times():
+    with connection() as database:
+        return [
+            row["observed_at"]
+            for row in database.execute(
+                "SELECT observed_at FROM memecoin_quote_history ORDER BY observed_at"
+            ).fetchall()
+        ]
+
+
+def test_fast_history_keeps_five_minute_spacing_unless_an_order_waits(market_db):
+    seed_board()
+    for minute in (1, 2, 6):
+        at = AT + timedelta(minutes=minute)
+        memecoin_store.save_fast_quotes([{"coin_id": "dogecoin", "price": 0.2}], observed_at=at)
+    # AT itself is the slow loop's point; one minute and two minutes are too close.
+    assert history_times() == [AT.isoformat(), (AT + timedelta(minutes=6)).isoformat()]
+    memecoin_store.save_fast_quotes(
+        [{"coin_id": "dogecoin", "price": 0.2}],
+        observed_at=AT + timedelta(minutes=7),
+        every_tick={"dogecoin"},
+    )
+    assert len(history_times()) == 3
+
+
+def test_history_cap_keeps_the_newest_points(market_db, monkeypatch):
+    seed_board()
+    monkeypatch.setattr(memecoin_store, "MAX_HISTORY_POINTS", 5)
+    with connection() as database:
+        for minute in range(1, 11):
+            database.execute(
+                "INSERT INTO memecoin_quote_history(coin_id,observed_at,collected_at,price,run_id) "
+                "VALUES('dogecoin',?,?,0.1,'run')",
+                ((AT + timedelta(minutes=minute)).isoformat(),) * 2,
+            )
+    memecoins_row = memecoins.normalize_memecoins(
+        [
+            {
+                "id": "dogecoin",
+                "symbol": "doge",
+                "name": "Dogecoin",
+                "current_price": 0.12,
+                "last_updated": (AT + timedelta(minutes=11)).isoformat(),
+            }
+        ]
+    )
+    memecoin_store.save_memecoin_snapshot(
+        memecoins_row, run_id="run2", collected_at=AT + timedelta(minutes=11)
+    )
+    kept = history_times()
+    assert len(kept) == 5
+    assert kept[-1] == (AT + timedelta(minutes=11)).isoformat()
+
+
+def test_slow_snapshot_save_logs_its_steps(market_db, caplog, monkeypatch):
+    ticks = iter(range(0, 1000, 20))
+    monkeypatch.setattr(memecoin_store.time, "monotonic", lambda: next(ticks))
+    row = seed_board()
+    with caplog.at_level("WARNING", logger="runner_web.memecoin_store"):
+        memecoin_store.save_memecoin_snapshot([row], run_id="slow", collected_at=AT)
+    assert any("memecoin_snapshot_save slow" in m and "prune_cap=" in m for m in caplog.messages)
