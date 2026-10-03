@@ -379,6 +379,42 @@ def test_only_coins_passing_the_free_standards_cost_a_read():
     assert rpc.calls.count("getTokenAccounts") == 1
 
 
+def test_a_spent_budget_keeps_the_answers_already_saved():
+    from runner_web.helius_discovery import _encode
+    from runner_web.memecoin_evidence import CreditBudgetReached
+
+    lp = _encode(bytes([33]) * 32)
+    rpc = FakeRpc(
+        mints={
+            MINT: mint_account(),
+            POOL: pump_pool(lp, 10**12),
+            lp: lp_mint_account(0),
+            **{f"holder{n}": owned_by(WALLET) for n in range(10)},
+        },
+        largest=[
+            {"address": f"holder{n}", "amount": str(10_000_000 * 10**6), "decimals": 6}
+            for n in range(10)
+        ],
+    )
+    state = ratify_rows([row()], {}, vaults={POOL: VAULT}, bundled=set(), rpc=rpc, at=AT)
+
+    def spent(body, *, credits):
+        raise CreditBudgetReached("Helius daily credit budget reached")
+
+    later = [row()]
+    ratify_rows(
+        later, state, vaults={POOL: VAULT}, bundled=set(), rpc=spent, at=AT + timedelta(minutes=30)
+    )
+    # The saved controls, holders, count and lock still ratify it.
+    assert later[0]["ratification"]["ratified"] is True
+    # A lock answer older than an hour is not trusted.
+    older = [row()]
+    ratify_rows(
+        older, state, vaults={POOL: VAULT}, bundled=set(), rpc=spent, at=AT + timedelta(hours=2)
+    )
+    assert older[0]["ratification"]["ratified"] is False
+
+
 def test_a_failed_holder_count_leaves_it_unknown():
     from runner_web.memecoin_ratify import holder_counts
 

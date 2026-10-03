@@ -58,6 +58,7 @@ LP_LAYOUTS = (
     (RAYDIUM_AMM_V4, None, 464, 720, "Raydium AMM v4"),
 )
 HOLDERS_TTL = timedelta(hours=6)
+LOCKS_TTL = timedelta(hours=1)
 # Bump when the holder rules change, so answers under older rules are redone.
 HOLDER_RULES = 6
 MAX_HOLDER_READS = 20
@@ -80,7 +81,13 @@ def mint_controls(
     controls = {mint: known[mint] for mint in mints if (known.get(mint) or {}).get("clean")}
     unknown = [mint for mint in mints if mint not in controls]
     if unknown:
-        for mint, account in read_accounts(unknown, rpc).items():
+        try:
+            accounts = read_accounts(unknown, rpc)
+        except ValueError:
+            # A spent budget or a failed read: the clean answers already kept still count.
+            LOG.warning("Mint control reads failed", exc_info=True)
+            return controls
+        for mint, account in accounts.items():
             try:
                 info = account["data"]["parsed"]["info"]  # type: ignore[index]
             except (KeyError, TypeError):
@@ -251,11 +258,23 @@ def ratify_rows(
     ]
     controls = mint_controls([row["token_address"] for row in candidates], known_controls, rpc=rpc)
     known_controls.update(controls)
+    kept_locks = {
+        pool: entry
+        for pool, entry in (saved.get("locks") or {}).items()
+        if isinstance(entry, dict) and at - datetime.fromisoformat(entry["checked_at"]) <= LOCKS_TTL
+    }
     try:
         locks = liquidity_locks([row["pool_address"] for row in candidates], rpc=rpc)
+        kept_locks.update(
+            {pool: {**lock, "checked_at": at.isoformat()} for pool, lock in locks.items()}
+        )
     except Exception:
+        # A failed read keeps the last answer for an hour; a pulled pool shows on the record.
         LOG.warning("Liquidity lock reads failed", exc_info=True)
-        locks = {}
+        locks = {
+            pool: {key: value for key, value in entry.items() if key != "checked_at"}
+            for pool, entry in kept_locks.items()
+        }
     reads = 0
     for row in candidates:
         mint = row["token_address"]
@@ -306,4 +325,4 @@ def ratify_rows(
         )
         if facts is not None and mint:
             facts[mint] = {"row": {key: row.get(key) for key in ROW_FACTS}, **inputs, "at": at}
-    return {"controls": known_controls, "holders": holders, "counts": counts}
+    return {"controls": known_controls, "holders": holders, "counts": counts, "locks": kept_locks}

@@ -3955,6 +3955,20 @@ def _migration_099_transition_alerts(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_100_onchain_wallet_snapshots(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS onchain_wallet_snapshots (
+            address TEXT PRIMARY KEY,
+            payload_json TEXT,
+            error TEXT,
+            refresh_after TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4061,6 +4075,7 @@ MIGRATIONS = (
     Migration(97, "dash_decisions", _migration_097_dash_decisions),
     Migration(98, "report_sources", _migration_098_report_sources),
     Migration(99, "transition_alerts", _migration_099_transition_alerts),
+    Migration(100, "onchain_wallet_snapshots", _migration_100_onchain_wallet_snapshots),
 )
 
 

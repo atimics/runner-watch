@@ -35,17 +35,28 @@ def retry_database_operation(function: Callable[_P, _R]) -> Callable[_P, _R]:
 
 
 class ResultRow:
-    __slots__ = ("_keys", "_lookup", "_values")
+    """One row: its values and the query's shared name-to-position map.
 
-    def __init__(self, keys: Sequence[str], values: Sequence[Any]) -> None:
-        self._keys = tuple(keys)
-        self._values = tuple(values)
-        self._lookup = dict(zip(self._keys, self._values, strict=True))
+    Rows share their query's column names and lookup map. A copy of both on
+    every row tripled the memory of large reads, which kept the worker near
+    its 1 GB limit.
+    """
+
+    __slots__ = ("_index", "_keys", "_values")
+
+    def __init__(
+        self, keys: Sequence[str], values: Sequence[Any], index: dict[str, int] | None = None
+    ) -> None:
+        self._keys = keys if isinstance(keys, tuple) else tuple(keys)
+        self._values = values if isinstance(values, tuple) else tuple(values)
+        if len(self._keys) != len(self._values):
+            raise ValueError("Row and column counts differ")
+        self._index = index if index is not None else _name_index(self._keys)
 
     def __getitem__(self, key: str | int | slice) -> Any:
         if isinstance(key, (int, slice)):
             return self._values[key]
-        return self._lookup[key]
+        return self._values[self._index[key]]
 
     def __iter__(self) -> Iterator[Any]:
         return iter(self._values)
@@ -57,31 +68,40 @@ class ResultRow:
         return self._keys
 
 
+def _name_index(keys: tuple[str, ...]) -> dict[str, int]:
+    # A repeated column name reads as its last occurrence, as dict(zip()) did.
+    return {key: position for position, key in enumerate(keys)}
+
+
 class CursorResult:
-    __slots__ = ("_cursor", "_keys")
+    __slots__ = ("_cursor", "_index", "_keys")
 
     def __init__(self, cursor: Any) -> None:
         self._cursor = cursor
         self._keys = tuple(
             getattr(column, "name", column[0]) for column in cursor.description or ()
         )
+        self._index = _name_index(self._keys)
 
     @property
     def rowcount(self) -> int:
         return int(self._cursor.rowcount)
 
+    def _row(self, values: Sequence[Any]) -> ResultRow:
+        return ResultRow(self._keys, values, self._index)
+
     def _wrap(self, row: Sequence[Any] | None) -> ResultRow | None:
-        return ResultRow(self._keys, row) if row is not None else None
+        return self._row(row) if row is not None else None
 
     def fetchone(self) -> ResultRow | None:
         return self._wrap(self._cursor.fetchone())
 
     def fetchall(self) -> list[ResultRow]:
-        return [ResultRow(self._keys, row) for row in self._cursor.fetchall()]
+        return [self._row(row) for row in self._cursor.fetchall()]
 
     def __iter__(self) -> Iterator[ResultRow]:
         for row in self._cursor:
-            yield ResultRow(self._keys, row)
+            yield self._row(row)
 
 
 def _replace_qmarks(statement: str) -> str:

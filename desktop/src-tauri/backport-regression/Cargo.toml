@@ -8,3 +8,4 @@ license = "AGPL-3.0-only"
 [dependencies]
 glib = "=0.18.5"
 urlpattern = "=0.3.0"
+urlpattern_current = { package = "urlpattern", version = "=0.6.0" }

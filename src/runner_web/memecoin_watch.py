@@ -268,10 +268,12 @@ def launch_bundles(
     rpc: Rpc,
     at: datetime,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Check up to ten unchecked board coins a cycle, tagged coins first.
+    """Check up to ten unchecked tagged coins a cycle, SETUP first.
 
-    A launch never changes, so each coin is checked once and remembered for a
-    week. A failed read leaves the coin for a later cycle.
+    Only coins tagged SETUP, RUNNING or EXTENDED are checked: a check costs up
+    to 13 credits and most board coins are never tagged. A launch never
+    changes, so each coin is checked once and remembered for a week. A failed
+    read leaves the coin for a later cycle.
     """
 
     rank = {"setup": 0, "running": 1, "extended": 2}
@@ -280,9 +282,10 @@ def launch_bundles(
             row
             for row in rows
             if row.get("token_address")
+            and (row.get("early") or {}).get("state") in rank
             and not (checked.get(row["token_address"]) or {}).get("checked_at")
         ),
-        key=lambda row: rank.get((row.get("early") or {}).get("state"), 3),
+        key=lambda row: rank[row["early"]["state"]],
     )
     findings = []
     remembered = {

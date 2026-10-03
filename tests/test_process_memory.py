@@ -64,3 +64,49 @@ def test_the_memory_trend_is_logged_every_few_minutes(monkeypatch, caplog):
             process_memory.log_memory_trend(clock=lambda: next(moments))
 
     assert caplog.text.count("memory_trend rss_mb=512") == 2
+
+
+def test_the_trend_names_heap_use_and_trims_freed_pages(monkeypatch, caplog):
+    trimmed = []
+    monkeypatch.setattr(process_memory, "_last_trend_at", None)
+    monkeypatch.setattr(process_memory, "rss_mb", lambda: 600.0)
+    monkeypatch.setattr(
+        process_memory, "heap_mb", lambda: {"used": 120.0, "free": 380.0, "mmap": 40.0}
+    )
+    monkeypatch.setattr(process_memory, "trim_heap", lambda: trimmed.append(True))
+
+    with caplog.at_level(logging.WARNING, logger="runner_web.process_memory"):
+        process_memory.log_memory_trend(clock=lambda: 0.0)
+
+    assert "heap_used_mb=120 heap_free_mb=380 heap_mmap_mb=40" in caplog.text
+    assert "py_blocks=" in caplog.text and trimmed == [True]
+
+
+def test_heap_figures_are_absent_without_glibc(monkeypatch):
+    monkeypatch.setattr(process_memory, "_LIBC", None)
+
+    assert process_memory.heap_mb() is None
+    process_memory.trim_heap()  # nothing to trim, and no error
+
+
+def test_the_trace_names_the_lines_holding_and_adding_memory(monkeypatch, caplog):
+    import tracemalloc
+
+    monkeypatch.setattr(process_memory, "_traced_before", {})
+    tracemalloc.start(1)
+    try:
+        held = [bytearray(1024) for _ in range(2000)]
+        with caplog.at_level(logging.WARNING, logger="runner_web.process_memory"):
+            process_memory.log_trace()
+    finally:
+        tracemalloc.stop()
+    assert held
+    assert "memory_trace traced_mb=" in caplog.text
+    assert "test_process_memory.py:" in caplog.text
+
+
+def test_no_trace_line_unless_tracing(caplog):
+    with caplog.at_level(logging.WARNING, logger="runner_web.process_memory"):
+        process_memory.log_trace()
+
+    assert "memory_trace" not in caplog.text
