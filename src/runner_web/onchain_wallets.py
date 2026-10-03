@@ -6,7 +6,8 @@ import hashlib
 import json
 import os
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -18,13 +19,15 @@ from runner_web.memecoins import _download
 from runner_web.solana_keys import TOKEN_2022_PROGRAM, TOKEN_PROGRAM
 from runner_web.wallet_registry import register_chain, wallet_id_for
 
-PAGE_SIZE = 100
-MAX_PAGES = 2
+PAGE_SIZE = 1_000
+MAX_PAGES = 1
 MAX_TOKEN_ACCOUNTS = 10_000
 HOLDINGS_PER_PAGE = 100
 PRICE_LIMIT = 30
 REFRESH_SECONDS = 900
 VERSION = "wallet-pnl-v1"
+BOOK_VERSION = 1
+MAX_POSITIONS = 20_000
 SEED_PATH = Path(__file__).parent / "assets" / "kol-wallets.json"
 QUOTE_UNITS = {SOL: "SOL", USDC: "USDC"}
 
@@ -78,7 +81,10 @@ def saved_wallet(address: str, *, at: datetime | None = None) -> dict[str, Any]:
     current = at or datetime.now(UTC)
     with connection() as db:
         row = db.execute(
-            "SELECT payload_json,error,refresh_after FROM onchain_wallet_snapshots WHERE address=?",
+            "SELECT snapshots.payload_json,snapshots.error,snapshots.refresh_after,"
+            "jobs.state_json,jobs.next_read_at FROM onchain_wallet_snapshots snapshots "
+            "LEFT JOIN onchain_wallet_backfills jobs ON jobs.address=snapshots.address "
+            "WHERE snapshots.address=?",
             (address,),
         ).fetchone()
     payload = json.loads(row["payload_json"]) if row and row["payload_json"] else {}
@@ -86,6 +92,7 @@ def saved_wallet(address: str, *, at: datetime | None = None) -> dict[str, Any]:
     stale = bool(
         updated and (current - datetime.fromisoformat(updated)).total_seconds() >= REFRESH_SECONDS
     )
+    state = json.loads(row["state_json"]) if row and row["state_json"] else {}
     return {
         **payload,
         "address": address,
@@ -94,6 +101,11 @@ def saved_wallet(address: str, *, at: datetime | None = None) -> dict[str, Any]:
         "error": row["error"] if row else None,
         "provider_ready": bool(os.getenv("HELIUS_API_KEY", "").strip()),
         "refresh_after": row["refresh_after"] if row else None,
+        "backfill": {
+            "status": "complete" if state.get("complete") else "loading" if state else "queued",
+            "page_size": PAGE_SIZE,
+            "next_read_at": row["next_read_at"] if row else None,
+        },
     }
 
 
@@ -155,19 +167,39 @@ def calculate_pnl(
     entries: list[dict[str, Any]],
     holdings: dict[str, Decimal],
     quotes: dict[str, dict[str, Any]],
+    *,
+    checkpoint: dict[str, Any] | None = None,
+    keep_checkpoint: bool = False,
+    history_complete: bool = True,
 ) -> dict[str, Any]:
     """Average cost per quote currency, with unknown costs kept visible."""
 
     address = _address(address)
-    positions: dict[str, dict[str, Any]] = {}
-    trades = []
-    receipts = []
-    realized = {"SOL": Decimal(0), "USDC": Decimal(0)}
-    closed = {"SOL": 0, "USDC": 0}
-    unknown_sales = 0
-    unknown_by_unit = {"SOL": 0, "USDC": 0}
-    excluded = 0
-    fees = Decimal(0)
+    book = checkpoint or {}
+    if book and book.get("version") != BOOK_VERSION:
+        raise ValueError("Wallet history needs a current buying-cost book")
+    positions = {
+        mint: {
+            **row,
+            "amount": Decimal(row["amount"]),
+            "cost": Decimal(row["cost"]) if row["cost"] is not None else None,
+        }
+        for mint, row in book.get("positions", {}).items()
+    }
+    trades = list(reversed(book.get("trades", [])))
+    receipts = list(reversed(book.get("receipts", [])))
+    realized = {unit: Decimal(book.get("realized", {}).get(unit, "0")) for unit in ("SOL", "USDC")}
+    closed = {unit: book.get("closed", {}).get(unit, 0) for unit in ("SOL", "USDC")}
+    unknown_sales = book.get("unknown_sales", 0)
+    unknown_by_unit = {
+        unit: book.get("unknown_by_unit", {}).get(unit, 0) for unit in ("SOL", "USDC")
+    }
+    excluded = book.get("excluded", 0)
+    fees = Decimal(book.get("fees", "0"))
+    last_slot = book.get("last_slot", -1)
+    tail = set(book.get("tail", []))
+    oldest_at = book.get("oldest_at")
+    history_hash = book.get("history_hash", "")
     unique = {}
     for entry in entries:
         try:
@@ -177,16 +209,24 @@ def calculate_pnl(
             slot, index = entry["slot"], entry.get("transactionIndex")
             if type(slot) is not int or slot < 0:
                 raise ValueError("Invalid slot")
+            if checkpoint and (slot < last_slot or signature in tail):
+                continue
             # Preserve provider order within a slot if no index is provided.
             unique.setdefault(signature, (entry, len(unique), index))
         except (KeyError, TypeError, ValueError, IndexError):
             excluded += 1
     ordered = sorted(
         unique.values(),
-        key=lambda row: (row[0]["slot"], row[2] if type(row[2]) is int else -row[1]),
+        key=lambda row: (
+            row[0]["slot"],
+            row[2] if type(row[2]) is int else row[1] if keep_checkpoint else -row[1],
+        ),
     )
     for entry, _, _ in ordered:
         signature = entry["transaction"]["signatures"][0]
+        if entry["slot"] > last_slot:
+            last_slot, tail = entry["slot"], set()
+        tail.add(signature)
         meta = entry.get("meta") or {}
         try:
             keys = entry["transaction"]["message"]["accountKeys"]
@@ -208,6 +248,10 @@ def calculate_pnl(
                     ).hexdigest(),
                 }
             )
+            oldest_at = oldest_at or receipts[-1]["at"]
+            history_hash = hashlib.sha256(
+                (history_hash + receipts[-1]["hash"]).encode()
+            ).hexdigest()
             if meta.get("err") is not None:
                 continue
             pre = _balances(meta.get("preTokenBalances"), address)
@@ -301,13 +345,17 @@ def calculate_pnl(
             # A skipped change can break a later cost basis.
             for position in positions.values():
                 position["cost"] = None
+    # Closed positions have no remaining buying cost to carry into the next page.
+    positions = {mint: row for mint, row in positions.items() if row["amount"] > 0}
+    if len(positions) > MAX_POSITIONS:
+        raise ValueError("Wallet buying-cost book exceeds the saved position limit")
     rows = []
     unrealized = {"SOL": Decimal(0), "USDC": Decimal(0)}
     priced = {"SOL": 0, "USDC": 0}
     for mint, quantity in holdings.items():
         if quantity <= 0:
             continue
-        position = positions.get(mint)
+        position = positions.get(mint) if history_complete else None
         cost = position["cost"] if position and position["amount"] == quantity else None
         unit = position["unit"] if position else None
         price_usd = _price(quotes.get(mint, {}).get("price_usd"))
@@ -337,7 +385,7 @@ def calculate_pnl(
             }
         )
     unknown_holdings = sum(row["cost"] is None for row in rows if row["mint"] not in QUOTE_UNITS)
-    return {
+    result = {
         "version": VERSION,
         "pnl": [
             {
@@ -359,7 +407,7 @@ def calculate_pnl(
         "unknown_sales": unknown_sales,
         "unknown_holdings": unknown_holdings,
         "excluded_transactions": excluded,
-        "transactions": len(unique),
+        "transactions": book.get("transactions", 0) + len(unique),
         "priced_holdings": sum(row["value_usd"] is not None for row in rows),
         "holdings_value_usd": _number(
             sum(
@@ -369,9 +417,35 @@ def calculate_pnl(
         )
         if any(row["value_usd"] is not None for row in rows)
         else None,
-        "oldest_at": receipts[0]["at"] if receipts else None,
+        "oldest_at": oldest_at,
         "newest_at": receipts[-1]["at"] if receipts else None,
     }
+    if keep_checkpoint:
+        result["_checkpoint"] = {
+            "version": BOOK_VERSION,
+            "positions": {
+                mint: {
+                    **row,
+                    "amount": str(row["amount"]),
+                    "cost": str(row["cost"]) if row["cost"] is not None else None,
+                }
+                for mint, row in positions.items()
+            },
+            "realized": {unit: str(value) for unit, value in realized.items()},
+            "closed": closed,
+            "unknown_sales": unknown_sales,
+            "unknown_by_unit": unknown_by_unit,
+            "excluded": excluded,
+            "fees": str(fees),
+            "last_slot": last_slot,
+            "tail": sorted(tail),
+            "oldest_at": oldest_at,
+            "history_hash": history_hash,
+            "transactions": result["transactions"],
+            "trades": result["trades"],
+            "receipts": result["receipts"],
+        }
+    return result
 
 
 def _rpc(call: Callable[..., Any], method: str, params: list[Any], credits: int) -> Any:
@@ -381,61 +455,96 @@ def _rpc(call: Callable[..., Any], method: str, params: list[Any], credits: int)
     return reply["result"]
 
 
+def wallet_rpc(body: dict[str, Any], *, credits: int) -> dict[str, Any]:
+    from runner_web.memecoin_evidence import release_wallet_credits
+
+    charged_at = datetime.now(UTC)
+    reply = rpc_request(body, credits=credits, lane="wallet", at=charged_at)
+    if body["method"] == "getTransactionsForAddress":
+        rows = reply.get("result", {}).get("data")
+        if isinstance(rows, list) and len(rows) <= PAGE_SIZE:
+            actual = max(10, ((len(rows) + 99) // 100) * 10)
+            release_wallet_credits(credits - actual, at=charged_at)
+    return reply
+
+
 def collect_wallet(
     address: str,
     *,
     at: datetime,
-    rpc: Callable[..., Any] = rpc_request,
+    rpc: Callable[..., Any] = wallet_rpc,
     download: Callable[..., bytes] = _download,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     address = _address(address)
-    entries = []
-    cursor = None
-    # Freeze the upper bound so paging covers one history window.
-    for _ in range(MAX_PAGES):
-        options = {
-            "transactionDetails": "full",
-            "encoding": "jsonParsed",
-            "maxSupportedTransactionVersion": 1,
-            "commitment": "finalized",
-            "sortOrder": "desc",
-            "limit": PAGE_SIZE,
-            "filters": {
-                "status": "any",
-                "tokenAccounts": "balanceChanged",
-                "blockTime": {"lte": int(at.timestamp())},
-            },
-        }
-        if cursor:
-            options["paginationToken"] = cursor
-        result = _rpc(rpc, "getTransactionsForAddress", [address, options], 10)
-        page = result.get("data")
-        next_cursor = result.get("paginationToken")
-        if not isinstance(page, list) or len(page) > PAGE_SIZE:
-            raise ValueError("Chain history is temporarily unavailable")
-        if next_cursor is not None and (
-            not isinstance(next_cursor, str) or len(next_cursor) > 128 or next_cursor == cursor
+    state = state or {}
+    book = state.get("book")
+    window_end = state.get("window_end") if not state.get("complete") else None
+    window_end = window_end if window_end is not None else int(at.timestamp())
+    cursor = state.get("cursor")
+    start_slot = state.get("start_slot")
+    if state.get("complete"):
+        start_slot = book.get("last_slot") if book else None
+    options = {
+        "transactionDetails": "full",
+        "encoding": "jsonParsed",
+        "maxSupportedTransactionVersion": 1,
+        "commitment": "finalized",
+        "sortOrder": "asc",
+        "limit": PAGE_SIZE,
+        "filters": {
+            "status": "any",
+            "tokenAccounts": "balanceChanged",
+            "blockTime": {"lte": window_end},
+        },
+    }
+    if start_slot is not None and start_slot >= 0:
+        options["filters"]["slot"] = {"gte": start_slot}
+    if cursor:
+        options["paginationToken"] = cursor
+    # History and the three current balance reads are independent.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        history_read = pool.submit(_rpc, rpc, "getTransactionsForAddress", [address, options], 100)
+        balance_read = pool.submit(
+            _rpc, rpc, "getBalance", [address, {"commitment": "finalized"}], 1
+        )
+        account_reads = [
+            pool.submit(
+                _rpc,
+                rpc,
+                "getTokenAccountsByOwner",
+                [
+                    address,
+                    {"programId": program},
+                    {"encoding": "jsonParsed", "commitment": "finalized"},
+                ],
+                1,
+            )
+            for program in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
+        ]
+        result = history_read.result()
+        balance = balance_read.result()
+        account_results = [read.result() for read in account_reads]
+    entries = result.get("data")
+    next_cursor = result.get("paginationToken")
+    if not isinstance(entries, list) or len(entries) > PAGE_SIZE:
+        raise ValueError("Chain history is temporarily unavailable")
+    if next_cursor is not None and (
+        not isinstance(next_cursor, str) or len(next_cursor) > 128 or next_cursor == cursor
+    ):
+        raise ValueError("Chain history is temporarily unavailable")
+    for entry in entries:
+        if (
+            type(entry.get("blockTime")) is not int
+            or entry["blockTime"] > window_end
+            or type(entry.get("slot")) is not int
+            or (start_slot is not None and entry["slot"] < start_slot)
         ):
-            raise ValueError("Chain history is temporarily unavailable")
-        entries.extend(page)
-        cursor = next_cursor
-        if not cursor:
-            break
-    balance = _rpc(rpc, "getBalance", [address, {"commitment": "finalized"}], 1)
+            raise ValueError("Chain history is outside the requested window")
     if type(balance.get("value")) is not int or balance["value"] < 0:
         raise ValueError("Wallet balance is temporarily unavailable")
     quantities: dict[str, Decimal] = {}
-    for program in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM):
-        result = _rpc(
-            rpc,
-            "getTokenAccountsByOwner",
-            [
-                address,
-                {"programId": program},
-                {"encoding": "jsonParsed", "commitment": "finalized"},
-            ],
-            1,
-        )
+    for result in account_results:
         accounts = result.get("value")
         if not isinstance(accounts, list) or len(accounts) > MAX_TOKEN_ACCOUNTS:
             raise ValueError("Wallet holdings exceed the current view limit")
@@ -454,7 +563,12 @@ def collect_wallet(
                     recent.append(token["mint"])
         except (KeyError, TypeError, AttributeError):
             continue
-    price_mints = list(dict.fromkeys([*recent, *quantities]))
+    known = [
+        mint
+        for mint, row in (book or {}).get("positions", {}).items()
+        if row["cost"] is not None and mint in quantities
+    ]
+    price_mints = list(dict.fromkeys([*known, *recent, *quantities]))
     price_mints = [mint for mint in price_mints if mint not in QUOTE_UNITS]
     wanted = [SOL, USDC, *price_mints[: PRICE_LIMIT - 2]]
     quotes = {}
@@ -467,19 +581,34 @@ def collect_wallet(
                 quotes[mint] = token["attributes"]
     except (ValueError, KeyError, TypeError, OSError):
         pass
-    payload = calculate_pnl(address, entries, quantities, quotes)
+    complete = not next_cursor
+    payload = calculate_pnl(
+        address,
+        entries,
+        quantities,
+        quotes,
+        checkpoint=book,
+        keep_checkpoint=True,
+        history_complete=complete,
+    )
+    checkpoint = payload.pop("_checkpoint")
     return {
         **payload,
         "address": address,
         "updated_at": at.isoformat(),
         "balance_sol": balance["value"] / 10**9,
-        "has_more": bool(cursor),
+        "has_more": not complete,
         "commitment": "finalized",
         "source": "Helius",
         "history_limit": MAX_PAGES * PAGE_SIZE,
-        "history_hash": hashlib.sha256(
-            json.dumps(entries, sort_keys=True, allow_nan=False).encode()
-        ).hexdigest(),
+        "history_hash": checkpoint["history_hash"],
+        "_state": {
+            "book": checkpoint,
+            "window_end": window_end,
+            "start_slot": start_slot,
+            "cursor": next_cursor,
+            "complete": complete,
+        },
     }
 
 
@@ -487,38 +616,16 @@ def refresh_wallet(
     address: str,
     *,
     at: datetime | None = None,
-    rpc: Callable[..., Any] = rpc_request,
+    rpc: Callable[..., Any] = wallet_rpc,
     download: Callable[..., bytes] = _download,
 ) -> dict[str, Any]:
-    """Reserve the wallet cooldown across processes before a paid read."""
-    address = _address(address)
-    current = at or datetime.now(UTC)
-    next_refresh = (current + timedelta(seconds=REFRESH_SECONDS)).isoformat()
-    with connection() as db:
-        claimed = db.execute(
-            "INSERT INTO onchain_wallet_snapshots(address,refresh_after,updated_at) VALUES(?,?,?) "
-            "ON CONFLICT(address) DO UPDATE SET refresh_after=excluded.refresh_after "
-            "WHERE onchain_wallet_snapshots.refresh_after<=? RETURNING address",
-            (address, next_refresh, current.isoformat(), current.isoformat()),
-        ).fetchone()
-    if claimed is None:
-        return saved_wallet(address, at=current)
-    try:
-        payload = collect_wallet(address, at=current, rpc=rpc, download=download)
-    except Exception:
-        # Exception URLs may contain the provider key.
-        message = "Chain data is temporarily unavailable. Try again in a minute."
-        with connection() as db:
-            db.execute(
-                "UPDATE onchain_wallet_snapshots SET error=?,refresh_after=? "
-                "WHERE address=? AND refresh_after=?",
-                (message, (current + timedelta(seconds=60)).isoformat(), address, next_refresh),
-            )
-        return saved_wallet(address, at=current)
-    with connection() as db:
-        db.execute(
-            "UPDATE onchain_wallet_snapshots SET payload_json=?,error=NULL,updated_at=? "
-            "WHERE address=? AND refresh_after=?",
-            (json.dumps(payload, allow_nan=False), current.isoformat(), address, next_refresh),
-        )
-    return saved_wallet(address, at=current)
+    """Advance the saved wallet history under one durable claim."""
+    from runner_web.wallet_backfill import advance_wallet
+
+    return advance_wallet(
+        address,
+        at=at,
+        rpc=rpc,
+        download=download,
+        collect=collect_wallet,
+    )

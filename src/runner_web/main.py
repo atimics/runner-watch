@@ -458,6 +458,7 @@ from runner_web.telegram_routes import (
     create_telegram_routes,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
+from runner_web.wallet_backfill import wallet_backfill_worker
 from runner_web.wallet_routes import WalletRouteDependencies, create_wallet_routes
 from runner_web.worker_supervisor import run_supervised
 
@@ -977,6 +978,7 @@ def _start_worker_tasks(
         asyncio.create_task(memecoin_worker(), name="memecoins"),
         asyncio.create_task(memecoin_fast_price_worker(), name="memecoin-fast-prices"),
         asyncio.create_task(memecoin_replay_worker(), name="memecoin-replays"),
+        asyncio.create_task(wallet_backfill_worker(), name="wallet-history"),
         asyncio.create_task(market_actor_worker(), name="market-actors"),
         asyncio.create_task(call_settlement_worker(), name="call-settlement"),
     ]

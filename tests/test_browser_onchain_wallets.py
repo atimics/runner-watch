@@ -1,6 +1,7 @@
 """Wallet PnL, cost coverage, and refresh actions in the rendered page."""
 
 import re
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -18,7 +19,16 @@ pytestmark = pytest.mark.browser
 ROOT = Path(__file__).parents[1]
 
 
-def open_wallet(page: Page, *, width=390, pending=False, unknown=False, large=False):
+def open_wallet(
+    page: Page,
+    *,
+    width=390,
+    pending=False,
+    unknown=False,
+    large=False,
+    backfilling=False,
+    ready_on_reload=False,
+):
     page.set_viewport_size({"width": width, "height": 900})
     wallet_id = register_chain(ADDRESS)
     wallet = {
@@ -44,6 +54,8 @@ def open_wallet(page: Page, *, width=390, pending=False, unknown=False, large=Fa
     if large:
         row = wallet["holdings"][0]
         wallet["holdings"] = [row] + [{**row, "name": f"Token {index}"} for index in range(1, 2627)]
+    if backfilling:
+        wallet.update(provider_ready=True, backfill={"status": "loading"})
     request = Request(
         {
             "type": "http",
@@ -57,7 +69,18 @@ def open_wallet(page: Page, *, width=390, pending=False, unknown=False, large=Fa
     )
     request.state.csp_nonce = "browser-test"
 
+    loads = 0
+
     def render(route):
+        nonlocal loads
+        loads += 1
+        if ready_on_reload and loads > 1:
+            wallet.update(
+                updated_at=(AT + timedelta(minutes=1)).isoformat(),
+                backfill={"status": "complete"},
+                has_more=False,
+                transactions=4,
+            )
         query = parse_qs(urlsplit(route.request.url).query)
         number = int(query.get("holdings_page", ["1"])[0])
         html = main.templates.TemplateResponse(
@@ -101,7 +124,7 @@ def test_wallet_pnl_balances_and_receipts_fit_the_screen(page: Page, database, w
     expect(page.get_by_role("region", name="Wallet balances")).to_contain_text("0.00001500 SOL")
     expect(page.get_by_role("region", name="Token holdings")).to_contain_text("$600.00")
     expect(page.get_by_role("region", name="Wallet trades").get_by_role("link")).to_have_count(3)
-    expect(page.locator(".chain-coverage").first).to_contain_text("Older history available")
+    expect(page.locator(".chain-coverage").first).to_contain_text("History backfill in progress")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert not errors
 
@@ -150,6 +173,35 @@ def test_failed_refresh_preserves_saved_pnl_and_allows_retry(page: Page, databas
     expect(button).to_be_enabled()
     expect(page.get_by_role("region", name="Profit and loss")).to_contain_text("+0.5000 SOL")
     assert requests == ["POST"]
+
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_backfill_progress_reads_saved_data_and_updates_the_page(page: Page, database, width):
+    page.clock.install()
+    wallet_id = open_wallet(page, width=width, backfilling=True, ready_on_reload=True)
+    reads = []
+
+    def progress(route):
+        reads.append(route.request.method)
+        route.fulfill(
+            json={
+                "status": "ready",
+                "error": None,
+                "updated_at": (AT + timedelta(minutes=1)).isoformat(),
+                "backfill": {"status": "complete"},
+            }
+        )
+
+    page.route("**/api/wallets/*/pnl?summary=true", progress)
+    page.goto("http://app.test/wallet/" + wallet_id)
+    expect(page.get_by_role("button", name="Load more history")).to_be_visible()
+    expect(page.locator(".chain-coverage").first).to_contain_text("continues in the background")
+    page.clock.fast_forward(15001)
+    expect(page.locator(".chain-coverage").first).to_contain_text("4 transactions loaded")
+    expect(page.locator(".chain-coverage").first).to_contain_text("History caught up")
+    expect(page.get_by_role("button", name="Refresh chain data")).to_be_visible()
+    assert reads == ["GET"]
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
 def test_first_read_starts_when_provider_is_ready(page: Page, database):

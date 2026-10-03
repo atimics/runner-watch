@@ -125,14 +125,22 @@ Names are dated source labels from January 26, 2025.
 
 Set `HELIUS_API_KEY` to load chain data. Reads use finalized transactions,
 include associated token accounts, and share `HELIUS_DAILY_CREDITS` with other
-chain reads. Each refresh loads up to 200 recent transactions and current
-holdings from both Solana token programs. The saved view has a shared
-15-minute refresh limit per wallet and a one-minute retry after a failed read.
+chain reads. Each pass adds up to 1,000 transactions and current holdings
+from both Solana token programs. One shared claim per wallet keeps reads
+safe across workers and web processes. Failed reads retry after a minute.
 
 PnL uses average buying cost for Pump, PumpSwap, and Raydium CPMM trades.
 SOL and USDC results keep their own units. SOL trade costs include native
 wallet fees and account costs. Transfers and opening balances with unknown
 cost stay pending. The page shows the loaded date range and cost coverage.
+Opened wallets backfill from their first transaction in pages of 1,000. Each
+page saves the buying-cost book and cursor together. The worker continues a
+due wallet every minute; completed histories refresh every 15 minutes.
+History and current balance reads run in parallel. Wallet reads share up to
+2,000 credits per UTC day within the existing Helius budget and price reserve.
+Short pages settle at their returned transaction count. Progress survives
+restarts, and the page updates as saved history grows. Current buying costs
+and open gains stay pending until history catches up.
 Current GeckoTerminal prices cover up to 28 holding tokens plus SOL and USDC.
 Each trade links to its chain receipt; saved snapshots also keep receipt hashes.
 Reads support up to 10,000 accounts per token program. Holdings appear in
