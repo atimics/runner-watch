@@ -2,13 +2,14 @@
 
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import Page, expect
 from starlette.requests import Request
 
 from runner_web import main
-from runner_web.onchain_wallets import wallet_label
+from runner_web.onchain_wallets import holdings_page, wallet_label
 from runner_web.wallet_registry import register_chain
 from tests.test_onchain_wallets import ADDRESS, AT, sample_pnl
 from tests.test_onchain_wallets import database as database
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.browser
 ROOT = Path(__file__).parents[1]
 
 
-def open_wallet(page: Page, *, width=390, pending=False, unknown=False):
+def open_wallet(page: Page, *, width=390, pending=False, unknown=False, large=False):
     page.set_viewport_size({"width": width, "height": 900})
     wallet_id = register_chain(ADDRESS)
     wallet = {
@@ -40,6 +41,9 @@ def open_wallet(page: Page, *, width=390, pending=False, unknown=False):
         wallet["pnl"][0].update(realized=None, unrealized=None, closed_trades=0, priced_positions=0)
         wallet["holdings"][0].update(cost=None, unrealized=None)
         wallet.update(unknown_sales=1, unknown_holdings=1)
+    if large:
+        row = wallet["holdings"][0]
+        wallet["holdings"] = [row] + [{**row, "name": f"Token {index}"} for index in range(1, 2627)]
     request = Request(
         {
             "type": "http",
@@ -52,32 +56,36 @@ def open_wallet(page: Page, *, width=390, pending=False, unknown=False):
         }
     )
     request.state.csp_nonce = "browser-test"
-    html = main.templates.TemplateResponse(
-        request,
-        "onchain_wallet.html",
-        main.page_context(
+
+    def render(route):
+        query = parse_qs(urlsplit(route.request.url).query)
+        number = int(query.get("holdings_page", ["1"])[0])
+        html = main.templates.TemplateResponse(
             request,
-            None,
-            resolved_user=None,
-            nav_product="memecoins",
-            wallet=wallet,
-            wallet_id=wallet_id,
-            screen={"kind": "memecoins"},
-        ),
-    ).body.decode()
-    html = re.sub(
-        r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
-        lambda match: "<style>" + (ROOT / "web/static" / match[1]).read_text() + "</style>",
-        html,
-    )
-    html = re.sub(
-        r'<script src="/static/([^"?]+)[^"]*"[^>]*></script>',
-        lambda match: "<script>" + (ROOT / "web/static" / match[1]).read_text() + "</script>",
-        html,
-    )
-    page.route(
-        "http://app.test/**", lambda route: route.fulfill(body=html, content_type="text/html")
-    )
+            "onchain_wallet.html",
+            main.page_context(
+                request,
+                None,
+                resolved_user=None,
+                nav_product="memecoins",
+                wallet=holdings_page(wallet, number),
+                wallet_id=wallet_id,
+                screen={"kind": "memecoins"},
+            ),
+        ).body.decode()
+        html = re.sub(
+            r'<link rel="stylesheet" href="/static/([^"?]+)[^"]*">',
+            lambda match: "<style>" + (ROOT / "web/static" / match[1]).read_text() + "</style>",
+            html,
+        )
+        html = re.sub(
+            r'<script src="/static/([^"?]+)[^"]*"[^>]*></script>',
+            lambda match: "<script>" + (ROOT / "web/static" / match[1]).read_text() + "</script>",
+            html,
+        )
+        route.fulfill(body=html, content_type="text/html")
+
+    page.route("http://app.test/**", render)
     return wallet_id
 
 
@@ -105,6 +113,24 @@ def test_unknown_costs_render_pending(page: Page, database):
     expect(cards.nth(0).locator("strong")).to_have_text("Pending")
     expect(cards.nth(1).locator("strong")).to_have_text("Pending")
     expect(page.get_by_role("region", name="Token holdings")).to_contain_text("Pending")
+
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_large_wallet_holdings_pages_keep_pnl_and_fit_the_screen(page: Page, database, width):
+    wallet_id = open_wallet(page, width=width, large=True)
+    page.goto("http://app.test/wallet/" + wallet_id)
+    holdings = page.get_by_role("region", name="Token holdings")
+    expect(holdings).to_contain_text("2627 tokens · Page 1 of 27")
+    expect(holdings.locator("tbody tr")).to_have_count(100)
+    link = page.get_by_role("link", name="Next holdings")
+    link.focus()
+    link.press("Enter")
+    expect(holdings).to_contain_text("2627 tokens · Page 2 of 27")
+    expect(holdings.locator("tbody tr")).to_have_count(100)
+    expect(holdings.locator("tbody tr").first).to_contain_text("Token 100")
+    expect(page.get_by_role("region", name="Profit and loss")).to_contain_text("+0.5000 SOL")
+    expect(page.get_by_role("link", name="Previous holdings")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
 def test_failed_refresh_preserves_saved_pnl_and_allows_retry(page: Page, database):

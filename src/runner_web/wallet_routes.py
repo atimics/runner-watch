@@ -205,6 +205,7 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
         wallet_id: str,
         request: Request,
         cursor: str | None = Query(default=None, max_length=1024),
+        holdings_page: int = Query(default=1, ge=1, le=200),
         runner_session: str | None = Cookie(default=None),
     ) -> HTMLResponse:
         """A wallet stands on its own: no stock in the path, whatever it identifies."""
@@ -216,6 +217,7 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
         dependencies.enforce_rate(request, "stock-wallet", limit=60, seconds=60)
         resolved = resolve_wallet(wallet_id)
         if resolved and resolved["kind"] == "solana":
+            from runner_web.onchain_wallets import holdings_page as wallet_holdings_page
             from runner_web.onchain_wallets import saved_wallet
 
             return dependencies.templates.TemplateResponse(
@@ -227,7 +229,7 @@ def create_wallet_routes(dependencies: WalletRouteDependencies) -> WalletRoutes:
                     nav_product="memecoins",
                     screen=listing("memecoins", []),
                     wallet_id=wallet_id,
-                    wallet=saved_wallet(resolved["address"]),
+                    wallet=wallet_holdings_page(saved_wallet(resolved["address"]), holdings_page),
                 ),
             )
         person_id = str(resolved.get("person_id") or "") if resolved else ""
