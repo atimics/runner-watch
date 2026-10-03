@@ -23,6 +23,7 @@ from typing import Any
 
 from runner_web.database import DatabaseConnection
 from runner_web.db import connection
+from runner_web.helius_discovery import _address
 from runner_web.identity import attach_reference, ensure_entity
 
 WALLET_PREFIX = "w_"
@@ -154,6 +155,28 @@ def register_people(
     return len(parts)
 
 
+def register_chain(address: str) -> str:
+    """Register a public Solana address under the shared wallet ID."""
+    address = _address(address)
+    wallet_id = wallet_id_for(kind="solana", value=address)
+    moment = datetime.now(UTC).isoformat()
+    with connection() as db:
+        entity = ensure_entity(
+            "provisional_group", dedupe_key=wallet_id, created_at=moment, connection=db
+        )
+        attach_reference(
+            str(entity["id"]),
+            "wallet",
+            address,
+            chain="solana",
+            network="solana",
+            issuing_system="solana",
+            learned_at=moment,
+            connection=db,
+        )
+    return wallet_id
+
+
 def wallet(wallet_id: str, *, database: DatabaseConnection | None = None) -> dict[str, Any] | None:
     """Resolve a wallet id back to what it identifies, or None when unknown."""
 
@@ -173,7 +196,7 @@ def _wallet(database: DatabaseConnection, wallet_id: str) -> dict[str, Any] | No
         return None
     reference = database.execute(
         """
-        SELECT kind,value,issuing_system,source_id FROM participant_references
+        SELECT kind,value,issuing_system,source_id,chain,network FROM participant_references
         WHERE entity_id=? AND kind IN ('filing','name','wallet')
         ORDER BY learned_at LIMIT 1
         """,
@@ -206,5 +229,8 @@ def _wallet(database: DatabaseConnection, wallet_id: str) -> dict[str, Any] | No
         "kind": str(reference["issuing_system"] or "wallet"),
         "person_id": None,
         "name": str(reference["value"]),
+        "address": str(reference["value"]),
+        "chain": reference["chain"],
+        "network": reference["network"],
         "scope": "",
     }
