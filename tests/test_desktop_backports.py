@@ -61,6 +61,33 @@ class GlibBackportTests(unittest.TestCase):
     def test_urlpattern_upstream_tokenizer_passes(self) -> None:
         self.assertEqual(MODULE["verify_backport"](self.root, "urlpattern"), 19)
 
+    def add_current_urlpattern(self) -> None:
+        lock = self.desktop / "Cargo.lock"
+        text = lock.read_text()
+        if 'name = "urlpattern"\nversion = "0.6.0"' not in text:
+            lock.write_text(
+                text
+                + '\n[[package]]\nname = "urlpattern"\nversion = "0.6.0"\n'
+                + 'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+            )
+
+    def test_newer_upstream_version_keeps_the_verified_backport(self) -> None:
+        self.add_current_urlpattern()
+        self.assertEqual(MODULE["verify_backport"](self.root, "urlpattern"), 19)
+
+    def test_registry_backport_fails_with_newer_upstream_present(self) -> None:
+        self.add_current_urlpattern()
+        lock = self.desktop / "Cargo.lock"
+        lock.write_text(
+            lock.read_text().replace(
+                'name = "urlpattern"\nversion = "0.3.0"\n',
+                'name = "urlpattern"\nversion = "0.3.0"\n'
+                + 'source = "registry+https://github.com/rust-lang/crates.io-index"\n',
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "local urlpattern 0.3.0 backport"):
+            MODULE["verify_backport"](self.root, "urlpattern")
+
     def test_urlpattern_partial_replacement_fails(self) -> None:
         source = self.desktop / "vendor/urlpattern/src/tokenizer.rs"
         source.write_text(
