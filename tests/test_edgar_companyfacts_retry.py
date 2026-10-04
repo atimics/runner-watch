@@ -45,6 +45,14 @@ def _scan(tickers: list[tuple[str, int]]) -> None:
 def test_a_company_with_no_facts_is_skipped_until_the_retry_window_passes(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
+    current = NOW
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current.astimezone(tz) if tz else current.replace(tzinfo=None)
+
+    monkeypatch.setattr(intelligence, "datetime", Clock)
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "facts.db")
     init_db()
     _scan([("AAA", 1001), ("BBB", 1002)])
@@ -55,6 +63,9 @@ def test_a_company_with_no_facts_is_skipped_until_the_retry_window_passes(
     assert intelligence._companyfacts_candidate([]) == 1002
     intelligence._note_companyfacts_failure(1002, NOW)
     assert intelligence._companyfacts_candidate([]) is None
+
+    current = NOW + timedelta(hours=intelligence.COMPANYFACTS_RETRY_HOURS + 1)
+    assert intelligence._companyfacts_candidate([]) == 1001
 
 
 def test_failures_expire_and_the_list_is_capped(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
