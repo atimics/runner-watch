@@ -180,7 +180,8 @@ def test_cursor_and_snapshot_rollback_together(database, monkeypatch):
     assert recovered["pnl"][0]["realized"] == 1
 
 
-def test_expired_claim_cannot_replace_newer_saved_data(database, monkeypatch):
+@pytest.mark.parametrize("max_pages", [1, 5])
+def test_expired_claim_cannot_replace_newer_saved_data(database, monkeypatch, max_pages):
     original = wallets.collect_wallet
 
     def collect(address, *, at, **kwargs):
@@ -194,7 +195,9 @@ def test_expired_claim_cannot_replace_newer_saved_data(database, monkeypatch):
         return result
 
     monkeypatch.setattr(wallets, "collect_wallet", collect)
-    result = wallets.refresh_wallet(ADDRESS, at=AT, rpc=fake_rpc([]), download=download)
+    result = wallets.refresh_wallet(
+        ADDRESS, at=AT, rpc=paged_rpc([]), download=download, max_pages=max_pages
+    )
     assert result["balance_sol"] == 8
     assert result["updated_at"] == (AT + timedelta(seconds=301)).isoformat()
 
@@ -391,3 +394,224 @@ def test_short_page_settles_on_charged_day_and_budget_wait_keeps_progress(databa
     assert "budget resets" in result["error"]
     next_day = (AT + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     assert result["backfill"]["next_read_at"] == next_day.isoformat()
+
+
+def batch_rpc(seen, *, fail_page=None):
+    original = fake_rpc(seen)
+
+    def rpc(body, *, credits):
+        if body["method"] != "getTransactionsForAddress":
+            return original(body, credits=credits)
+        seen.append((body, credits))
+        cursor = body["params"][1].get("paginationToken")
+        index = int(cursor.split(":")[0]) - 100 if cursor else 1
+        if index == fail_page:
+            raise evidence.CreditBudgetReached("budget")
+        return {
+            "result": {
+                "data": [
+                    transaction(index, 0 if index == 1 else 100, 100, -2 if index == 1 else 0)
+                ],
+                "paginationToken": f"{101 + index}:0" if index < 6 else None,
+            }
+        }
+
+    return rpc
+
+
+def test_five_page_batch_shares_reads_and_matches_separate_pages(database):
+    seen, price_reads = [], []
+
+    def prices(*args):
+        price_reads.append(args)
+        return download(*args)
+
+    result = wallets.refresh_wallet(
+        ADDRESS, at=AT, rpc=batch_rpc(seen), download=prices, max_pages=5
+    )
+    assert result["transactions"] == 5
+    assert result["backfill"]["status"] == "loading"
+    assert len(price_reads) == 1
+    assert sum(credits for _, credits in seen) == 503
+    assert sum(body["method"] == "getBalance" for body, _ in seen) == 1
+    assert sum(body["method"] == "getTokenAccountsByOwner" for body, _ in seen) == 2
+    requests = [
+        body["params"][1] for body, _ in seen if body["method"] == "getTransactionsForAddress"
+    ]
+    assert [row.get("paginationToken") for row in requests] == [
+        None,
+        "102:0",
+        "103:0",
+        "104:0",
+        "105:0",
+    ]
+    assert all(row["filters"] == requests[0]["filters"] for row in requests)
+    assert "read_cache" not in json.dumps(state())
+
+    # The next batch fetches fresh balances and quotes, then stops on completion.
+    final = wallets.refresh_wallet(
+        ADDRESS, at=AT + timedelta(minutes=1), rpc=batch_rpc(seen), download=prices, max_pages=5
+    )
+    assert final["transactions"] == 6
+    assert final["backfill"]["status"] == "complete"
+    assert len(price_reads) == 2
+    whole = wallets.calculate_pnl(
+        ADDRESS,
+        [transaction(i, 0 if i == 1 else 100, 100, -2 if i == 1 else 0) for i in range(1, 7)],
+        {MINT: Decimal(100)},
+        QUOTES,
+    )
+    for key in ("pnl", "fees_sol", "holdings", "transactions", "receipts"):
+        assert final[key] == whole[key]
+
+
+def test_batch_commits_each_page_while_one_claim_remains_active(database):
+    original = batch_rpc([])
+
+    def rpc(body, *, credits):
+        if body["method"] == "getTransactionsForAddress":
+            cursor = body["params"][1].get("paginationToken")
+            if cursor:
+                with db.connection() as connection:
+                    row = connection.execute(
+                        "SELECT lease_token FROM onchain_wallet_backfills WHERE address=?",
+                        (ADDRESS,),
+                    ).fetchone()
+                assert row["lease_token"]
+                assert state()["cursor"] == cursor
+                assert (
+                    wallets.saved_wallet(ADDRESS, at=AT)["transactions"]
+                    == int(cursor.split(":")[0]) - 101
+                )
+                # A second reader sees the committed page under the active claim.
+                competing = []
+                wallets.refresh_wallet(
+                    ADDRESS, at=AT, rpc=fake_rpc(competing), download=download, max_pages=5
+                )
+                assert competing == []
+        return original(body, credits=credits)
+
+    result = wallets.refresh_wallet(ADDRESS, at=AT, rpc=rpc, download=download, max_pages=5)
+    assert result["transactions"] == 5
+    with db.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT lease_token FROM onchain_wallet_backfills WHERE address=?", (ADDRESS,)
+            ).fetchone()["lease_token"]
+            is None
+        )
+
+
+def test_budget_stops_a_batch_after_committed_pages_and_resume_uses_next_cursor(database):
+    seen = []
+    result = wallets.refresh_wallet(
+        ADDRESS, at=AT, rpc=batch_rpc(seen, fail_page=3), download=download, max_pages=5
+    )
+    assert result["transactions"] == state()["book"]["transactions"] == 2
+    assert state()["cursor"] == "103:0"
+    assert result["error"] == backfill.BUDGET_WAIT_MESSAGE
+    reset = (AT + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    assert result["backfill"]["next_read_at"] == reset.isoformat()
+    assert len([body for body, _ in seen if body["method"] == "getTransactionsForAddress"]) == 3
+    resumed = wallets.refresh_wallet(
+        ADDRESS, at=reset, rpc=batch_rpc([]), download=download, max_pages=5
+    )
+    assert resumed["transactions"] == 6
+    assert resumed["holdings"][0]["cost"] == 2
+    assert resumed["error"] is None
+
+
+def test_provider_error_keeps_completed_pages_and_masks_private_error(database):
+    original = batch_rpc([])
+
+    def rpc(body, *, credits):
+        if body["method"] == "getTransactionsForAddress" and body["params"][1].get(
+            "paginationToken"
+        ):
+            raise ValueError("https://provider.invalid/?api-key=secret")
+        return original(body, credits=credits)
+
+    result = wallets.refresh_wallet(ADDRESS, at=AT, rpc=rpc, download=download, max_pages=5)
+    assert result["transactions"] == 1
+    assert state()["cursor"] == "102:0"
+    assert "secret" not in json.dumps(result)
+    resumed = wallets.refresh_wallet(
+        ADDRESS, at=AT + timedelta(minutes=1), rpc=batch_rpc([]), download=download, max_pages=5
+    )
+    assert resumed["transactions"] == 6
+
+
+def test_batch_time_bound_yields_after_saved_page(database, monkeypatch):
+    ticks = iter([0, backfill.BATCH_SECONDS])
+    monkeypatch.setattr(backfill, "monotonic", lambda: next(ticks))
+    result = wallets.refresh_wallet(
+        ADDRESS, at=AT, rpc=batch_rpc([]), download=download, max_pages=5
+    )
+    assert result["transactions"] == 1
+    assert state()["cursor"] == "102:0"
+
+
+@pytest.mark.parametrize("pages", [0, 6, True, 1.5])
+def test_batch_size_is_bounded_before_paid_reads(database, pages):
+    seen = []
+    with pytest.raises(ValueError, match="one to five"):
+        wallets.refresh_wallet(
+            ADDRESS, at=AT, rpc=fake_rpc(seen), download=download, max_pages=pages
+        )
+    assert seen == []
+
+
+def test_worker_batches_two_oldest_opened_wallets_in_parallel(database, monkeypatch):
+    monkeypatch.setenv("HELIUS_API_KEY", "test")
+    addresses = [ADDRESS, _encode(bytes([9]) * 32), _encode(bytes([10]) * 32)]
+    with db.connection() as connection:
+        for index, address in enumerate(addresses):
+            connection.execute(
+                "INSERT INTO onchain_wallet_snapshots"
+                "(address,refresh_after,updated_at) VALUES(?,?,?)",
+                (address, AT.isoformat(), (AT + timedelta(seconds=index)).isoformat()),
+            )
+    barrier = threading.Barrier(2)
+    seen = []
+
+    def refresh(address, *, at, max_pages):
+        barrier.wait(timeout=3)
+        seen.append((address, at, max_pages))
+        return {"address": address}
+
+    monkeypatch.setattr(wallets, "refresh_wallet", refresh)
+    assert backfill.refresh_opened_wallets(at=AT) == [
+        {"address": address} for address in addresses[:2]
+    ]
+    assert {address for address, _, _ in seen} == set(addresses[:2])
+    assert all(at == AT and pages == 5 for _, at, pages in seen)
+
+
+def test_batch_honors_wallet_allowance_and_keeps_discovery_and_price_room(database, monkeypatch):
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "30000")
+    evidence.reserve_credits(6875, at=AT, lane="wallet")
+    original = batch_rpc([])
+
+    def rpc(body, *, credits):
+        evidence.reserve_credits(credits, at=AT, lane="wallet")
+        return original(body, credits=credits)
+
+    result = wallets.refresh_wallet(ADDRESS, at=AT, rpc=rpc, download=download, max_pages=5)
+    assert result["transactions"] == 1
+    assert state()["cursor"] == "102:0"
+    assert result["error"] == backfill.BUDGET_WAIT_MESSAGE
+    assert evidence.budget_status(at=AT)["wallet_credits"] == 6978
+    evidence.reserve_credits(21000, at=AT)
+    evidence.reserve_credits(2000, at=AT, lane="price")
+    assert evidence.budget_status(at=AT)["reserved_credits"] == 29978
+
+
+def test_batch_cache_is_scoped_to_one_wallet(database):
+    cache = {}
+    wallets.collect_wallet(ADDRESS, at=AT, rpc=fake_rpc([]), download=download, read_cache=cache)
+    seen = []
+    with pytest.raises(ValueError, match="share one address"):
+        wallets.collect_wallet(
+            _encode(bytes([9]) * 32), at=AT, rpc=fake_rpc(seen), download=download, read_cache=cache
+        )
+    assert seen == []

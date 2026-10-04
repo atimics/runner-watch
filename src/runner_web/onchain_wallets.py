@@ -475,6 +475,7 @@ def collect_wallet(
     rpc: Callable[..., Any] = wallet_rpc,
     download: Callable[..., bytes] = _download,
     state: dict[str, Any] | None = None,
+    read_cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     address = _address(address)
     state = state or {}
@@ -502,29 +503,39 @@ def collect_wallet(
         options["filters"]["slot"] = {"gte": start_slot}
     if cursor:
         options["paginationToken"] = cursor
+    if read_cache and read_cache.get("address") != address:
+        raise ValueError("Wallet batch reads must share one address")
+    cached = bool(read_cache)
     # History and the three current balance reads are independent.
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        history_read = pool.submit(_rpc, rpc, "getTransactionsForAddress", [address, options], 100)
-        balance_read = pool.submit(
-            _rpc, rpc, "getBalance", [address, {"commitment": "finalized"}], 1
-        )
-        account_reads = [
-            pool.submit(
-                _rpc,
-                rpc,
-                "getTokenAccountsByOwner",
-                [
-                    address,
-                    {"programId": program},
-                    {"encoding": "jsonParsed", "commitment": "finalized"},
-                ],
-                1,
+    if cached:
+        result = _rpc(rpc, "getTransactionsForAddress", [address, options], 100)
+        balance = read_cache["balance"]
+        account_results = read_cache["accounts"]
+    else:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            history_read = pool.submit(
+                _rpc, rpc, "getTransactionsForAddress", [address, options], 100
             )
-            for program in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
-        ]
-        result = history_read.result()
-        balance = balance_read.result()
-        account_results = [read.result() for read in account_reads]
+            balance_read = pool.submit(
+                _rpc, rpc, "getBalance", [address, {"commitment": "finalized"}], 1
+            )
+            account_reads = [
+                pool.submit(
+                    _rpc,
+                    rpc,
+                    "getTokenAccountsByOwner",
+                    [
+                        address,
+                        {"programId": program},
+                        {"encoding": "jsonParsed", "commitment": "finalized"},
+                    ],
+                    1,
+                )
+                for program in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
+            ]
+            result = history_read.result()
+            balance = balance_read.result()
+            account_results = [read.result() for read in account_reads]
     entries = result.get("data")
     next_cursor = result.get("paginationToken")
     if not isinstance(entries, list) or len(entries) > PAGE_SIZE:
@@ -571,16 +582,21 @@ def collect_wallet(
     price_mints = list(dict.fromkeys([*known, *recent, *quantities]))
     price_mints = [mint for mint in price_mints if mint not in QUOTE_UNITS]
     wanted = [SOL, USDC, *price_mints[: PRICE_LIMIT - 2]]
-    quotes = {}
-    try:
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/tokens/multi/"
-        payload = json.loads(download(url + ",".join(dict.fromkeys(wanted)), 10.0))
-        for token in payload["data"]:
-            mint = token["id"].removeprefix("solana_")
-            if mint in wanted:
-                quotes[mint] = token["attributes"]
-    except (ValueError, KeyError, TypeError, OSError):
-        pass
+    quotes = read_cache["quotes"] if cached else {}
+    if not cached:
+        try:
+            url = "https://api.geckoterminal.com/api/v2/networks/solana/tokens/multi/"
+            payload = json.loads(download(url + ",".join(dict.fromkeys(wanted)), 10.0))
+            for token in payload["data"]:
+                mint = token["id"].removeprefix("solana_")
+                if mint in wanted:
+                    quotes[mint] = token["attributes"]
+        except (ValueError, KeyError, TypeError, OSError):
+            pass
+        if read_cache is not None:
+            read_cache.update(
+                address=address, balance=balance, accounts=account_results, quotes=quotes
+            )
     complete = not next_cursor
     payload = calculate_pnl(
         address,
@@ -618,6 +634,7 @@ def refresh_wallet(
     at: datetime | None = None,
     rpc: Callable[..., Any] = wallet_rpc,
     download: Callable[..., bytes] = _download,
+    max_pages: int = 1,
 ) -> dict[str, Any]:
     """Advance the saved wallet history under one durable claim."""
     from runner_web.wallet_backfill import advance_wallet
@@ -628,4 +645,5 @@ def refresh_wallet(
         rpc=rpc,
         download=download,
         collect=collect_wallet,
+        max_pages=max_pages,
     )
