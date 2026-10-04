@@ -285,6 +285,22 @@ Pushes to `main` go through `.github/workflows/fly.yml`:
 Rollback is also manual: `flyctl deploy --image <previous-image>
 --skip-release-command`.
 
+### Production monitoring
+
+- **Production Uptime** (`.github/workflows/uptime.yml`) checks worker/trainer
+  health, feed freshness on both hosts, and both hosts' HTTP smoke routes every
+  five minutes. It does not install or run a browser.
+- **Production Screens** (`.github/workflows/production-screens.yml`) renders
+  every production screen hourly, at minute 17 UTC, and saves failure screenshots.
+  It keeps the existing warm-site latency and retry thresholds.
+- **Fly Deploy** still runs the same full screen checks after each deployment,
+  with its existing rollout thresholds and automatic rollback on failure. The
+  hourly workflow has no deployment trigger, so it does not duplicate this gate.
+
+Both monitoring workflows can also be run manually from their Actions pages.
+Scheduled runs use `main` and may be delayed by GitHub; they are not exact-time
+availability guarantees.
+
 ## Documentation
 
 Start at [docs/README.md](docs/README.md). It marks which design documents are
