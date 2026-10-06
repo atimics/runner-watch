@@ -217,6 +217,7 @@ from runner_web.memecoin_routes import (
     MemecoinRouteDependencies,
     create_memecoin_routes,
 )
+from runner_web.memecoin_well import well_key, well_svg
 from runner_web.memecoins import (
     REFRESH_SECONDS,
     is_automated_agent,
@@ -1215,6 +1216,8 @@ templates = Jinja2Templates(directory=str(ROOT / "web" / "templates"))
 
 templates.env.globals["simple_market_detail"] = simple_market_detail
 templates.env.globals["static_version"] = STATIC_VERSION
+templates.env.globals["well_svg"] = well_svg
+templates.env.globals["well_key"] = well_key
 app.mount("/static", NoSourceMapStaticFiles(directory=str(ROOT / "web" / "static")), name="static")
 DESKTOP_RENDERER_ROOT = ROOT / "desktop" / "dist" / "renderer"
 if DESKTOP_RENDERER_ROOT.is_dir():

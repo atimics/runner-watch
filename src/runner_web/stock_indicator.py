@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from runner_web.attention import finite_number
+from runner_web.memecoin_well import liquidity_state
 
 GROUPS = (
     ("market", "Market", ("market",)),
@@ -104,6 +105,9 @@ def memecoin_indicator(item: Mapping[str, Any]) -> dict[str, Any]:
         note = str(_mapping(model.get("coverage")).get("note") or "")
         glyph["risk_reading"] += ". " + note
         glyph["description"] += " " + str(item.get("chain_sentiment_basis") or "") + " " + note
+    # The Well: a memecoin's sigil is drawn around its liquidity.
+    glyph["liquidity"] = liquidity_state(item)
+    glyph["description"] = glyph["liquidity"]["reading"] + " " + glyph["description"]
     return glyph
 
 

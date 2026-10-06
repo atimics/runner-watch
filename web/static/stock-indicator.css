@@ -92,3 +92,58 @@ h1 .ratified-mark{font-size:12px}
 .ratification-standards{margin:10px 0 14px;padding:10px 12px;border:1px dashed var(--line);border-radius:10px;font-size:13px}.ratification-standards .standards-scope{margin-left:6px;padding:1px 6px;border:1px solid var(--line);border-radius:999px;font-size:10px;letter-spacing:.03em}.ratification-standards .standard-unknown{color:var(--muted);font-style:normal}.ratification-standards .standard-unknown span{display:inline-block;width:1em;text-align:center;border:1px dotted var(--muted);border-radius:50%;font-size:10px;line-height:1.2}.ratification-standards summary{cursor:pointer;color:var(--muted)}.ratification-standards ul{margin:8px 0;padding:0;list-style:none}.ratification-standards li{padding:3px 0}.ratification-standards .standard-met span{color:var(--green)}.ratification-standards .standard-unmet span{color:var(--red)}.ratification-standards .standard-na{color:var(--muted)}.ratification-standards p{margin:6px 0 0;color:var(--muted);font-size:11px}.ratification-record{margin-top:8px;padding-top:6px;border-top:1px dashed var(--line)}.ratification-record p{color:var(--text);font-size:12px}.ratification-record a{color:inherit;text-decoration:underline;text-underline-offset:2px}.ratification-record code{font-size:11px;color:var(--muted)}.ratification-changes{margin:4px 0 0;padding:0;list-style:none;color:var(--muted);font-size:11px}.ratification-changes li{padding:1px 0}.ratification-changes a{color:inherit}
 /* A long coin address leaves no room beside it: the mark moves under the name. */
 .ticker-name .ticker-symbol{flex-wrap:wrap;min-width:0;max-width:100%;row-gap:2px}
+
+/* The Well: a memecoin's sigil, drawn around its liquidity (memecoin_well.py).
+   Rows use the inline SVG from well_svg(); the token map draws the same marks. */
+.indicator-glyph,.indicator-legend,[data-token-replay]{--well-water:#dceee6;--well-wall:#e4ece7;--well-chamber:color-mix(in srgb,var(--text) 13%,var(--bg));--well-open:var(--orange,#ffad70)}
+.indicator-glyph--well{width:48px;height:48px}
+.well-glyph{display:block;overflow:visible}
+.well-track{fill:none;stroke:var(--line)}
+.well-slice{fill:none}
+.well-bull,.well-bear{fill:none;stroke-width:2.5}
+.well-bull{stroke:var(--green)}
+.well-bear{stroke:var(--red);stroke-dasharray:3 2}
+.well-hairline{stroke-width:2.5}
+.well-chamber{fill:var(--well-chamber)}
+.well-phantom{fill:none;stroke:var(--muted);opacity:.45}
+.well-glyph .well-phantom{stroke-dasharray:1.4 2.2}
+.well-water{fill:var(--well-water)}
+.well-ghost{fill:none;stroke:var(--text);stroke-width:1;stroke-dasharray:3 2.5;opacity:.75}
+.well-ghost--inside{stroke:var(--bg)}
+.well-line{fill:none;stroke:var(--muted);stroke-width:.8;stroke-dasharray:1 2.4}
+.well-line--under{stroke:var(--bg)}
+.well-unknown{fill:var(--muted);font:600 22px ui-monospace,Menlo,monospace}
+[data-token-replay] .well-unknown{font-size:16px}
+.well-wall{fill:none;stroke:var(--line);stroke-width:1}
+.well-wall[data-lock="sealed"]{stroke:var(--well-wall);stroke-width:3.2}
+.well-wall[data-lock="open"]{stroke:var(--well-open);stroke-width:3.2}
+.well-wall[data-lock="unread"]{stroke:var(--muted);stroke-width:2.2;stroke-dasharray:.1 4.5;stroke-linecap:round}
+.well-wall[data-lock="curve"]{stroke:var(--muted);stroke-width:1.5;stroke-dasharray:6 4}
+.well-cut{fill:var(--bg)}
+.well-crack{fill:none;stroke:var(--red);stroke-width:2.2;stroke-linejoin:round}
+.well-risk{fill:var(--orange,#ffad70);stroke:var(--bg);stroke-width:2}
+.well-risk[data-risk="detected"]{fill:var(--red)}
+.well-body{cursor:pointer}
+
+.well-body[aria-pressed="true"] .well-chamber{stroke:var(--text);stroke-width:1.5}
+[data-token-replay] .well-phantom{stroke-dasharray:2 3}
+[data-token-replay] .map-glyph[data-well][data-band="3"] .map-score-segment{pointer-events:stroke}
+[data-token-replay] .map-glyph[data-well] .well-risk{pointer-events:none}
+@media(forced-colors:active){
+  .indicator-glyph,.indicator-legend,[data-token-replay]{--well-water:CanvasText;--well-wall:CanvasText;--well-chamber:Canvas;--well-open:CanvasText}
+  .indicator-key-icon--well{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--line:CanvasText;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText;--well-water:CanvasText;--well-wall:CanvasText;--well-chamber:Canvas;--well-open:CanvasText}
+}
+.indicator-key-icon--well{width:44px;height:44px;display:grid;place-items:center;background:none;border:0}
+
+/* Row and key weights: at ~48px a unit is a quarter pixel, so lines get heavier. */
+.well-glyph .well-bull,.well-glyph .well-bear{stroke-width:6}
+.well-glyph .well-bear{stroke-dasharray:8 5}
+.well-glyph .well-phantom{opacity:.7;stroke-dasharray:3 4}
+.well-glyph .well-ghost{stroke-width:3.5;stroke-dasharray:8 6;opacity:.9}
+.well-glyph .well-line{stroke-width:2.5;stroke-dasharray:3 6}
+.well-glyph .well-wall{stroke-width:3.5}
+.well-glyph .well-wall:is([data-lock="sealed"],[data-lock="open"]){stroke-width:9}
+.well-glyph .well-wall[data-lock="unread"]{stroke-width:7;stroke-dasharray:.1 13}
+.well-glyph .well-wall[data-lock="curve"]{stroke-width:4.5;stroke-dasharray:14 9}
+.well-glyph .well-crack{stroke-width:7}
+.well-glyph .well-unknown{font-size:44px}

@@ -27,6 +27,8 @@
       sentimentMix:window.RatiRingGlyph.readSentiment(value.sentiment_mix),
       sentiment:allowed(value.sentiment,['positive','negative','neutral','unknown'],'unknown'),
       risk:allowed(value.risk,['none','detected','significant','unknown'],'unknown'),
+      // The Well: the server's liquidity reading and radii (memecoin_well.py).
+      liquidity:value.liquidity && typeof value.liquidity === 'object' && value.liquidity.radii ? value.liquidity : null,
     };
     score = finite(value.score) ? number(value.score) : '—';
     const slices = Array.isArray(value.slices) ? value.slices : [];
@@ -38,6 +40,7 @@
     if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) contributions = [];
     contributions.forEach(part => {part.share = part.value / total;});
     controls = [...contributions,{key:'sentiment',label:'Chain evidence tone'}];
+    if (glyph.liquidity) controls.push({key:'liquidity',label:'Liquidity'});
     if (glyph.risk !== 'none') controls.push({key:'risk',label:'Risk factors'});
     if (!controls.some(part => part.key === selectedPart)) selectedPart = null;
   }
@@ -61,7 +64,8 @@
         const factors = make('ul',null,'map-risk-factors');
         item.indicator.risk_factors.forEach(reason => factors.append(make('li',reason))); panel.append(factors);
       }
-      if (part.key === 'sentiment') panel.append(make('p',`${glyph.sentimentMix.reading}. ${glyph.sentimentMix.basis}.`));
+      if (part.key === 'liquidity') liquidityFacts(panel);
+      else if (part.key === 'sentiment') panel.append(make('p',`${glyph.sentimentMix.reading}. ${glyph.sentimentMix.basis}.`));
       else if (part.key !== 'risk') panel.append(make('p',`${points(part.value)} · ${percent(part)}`,'map-score-breakdown'));
     }
     const list = make('ul',null,'map-score-legend');
@@ -70,6 +74,17 @@
     else if (glyph.mix === 'zero') panel.append(make('p','Saved attention contributions total zero.','map-glyph-empty'));
     if (item.assessment?.reason) panel.append(make('p',item.assessment.reason));
     document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
+  }
+  function liquidityFacts(panel) {
+    const well = glyph.liquidity;
+    panel.append(make('p',well.reading));
+    const money = value => value == null ? 'Not read' : '$' + number(value);
+    const list = make('ul',null,'map-score-legend well-facts');
+    [['Real liquidity (water)',money(well.real)],['Quoted liquidity (ghost ring)',well.venue === 'bonding_curve' ? 'On its curve' : money(well.quoted)],
+     ['Fully diluted value (chamber)',money(well.fdv)],['Ratified line',money(well.line_usd)],
+     ['Liquidity lock (wall)',{sealed:'Burned or locked',open:`${number(well.lock_left_pct || 0)}% still held`,unread:'Not readable',unchecked:'Not checked yet',curve:'No pool yet'}[well.lock] || 'Not checked yet']]
+      .forEach(([label,value]) => {const li = make('li'); li.append(make('span',label),make('strong',value)); list.append(li);});
+    panel.append(list);
   }
   function clearPart() {
     selectedPart = null;

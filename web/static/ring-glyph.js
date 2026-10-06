@@ -33,7 +33,8 @@
       basis:typeof mix.basis === 'string' ? mix.basis : 'Saved directional assessments'};
   };
   const metrics = (glyph, small) => {
-    const outer = glyph.band === 1 ? (small ? 36 : 46) : (small ? 56 : 72);
+    // The Well keeps one size; its frame's thickness carries attention.
+    const outer = glyph.band === 1 && !glyph.liquidity ? (small ? 36 : 46) : (small ? 56 : 72);
     const width = small ? 16 : 20;
     return {cx:small ? 180 : 380, cy:small ? 184 : 218, outer, radius:outer-width/2, width};
   };
@@ -112,20 +113,96 @@
     ringLayer.replaceChildren();
     const {cx, cy, outer, radius, width} = metrics(glyph, small);
     graph.dataset.orbitCenter = `${cx},${cy}`;
-    drawFace({ringLayer, glyph, geometry:{cx,cy,outer,radius,width}, small, contributions, controls, toneLabel, points, percent, wireControl});
+    (glyph.liquidity ? drawWell : drawFace)({ringLayer, glyph, geometry:{cx,cy,outer,radius,width}, small, contributions, controls, toneLabel, points, percent, wireControl});
     const center = svg('g', {role:'button',tabindex:0,class:'map-score-center',...centerAttributes,'aria-label':`${name}, attention ${score === '—' ? 'unavailable' : score + ' of 100 points'}. Show attention overview.`});
     // Keep the decorative hole outside the overview button. Combining it with
     // the labels creates a disjoint hit target, with an untappable bounding-box
     // center on small rings. The label rectangle is one contiguous target.
     // High attention is a real solid pie, not a thick donut.
-    center.append(svg('rect', {x:cx-60,y:cy+outer+12,width:120,height:42,fill:'transparent'}), svg('text', {x:cx,y:cy+outer+27,'text-anchor':'middle',class:'map-center-text'},label), svg('text', {x:cx,y:cy+outer+48,'text-anchor':'middle',class:'map-center-score'},score));
+    const below = glyph.liquidity ? outer * 94 / 86 : outer; // clear the Well's hairline
+    center.append(svg('rect', {x:cx-60,y:cy+below+12,width:120,height:42,fill:'transparent'}), svg('text', {x:cx,y:cy+below+27,'text-anchor':'middle',class:'map-center-text'},label), svg('text', {x:cx,y:cy+below+48,'text-anchor':'middle',class:'map-center-score'},score));
     center.addEventListener('click',overview);
     center.addEventListener('keydown',event => {if (['Enter',' '].includes(event.key)) {event.preventDefault(); overview();}});
     ringLayer.append(center);
+  }
+  // The Well: a memecoin's sigil, drawn around its liquidity. The server computes
+  // every radius (memecoin_well.py) in units where the frame's outer edge is 86;
+  // this only scales them. Rows draw the same marks from well_svg().
+  const WELL_BAND = {1:4, 2:8, 3:14};
+  const arcPath = (cx, cy, r, a0, a1) => `M ${cx + r*Math.cos(a0)} ${cy + r*Math.sin(a0)} A ${r} ${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${cx + r*Math.cos(a1)} ${cy + r*Math.sin(a1)}`;
+  function drawWell({ringLayer, glyph, geometry, contributions, controls = [], toneLabel, points, percent, wireControl}) {
+    ringLayer.replaceChildren();
+    const {cx, cy, outer} = geometry, u = outer / 86, well = glyph.liquidity, radii = well.radii || {};
+    const sentimentMix = glyph.sentimentMix;
+    const paint = patterns(ringLayer, u);
+    Object.assign(ringLayer.dataset, {band:String(glyph.band),sentiment:glyph.sentiment,sentimentMix:sentimentMix.state,risk:glyph.risk,mix:glyph.mix,well:'',lock:well.lock});
+    // Frame: attention. Its thickness is the band; slices keep the ring's colors.
+    const width = (WELL_BAND[glyph.band] || 4) * u, frame = 86*u - width/2;
+    ringLayer.style.setProperty('--map-band-stroke', String(width + 4*u));
+    ringLayer.append(svg('circle', {cx, cy, r:frame, class:'map-score-track', 'stroke-width':width}));
+    let angle = -Math.PI / 2;
+    contributions.forEach(part => {
+      const sweep = part.share * Math.PI * 2;
+      const attrs = {class:'map-score-segment', 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'stroke-width':width};
+      const segment = contributions.length === 1 ? svg('circle', {...attrs, cx, cy, r:frame}) : svg('path', {...attrs, d:arcPath(cx, cy, frame, angle, angle + sweep)});
+      segment.style.stroke = color(part);
+      segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
+      wireControl?.(segment, part); ringLayer.append(segment);
+      if (paint[part.key]) {
+        const pattern = segment.cloneNode(false);
+        pattern.setAttribute('class', 'map-score-pattern'); pattern.setAttribute('aria-hidden', 'true');
+        pattern.removeAttribute('data-score-key'); pattern.removeAttribute('aria-label'); pattern.removeAttribute('role'); pattern.removeAttribute('tabindex'); pattern.removeAttribute('aria-pressed');
+        pattern.style.stroke = paint[part.key]; ringLayer.append(pattern);
+      }
+      angle += sweep;
+    });
+    // Swap balance: the outer hairline, green from the top, then dashed red.
+    const hair = 93*u;
+    if (sentimentMix.state === 'available') {
+      ['bullish','bearish'].forEach(side => {
+        const share = sentimentMix[side];
+        if (share <= 0) return;
+        ringLayer.append(svg('circle', {cx, cy, r:hair, class:'map-sentiment-part well-hairline', 'data-sentiment-side':side, 'aria-hidden':'true', pathLength:100,
+          'stroke-dasharray':`${share*100} ${100-share*100}`, 'stroke-dashoffset':side === 'bullish' ? 0 : -sentimentMix.bullish*100, transform:`rotate(-90 ${cx} ${cy})`}));
+      });
+    }
+    const sentiment = svg('circle', {cx, cy, r:hair, class:'map-glyph-sentiment', 'aria-label':`${toneLabel}: ${sentimentMix.reading}. Show sentiment.`});
+    wireControl?.(sentiment, controls.find(part => part.key === 'sentiment')); ringLayer.append(sentiment);
+    // The well itself is one control: it opens the liquidity reading.
+    const body = svg('g', {class:'well-body', 'aria-label':`${well.reading} Show liquidity.`});
+    const chamber = radii.chamber * u, water = radii.real * u, ghost = radii.quoted * u, line = radii.line * u;
+    body.append(svg('circle', {cx, cy, r:chamber, class:'well-chamber'}));
+    if (well.real != null && ghost > water + u) body.append(svg('circle', {cx, cy, r:(ghost + water)/2, class:'well-phantom', 'stroke-width':ghost - water}));
+    if (water > 0) body.append(svg('circle', {cx, cy, r:water, class:'well-water'}));
+    if (ghost && Math.abs(ghost - water) > u) body.append(svg('circle', {cx, cy, r:ghost, class:`well-ghost${ghost < water ? ' well-ghost--inside' : ''}`}));
+    body.append(svg('circle', {cx, cy, r:line, class:`well-line${water >= line ? ' well-line--under' : ''}`}));
+    if (well.real == null) body.append(svg('text', {x:cx, y:cy, 'text-anchor':'middle', 'dominant-baseline':'central', class:'well-unknown'}, '?'));
+    if (well.lock === 'open') {
+      const gap = Math.min(100, Math.max(5, well.lock_left_pct || 0)) / 100 * Math.PI * 2, bottom = Math.PI / 2;
+      if (gap < Math.PI * 2 - 0.01) body.append(svg('path', {d:arcPath(cx, cy, chamber, bottom + gap/2, bottom - gap/2 + Math.PI*2), class:'well-wall', 'data-lock':'open'}));
+    } else body.append(svg('circle', {cx, cy, r:chamber, class:'well-wall', 'data-lock':well.lock}));
+    if (well.pulled) {
+      const r = chamber + 4*u, h = 0.2, bottom = Math.PI / 2;
+      body.append(svg('path', {d:`M ${cx} ${cy} L ${cx + r*Math.cos(bottom-h)} ${cy + r*Math.sin(bottom-h)} A ${r} ${r} 0 0 1 ${cx + r*Math.cos(bottom+h)} ${cy + r*Math.sin(bottom+h)} Z`, class:'well-cut'}));
+      const zig = [[0,4*u],[5*u,chamber*.35],[-4*u,chamber*.6],[3*u,chamber*.85],[0,r]].map(([x,y]) => `${cx+x},${cy+y}`).join(' ');
+      body.append(svg('polyline', {points:zig, class:'well-crack'}));
+    }
+    body.append(svg('title', {}, well.reading));
+    wireControl?.(body, controls.find(part => part.key === 'liquidity')); ringLayer.append(body);
+    // A risk factor notches the top; unknown risk draws nothing.
+    if (glyph.risk === 'detected' || glyph.risk === 'significant') {
+      const risk = svg('g', {class:'map-glyph-risk', 'aria-label':`${riskReading(glyph.risk)}. Show risk factors.`});
+      // The ring's shapes: detected is a diamond, 1+ significant a circle.
+      const notch = glyph.risk === 'detected'
+        ? svg('path', {d:`M ${cx} ${cy - 101*u} L ${cx + 7*u} ${cy - 93*u} L ${cx} ${cy - 85*u} L ${cx - 7*u} ${cy - 93*u} Z`, class:'well-risk', 'data-risk':'detected', 'data-risk-shape':'diamond'})
+        : svg('circle', {cx, cy:cy - 93*u, r:7*u, class:'well-risk', 'data-risk':'significant', 'data-risk-shape':'circle'});
+      risk.append(svg('circle', {cx, cy:cy - 93*u, r:12, class:'map-risk-target'}), notch);
+      wireControl?.(risk, controls.find(part => part.key === 'risk')); ringLayer.append(risk);
+    }
   }
   // The attention index runs 0-100; the band gives the bare number a scale.
   const attentionReading = (score, band) => score === '—' || score === null || score === undefined
     ? 'Attention unavailable'
     : `Attention ${score} of 100 points (${band === 3 ? 'high, 70+' : band === 2 ? 'medium, 40–69' : 'low, under 40'})`;
-  window.RatiRingGlyph = {metrics, draw, drawFace, readSentiment, riskReading, attentionReading};
+  window.RatiRingGlyph = {metrics, draw, drawFace, drawWell, readSentiment, riskReading, attentionReading};
 })();

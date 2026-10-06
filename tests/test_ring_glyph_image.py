@@ -42,6 +42,7 @@ def test_unknown_values_stay_unknown():
         "slices": [],
         "bullish": None,
         "score": None,
+        "well": None,
     }
 
 
@@ -86,6 +87,7 @@ def test_share_cards_carry_the_glyph():
     }
     with Image.open(BytesIO(_memecoin_card_png({"coin": coin, "history": []}))) as card:
         rgb = card.convert("RGB")
-        # Purple frame, and the market slice of the glyph on the ring's right side.
+        # Purple frame, and the market slice on the Well's frame: its outer edge is
+        # 0.9 × 72 px, and low attention draws it 4 of 86 units thick.
         assert near(rgb.getpixel((600, 56)), "#c9aaf7")
-        assert near(rgb.getpixel((1020 + 32, 406)), SLICE_COLORS["market"])
+        assert near(rgb.getpixel((1020 + 63, 406)), SLICE_COLORS["market"])
