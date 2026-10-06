@@ -548,3 +548,35 @@ def test_a_null_ui_amount_is_not_read_as_zero():
     rpc = FakeRpc(mints={f"holder{n}": owned_by(WALLET) for n in range(10)}, largest=largest)
 
     assert top10_share(MINT, supply=1_000_000_000, exclude=set(), rpc=rpc) == pytest.approx(40.0)
+
+
+def test_every_graduated_pool_gets_its_lock_read_hourly_for_the_sigil():
+    from runner_web.helius_discovery import _encode
+
+    lp = _encode(bytes([35]) * 32)
+    young_pool = "YoungPoo1111111111111111111111111111111111"
+    rpc = FakeRpc(mints={young_pool: pump_pool(lp, 10**12), lp: lp_mint_account(4 * 10**11)})
+    # Too young for the free standards: no mint, holder or count reads, but its wall is read.
+    young = row(
+        token_address="Young1111111111111111111111111111111111111",
+        pool_address=young_pool,
+        pool_created_at=AT.isoformat(),
+    )
+    curve = row(
+        token_address="Curve111111111111111111111111111111111111",
+        venue="bonding_curve",
+        pool_address="Curve11111111111111111111111111111111111111",
+    )
+
+    state = ratify_rows([young, curve], {}, vaults={}, bundled=set(), rpc=rpc, at=AT)
+
+    assert young["liquidity_lock"] == {"left_pct": 40.0, "dex": "PumpSwap"}
+    assert curve["liquidity_lock"] is None  # a curve has no pool to lock
+    assert rpc.calls == ["getMultipleAccounts", "getMultipleAccounts"]
+    # Within the hour the answer is reused; after it, read again.
+    again = row(**{k: young[k] for k in ("token_address", "pool_address", "pool_created_at")})
+    ratify_rows([again], state, vaults={}, bundled=set(), rpc=rpc, at=AT + timedelta(minutes=30))
+    assert again["liquidity_lock"]["left_pct"] == 40.0
+    assert len(rpc.calls) == 2
+    ratify_rows([again], state, vaults={}, bundled=set(), rpc=rpc, at=AT + timedelta(hours=2))
+    assert len(rpc.calls) == 4

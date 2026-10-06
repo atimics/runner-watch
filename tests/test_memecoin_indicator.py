@@ -91,8 +91,10 @@ def test_list_detail_and_source_are_consistent():
     assert board["rows"][0]["indicator"] == display["item"]["indicator"]
     assert coin == original
     html = render(board)
-    assert 'class="ticker-score indicator-glyph"' in html
-    assert "Chain evidence" in html and "Purple stripes" in html
+    # A memecoin row draws the Well, and the key explains it with the same drawing.
+    assert 'class="ticker-score indicator-glyph indicator-glyph--well"' in html
+    assert '<svg class="well-glyph"' in html
+    assert "Phantom pool" in html and "purple chain evidence" in html
     assert "stock-indicator.css" in html
     assert "Verified evidence" not in html
 

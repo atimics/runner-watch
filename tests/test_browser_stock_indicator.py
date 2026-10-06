@@ -222,7 +222,8 @@ def test_sentiment_shares_and_neutral_gap_survive_markup_refresh(page, width):
     expect(border).to_have_css("background-image", "none")
 
 
-@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+# Memecoins draw the Well instead: see the Well tests at the end of this file.
+@pytest.mark.parametrize("market", ["stocks"])
 @pytest.mark.parametrize("width", [320, 390, 1280])
 @pytest.mark.parametrize("forced", ["none", "active"])
 def test_visible_sentiment_patterns_and_risk_shapes_in_both_color_modes(
@@ -271,7 +272,7 @@ def test_visible_sentiment_patterns_and_risk_shapes_in_both_color_modes(
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
-@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+@pytest.mark.parametrize("market", ["stocks"])
 @pytest.mark.parametrize("width", [320, 390, 1280])
 @pytest.mark.parametrize("forced", ["none", "active"])
 def test_visual_key_opens_by_keyboard_and_keeps_patterns_and_labels(page, market, width, forced):
@@ -330,7 +331,7 @@ def test_visual_key_opens_by_keyboard_and_keeps_patterns_and_labels(page, market
         expect(key.locator('[data-key-icon="evidence"]')).to_have_css("forced-color-adjust", "none")
 
 
-@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+@pytest.mark.parametrize("market", ["stocks"])
 @pytest.mark.parametrize("width", [320, 1280])
 @pytest.mark.parametrize("forced", ["none", "active"])
 def test_significant_factor_circle_keeps_accessible_map_control(page, market, width, forced):
@@ -364,3 +365,121 @@ def test_significant_factor_circle_keeps_accessible_map_control(page, market, wi
         expect(glyph.locator(".map-risk-dot")).to_have_css("fill", "rgb(0, 0, 0)")
     else:
         expect(glyph.locator(".map-risk-dot")).to_have_css("fill", "rgb(255, 173, 112)")
+
+
+# ------------------------------------------------------------------ the Well
+# A memecoin's sigil is drawn around its liquidity (memecoin_well.py).
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+@pytest.mark.parametrize("forced", ["none", "active"])
+def test_well_rows_show_swap_balance_risk_notch_and_liquidity(page, width, forced):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    page.set_viewport_size({"width": width, "height": 844})
+    page.emulate_media(forced_colors=forced)
+    pooled = {
+        "venue": "pool",
+        "real_liquidity_usd": 72.88,
+        "liquidity_usd": 2174.0,
+        "fully_diluted_valuation": 2135.0,
+        "liquidity_lock": {"left_pct": 0.0, "dex": "PumpSwap"},
+    }
+    source = [
+        assessed_coin(
+            id="MED",
+            chain_sentiment_counts={"bullish": 3, "bearish": 1},
+            rug_score=30,
+            significant_risk_factor_count=1,
+            **pooled,
+        ),
+        assessed_coin(id="HIGH", chain_sentiment_counts={"bullish": 0, "bearish": 4}, rug_score=75),
+        assessed_coin(
+            id="GAP",
+            chain_sentiment_counts={"bullish": 0, "bearish": 0},
+            rug_score=None,
+            rug_level="unknown",
+        ),
+    ]
+    helpers.open_screen(page, listing("memecoins", source))
+    glyphs = page.locator(".indicator-glyph--well")
+    expect(glyphs).to_have_count(3)
+    first, second, third = (glyphs.nth(i) for i in range(3))
+    expect(first.locator(".well-bull")).to_have_count(1)
+    expect(first.locator(".well-bear")).to_have_count(1)
+    expect(second.locator(".well-bull")).to_have_count(0)
+    expect(third.locator(".well-bull, .well-bear")).to_have_count(0)
+    expect(first.locator("circle.well-risk")).to_have_attribute("data-risk", "significant")
+    expect(second.locator("path.well-risk")).to_have_attribute("data-risk", "detected")
+    expect(third.locator(".well-risk")).to_have_count(0)
+    # A phantom pool, sealed: $72.88 real under a $2,174 quote.
+    expect(first).to_have_attribute("data-lock", "sealed")
+    expect(first.locator(".well-phantom")).to_have_count(1)
+    expect(first).to_have_accessible_name(
+        re.compile(r"^Real liquidity \$73; the pool quotes \$2.2K, 30×")
+    )
+    expect(second.locator(".well-unknown")).to_have_text("?")
+    box = first.bounding_box()
+    assert box["width"] >= 40 and box["height"] >= 40
+    if forced == "active":
+        expect(first).to_have_css("forced-color-adjust", "none")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 390, 1280])
+@pytest.mark.parametrize("forced", ["none", "active"])
+def test_well_key_opens_by_keyboard_and_is_drawn_by_the_row_code(page, width, forced):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    page.set_viewport_size({"width": width, "height": 1100})
+    page.emulate_media(forced_colors=forced)
+    helpers.open_screen(page, listing("memecoins", [assessed_coin()]))
+    key = page.locator(".indicator-legend")
+    key.locator("summary").focus()
+    key.locator("summary").press("Enter")
+    expect(key).to_have_attribute("open", "")
+    expect(key.locator(".indicator-key-group h3")).to_have_text(["Liquidity", "Wall", "Frame"])
+    for label in [
+        "Deep, sealed",
+        "Phantom pool",
+        "Open",
+        "Bonding curve",
+        "Liquidity pull",
+        "Risk factors detected",
+        "1+ significant factors",
+    ]:
+        expect(key.locator("li").filter(has_text=label).first).to_be_visible()
+    icons = key.locator(".indicator-key-icon--well svg.well-glyph")
+    expect(icons).to_have_count(15)
+    assert all(icon.bounding_box()["width"] >= 24 for icon in icons.all())
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [320, 1280])
+@pytest.mark.parametrize("forced", ["none", "active"])
+def test_well_significant_notch_keeps_accessible_map_control(page, width, forced):
+    from tests.test_browser_memecoin_replay import COIN, open_replay
+    from tests.test_memecoin_indicator import assessed_coin
+
+    page.emulate_media(forced_colors=forced)
+    open_replay(
+        page,
+        width=width,
+        coin_overrides=assessed_coin(id=COIN["id"], significant_risk_factor_count=1),
+    )
+    glyph = page.locator(".map-glyph")
+    expect(glyph).to_have_attribute("data-risk", "significant")
+    expect(glyph.locator("circle.well-risk")).to_have_attribute("data-risk-shape", "circle")
+    risk = glyph.locator('[data-score-key="risk"]')
+    expect(risk).to_have_attribute(
+        "aria-label", "1+ significant risk factors detected in saved checks. Show risk factors."
+    )
+    risk.press("Enter")
+    expect(risk).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".map-glyph-reading")).to_contain_text(
+        "1+ significant risk factors detected"
+    )
+    if forced == "active":
+        expect(glyph.locator(".well-risk")).to_have_css("fill", "rgb(0, 0, 0)")
+    else:
+        expect(glyph.locator(".well-risk")).to_have_css("fill", "rgb(255, 173, 112)")

@@ -263,18 +263,28 @@ def ratify_rows(
         for pool, entry in (saved.get("locks") or {}).items()
         if isinstance(entry, dict) and at - datetime.fromisoformat(entry["checked_at"]) <= LOCKS_TTL
     }
+    # Candidates are read every cycle; every other graduated pool once an hour,
+    # so each coin's sigil can show its wall. 100 pools cost one credit.
+    candidate_pools = [row["pool_address"] for row in candidates]
+    other_pools = [
+        row["pool_address"]
+        for row in rows
+        if row.get("venue") == "pool"
+        and row.get("pool_address")
+        and row["pool_address"] not in kept_locks
+    ]
     try:
-        locks = liquidity_locks([row["pool_address"] for row in candidates], rpc=rpc)
+        read = liquidity_locks(list(dict.fromkeys(candidate_pools + other_pools)), rpc=rpc)
         kept_locks.update(
-            {pool: {**lock, "checked_at": at.isoformat()} for pool, lock in locks.items()}
+            {pool: {**lock, "checked_at": at.isoformat()} for pool, lock in read.items()}
         )
     except Exception:
         # A failed read keeps the last answer for an hour; a pulled pool shows on the record.
         LOG.warning("Liquidity lock reads failed", exc_info=True)
-        locks = {
-            pool: {key: value for key, value in entry.items() if key != "checked_at"}
-            for pool, entry in kept_locks.items()
-        }
+    locks = {
+        pool: {key: value for key, value in entry.items() if key != "checked_at"}
+        for pool, entry in kept_locks.items()
+    }
     reads = 0
     for row in candidates:
         mint = row["token_address"]
@@ -313,6 +323,7 @@ def ratify_rows(
             "holder_count_at_least": bool((counts.get(mint) or {}).get("at_least")),
             "lock": locks.get(row.get("pool_address", "")),
         }
+        row["liquidity_lock"] = inputs["lock"]
         row["ratification"] = standards(
             row,
             inputs["controls"],

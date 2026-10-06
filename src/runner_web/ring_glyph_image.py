@@ -71,13 +71,40 @@ def glyph_state(indicator: dict[str, Any] | None) -> dict[str, Any]:
         "slices": [(key, amount / total) for key, amount in parts],
         "bullish": split,
         "score": _finite(value.get("score")),
+        "well": _well_state(value.get("liquidity")),
     }
 
 
-def glyph_outer(indicator: dict[str, Any] | None) -> int:
-    """Outer radius in the page's desktop units: low attention draws smaller."""
+def _well_state(liquidity: Any) -> tuple | None:
+    """The Well's drawn facts as a hashable tuple; None for a stock's ring."""
 
-    return 46 if glyph_state(indicator)["band"] == 1 else 72
+    if not isinstance(liquidity, dict):
+        return None
+    radii = liquidity.get("radii") if isinstance(liquidity.get("radii"), dict) else {}
+    lock = liquidity.get("lock")
+    return (
+        ("real", _finite(radii.get("real")) or 0.0),
+        ("quoted", _finite(radii.get("quoted")) or 0.0),
+        ("chamber", _finite(radii.get("chamber")) or 8.0),
+        ("line", _finite(radii.get("line")) or 0.0),
+        ("known", liquidity.get("real") is not None),
+        (
+            "lock",
+            lock if lock in ("sealed", "open", "unread", "unchecked", "curve") else "unchecked",
+        ),
+        ("left", _finite(liquidity.get("lock_left_pct")) or 0.0),
+        ("pulled", bool(liquidity.get("pulled"))),
+    )
+
+
+def glyph_outer(indicator: dict[str, Any] | None) -> int:
+    """Outer radius in the page's desktop units: low attention draws smaller.
+
+    The Well keeps one size; its frame's thickness carries attention instead.
+    """
+
+    state = glyph_state(indicator)
+    return 72 if state["well"] or state["band"] > 1 else 46
 
 
 def _hex(color: str, alpha: int = 255) -> tuple[int, int, int, int]:
@@ -134,6 +161,8 @@ def _pattern(size: int, key: str, ink: tuple, scale: float) -> Image.Image:
 
 def _render(state_key: tuple, outer: float, background: str, line: str) -> Image.Image:
     state = dict(state_key)
+    if state.get("well"):
+        return _render_well(state, outer, background, line)
     slices = list(state["slices"])
     s = SUPERSAMPLE
     scale = outer / (72 if state["band"] > 1 else 46)
@@ -258,6 +287,132 @@ def _render(state_key: tuple, outer: float, background: str, line: str) -> Image
     return image.resize((final, final), Image.Resampling.LANCZOS)
 
 
+WATER = "#dceee6"
+WALL = "#e4ece7"
+WELL_BAND = {1: 4.0, 2: 8.0, 3: 14.0}
+
+
+def _mix(a: str, b: str, amount: float) -> tuple[int, int, int, int]:
+    x, y = _hex(a), _hex(b)
+    return tuple(round(x[i] + (y[i] - x[i]) * amount) for i in range(3)) + (255,)  # type: ignore[return-value]
+
+
+def _dashed_arc(draw, box, start: float, end: float, width: int, color, dash: float, gap: float):
+    """Dashes along an arc, in degrees clockwise from three o'clock."""
+
+    angle = start
+    while angle < end:
+        draw.arc(box, angle, min(end, angle + dash), fill=color, width=width)
+        angle += dash + gap
+
+
+def _render_well(state: dict, outer: float, background: str, line: str) -> Image.Image:
+    """The Well, mirroring memecoin_well.well_svg: frame edge 86 units, all radii from it."""
+
+    well = dict(state["well"])
+    s = SUPERSAMPLE
+    unit = outer / 86 * s
+    half = 104 * outer / 86
+    size = math.ceil(2 * half * s)
+    c = size / 2
+    ink = _hex(background)
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    def box(r: float) -> tuple[float, float, float, float]:
+        return (c - r * unit, c - r * unit, c + r * unit, c + r * unit)
+
+    def stroke(w: float) -> int:
+        return max(1, round(w * unit))
+
+    # Frame: attention slices; thickness is the band.
+    band = WELL_BAND.get(state["band"], 4.0)
+    ring = (c - 86 * unit, c - 86 * unit, c + 86 * unit, c + 86 * unit)
+    draw.arc(ring, 0, 360, fill=_hex(line), width=stroke(band))
+    angle = -90.0
+    for key, share in state["slices"]:
+        sweep = share * 360
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).arc(ring, angle, angle + sweep, fill=255, width=stroke(band))
+        image.paste(Image.new("RGBA", (size, size), _hex(SLICE_COLORS[key])), (0, 0), mask)
+        if key in ("evidence", "social"):
+            pattern = _pattern(size, key, ink, unit / 1.2)
+            image.paste(pattern, (0, 0), _mask_and(mask, pattern))
+        angle += sweep
+    # Swap balance: the outer hairline.
+    if state["bullish"] is not None:
+        hair = (c - 94.25 * unit, c - 94.25 * unit, c + 94.25 * unit, c + 94.25 * unit)
+        split = -90 + state["bullish"] * 360
+        if state["bullish"] > 0:
+            draw.arc(hair, -90, split, fill=_hex(GREEN), width=stroke(2.5))
+        if state["bullish"] < 1:
+            _dashed_arc(draw, hair, split, 270, stroke(2.5), _hex(RED), 2.2, 1.6)
+    chamber, water, ghost = well["chamber"], well["real"], well["quoted"]
+    draw.ellipse(box(chamber), fill=_mix(background, WALL, 0.13))
+    if well["known"] and ghost > water + 1:
+        mask = Image.new("L", (size, size), 0)
+        shape = ImageDraw.Draw(mask)
+        shape.ellipse(box(ghost), fill=255)
+        shape.ellipse(box(water), fill=0)
+        hatch = _pattern(size, "evidence", _mix(background, MUTED, 0.6), unit / 1.4)
+        image.paste(hatch, (0, 0), _mask_and(mask, hatch))
+    if water > 0:
+        draw.ellipse(box(water), fill=_hex(WATER))
+    if ghost and abs(ghost - water) > 1:
+        tone = ink if ghost < water else _hex(WALL)
+        _dashed_circle(draw, c, c, ghost * unit, unit, tone, 3 * unit, 2.5 * unit)
+    if well["line"]:
+        tone = ink if water >= well["line"] else _hex(MUTED)
+        _dashed_circle(draw, c, c, well["line"] * unit, max(1, unit * 0.8), tone, unit, 2.4 * unit)
+    if not well["known"]:
+        font = ImageFont.load_default(size=max(8, round(22 * unit)))
+        draw.text((c, c), "?", fill=_hex(MUTED), font=font, anchor="mm")
+    lock = well["lock"]
+    if lock == "sealed":
+        draw.arc(box(chamber + 1.6), 0, 360, fill=_hex(WALL), width=stroke(3.2))
+    elif lock == "open":
+        gap = min(100.0, max(5.0, well["left"])) * 3.6
+        if gap < 359:
+            draw.arc(
+                box(chamber + 1.6),
+                90 + gap / 2,
+                450 - gap / 2,
+                fill=_hex(ORANGE),
+                width=stroke(3.2),
+            )
+    elif lock == "unread":
+        _dashed_arc(draw, box(chamber + 1.1), 0, 360, stroke(2.2), _hex(MUTED), 1.2, 6)
+    elif lock == "curve":
+        _dashed_arc(draw, box(chamber + 0.75), 0, 360, stroke(1.5), _hex(MUTED), 7, 5)
+    else:
+        draw.arc(box(chamber + 0.5), 0, 360, fill=_hex(line), width=stroke(1))
+    if well["pulled"]:
+        r = chamber + 4
+        draw.pieslice(box(r), 90 - 11.5, 90 + 11.5, fill=ink)
+        zig = [(0, 4), (5, chamber * 0.35), (-4, chamber * 0.6), (3, chamber * 0.85), (0, r)]
+        draw.line(
+            [(c + x * unit, c + y * unit) for x, y in zig],
+            fill=_hex(RED),
+            width=stroke(2.2),
+            joint="curve",
+        )
+    # A risk factor notches the top. Unknown risk draws nothing: the centre's
+    # "?" is kept for unknown liquidity.
+    if state["risk"] == "detected":
+        notch = [(0, -101), (7, -93), (0, -85), (-7, -93)]
+        points = [(c + x * unit, c + y * unit) for x, y in notch]
+        draw.polygon(points, fill=_hex(RED), outline=ink, width=stroke(2))
+    elif state["risk"] == "significant":
+        draw.ellipse(
+            (c - 7 * unit, c - 100 * unit, c + 7 * unit, c - 86 * unit),
+            fill=_hex(ORANGE),
+            outline=ink,
+            width=stroke(2),
+        )
+    final = max(1, round(2 * half))
+    return image.resize((final, final), Image.Resampling.LANCZOS)
+
+
 def _mask_and(mask: Image.Image, pattern: Image.Image) -> Image.Image:
     """Alpha of the pattern, limited to where the slice mask is drawn."""
 
@@ -282,7 +437,7 @@ def glyph_image(
 
     state = glyph_state(indicator)
     key = tuple(sorted({**state, "slices": tuple(state["slices"])}.items()))
-    size = round(outer if outer is not None else (46 if state["band"] == 1 else 72), 1)
+    size = round(outer if outer is not None else glyph_outer(indicator), 1)
     return _cached(key, size, background, line)
 
 

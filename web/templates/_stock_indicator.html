@@ -1,6 +1,13 @@
 {# Presentation only: run-state chips and trading policy live elsewhere. #}
 {% macro indicator_glyph(item) -%}
 {% set glyph = item.indicator %}
+{% if glyph.liquidity %}
+{#- A memecoin's sigil is the Well, drawn around its liquidity (memecoin_well.py). -#}
+<span class="ticker-score indicator-glyph indicator-glyph--well" data-well data-band="{{ glyph.band }}"
+      data-lock="{{ glyph.liquidity.lock }}" data-risk="{{ glyph.risk }}" data-mix="{{ glyph.mix_state }}"
+      data-sentiment-mix="{{ glyph.sentiment_mix.state }}"
+      role="img" aria-label="{{ glyph.description }}" title="{{ glyph.description }}">{{ well_svg(glyph) | safe }}</span>
+{% else %}
 <span class="ticker-score indicator-glyph" data-band="{{ glyph.band }}"
       data-sentiment="{{ glyph.sentiment }}" data-risk="{{ glyph.risk }}" data-mix="{{ glyph.mix_state }}"
       data-sentiment-mix="{{ glyph.sentiment_mix.state }}"
@@ -19,6 +26,7 @@
     {% if glyph.risk != 'none' %}<span class="indicator-glyph__risk">{{ '?' if glyph.risk == 'unknown' else '' }}</span>{% endif %}
   </span>
 </span>
+{% endif %}
 {%- endmacro %}
 
 {% macro verified_check(item) -%}
@@ -53,6 +61,16 @@
 
 {% macro indicator_legend(market='stocks', size_basis='attention') -%}
 <details class="indicator-legend"><summary>{{ 'Legend' if size_basis == 'holding' else 'Indicator key' }}</summary>
+{% if market == 'memecoins' %}
+<div class="indicator-key-grid">
+  {% for group in well_key() %}<div class="indicator-key-group">
+    <h3>{{ group.title }}</h3>
+    <ul>{% for svg, label, detail in group['items'] %}<li><span class="indicator-key-icon indicator-key-icon--well" aria-hidden="true">{{ svg | safe }}</span><span>{{ label }}<small>{{ detail }}</small></span></li>{% endfor %}</ul>
+    <p>{{ group.note }}</p>
+  </div>{% endfor %}
+</div>
+</details>
+{% else %}
 <div class="indicator-key-grid">
   <div class="indicator-key-group">
     <h3>Risk</h3>
@@ -97,4 +115,5 @@
 </div>
 {% if market == 'stocks' %}<div class="indicator-key-check">{{ key_icon('verified') }}<span>Automated evidence check<small>Evidence and eligibility checks passed.</small></span></div>{% endif %}
 </details>
+{% endif %}
 {%- endmacro %}

@@ -149,23 +149,37 @@ def test_pending_evidence_keeps_ticker_and_score_visible(page: Page):
     expect(page.locator(".map-score-center")).to_be_visible()
 
 
+POOLED = {
+    "venue": "pool",
+    "real_liquidity_usd": 900.0,
+    "liquidity_usd": 10_000.0,
+    "fully_diluted_valuation": 500_000.0,
+    "liquidity_lock": {"left_pct": 40.0, "dex": "Raydium CPMM"},
+}
+
+
 @pytest.mark.parametrize("width,score,band", [(320, 24, "1"), (390, 58, "2"), (1440, 80, "3")])
-def test_token_glyph_shares_stock_shapes_and_opens_each_reading(page: Page, width, score, band):
+def test_token_well_draws_liquidity_and_opens_each_reading(page: Page, width, score, band):
     from tests.test_memecoin_indicator import assessed_coin
 
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    open_replay(page, width=width, coin_overrides=assessed_coin(id=COIN["id"], score=score))
+    open_replay(
+        page, width=width, coin_overrides=assessed_coin(id=COIN["id"], score=score, **POOLED)
+    )
     glyph = page.locator(".map-glyph")
     expect(glyph).to_have_attribute("data-band", band)
-    expect(glyph).to_have_attribute("data-sentiment", "negative")
+    expect(glyph).to_have_attribute("data-well", "")
+    expect(glyph).to_have_attribute("data-lock", "open")
     expect(glyph).to_have_attribute("data-risk", "detected")
+    # Attention is the frame: every band keeps its slices as strokes, never a solid pie.
     expect(glyph.locator(".map-score-segment")).to_have_count(3)
     segment = glyph.locator('[data-score-key="evidence"]')
-    assert segment.evaluate("el => getComputedStyle(el).fill") == (
-        "rgb(181, 138, 244)" if band == "3" else "none"
-    )
-    expect(glyph.locator(".map-glyph-hole")).to_have_count(0 if band == "3" else 1)
+    assert segment.evaluate("el => getComputedStyle(el).stroke") == "rgb(181, 138, 244)"
+    # A pool quoting 11× its real liquidity shows the phantom between ghost and water.
+    expect(glyph.locator(".well-water")).to_have_count(1)
+    expect(glyph.locator(".well-phantom")).to_have_count(1)
+    expect(glyph.locator('.well-wall[data-lock="open"]')).to_have_count(1)
     segment.focus()
     segment.press("Enter")
     panel = page.locator("[data-replay-selection]")
@@ -177,6 +191,13 @@ def test_token_glyph_shares_stock_shapes_and_opens_each_reading(page: Page, widt
     risk.press("Space")
     expect(panel).to_contain_text("Risk factors detected in saved checks.")
     risk.press("ArrowLeft")
+    well = glyph.locator('[data-score-key="liquidity"]')
+    expect(well).to_be_focused()
+    well.press("Enter")
+    expect(panel.locator("h4")).to_have_text("Liquidity")
+    expect(panel).to_contain_text("the pool quotes $10.0K, 11×")
+    expect(panel).to_contain_text("40% still held")
+    well.press("ArrowLeft")
     tone = glyph.locator('[data-score-key="sentiment"]')
     expect(tone).to_be_focused()
     tone.press("Enter")
@@ -187,22 +208,25 @@ def test_token_glyph_shares_stock_shapes_and_opens_each_reading(page: Page, widt
     expect(page.locator(".map-score-center")).to_be_focused()
     expect(page.locator("[data-replay-score-return]")).to_be_hidden()
     page.get_by_text("Indicator key", exact=True).click()
-    expect(page.locator(".indicator-key-group").filter(has_text="Attention")).to_be_visible()
+    expect(page.locator(".indicator-key-group").filter(has_text="Phantom pool")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert not errors
 
 
-def test_quote_only_ring_explains_unknown_values(page: Page):
+def test_quote_only_well_explains_unknown_values(page: Page):
     open_replay(page)
     glyph = page.locator(".map-glyph")
     expect(glyph).to_have_attribute("data-mix", "unknown")
     expect(glyph.locator(".map-score-segment")).to_have_count(0)
-    expect(glyph.locator(".map-risk-unknown")).to_have_text("?")
-    glyph.locator('[data-score-key="risk"]').click()
-    expect(page.locator("[data-replay-selection]")).to_contain_text(
-        "Risk factor checks unavailable."
-    )
-    expect(page.locator("[data-replay-selection]")).not_to_contain_text("unavailable ·")
+    # Unknown liquidity is a question in the centre; unknown risk draws nothing.
+    expect(glyph.locator(".well-unknown")).to_have_text("?")
+    expect(glyph.locator(".well-water")).to_have_count(0)
+    expect(glyph.locator('[data-score-key="risk"]')).to_have_count(0)
+    glyph.locator('[data-score-key="liquidity"]').click()
+    panel = page.locator("[data-replay-selection]")
+    expect(panel).to_contain_text("Real liquidity not read")
+    expect(panel).to_contain_text("liquidity lock not checked yet")
+    expect(panel).not_to_contain_text("unavailable ·")
     expect(page.locator(".map-glyph-reading")).to_have_count(0)
 
 
