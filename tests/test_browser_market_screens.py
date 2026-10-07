@@ -1021,13 +1021,21 @@ def test_memecoin_list_uses_shared_glyph_with_readable_unknowns(page: Page, widt
         fixtures.sample("memecoins"),
     ]
     open_screen(page, listing("memecoins", coins))
-    # Memecoins draw the Well: one size, and attention is the frame's thickness.
+    # Memecoins draw the Well: one size, attention a gauge, its score printed below.
     glyphs = page.locator(".indicator-glyph--well")
     expect(glyphs).to_have_count(4)
-    sizes = {round(glyphs.nth(i).bounding_box()["width"]) for i in range(4)}
+    sizes = {round(glyphs.nth(i).locator("svg").bounding_box()["width"]) for i in range(4)}
     assert len(sizes) == 1
-    frames = [glyphs.nth(i).locator(".well-track").get_attribute("stroke-width") for i in range(3)]
-    assert frames == ["7.0", "11.0", "17.0"]
+    expect(glyphs.locator(".well-score-label")).to_have_text(["24", "58", "80", "—"])
+    lengths = [
+        glyphs.nth(i).evaluate(
+            "el => [...el.querySelectorAll('.well-slice')]"
+            ".reduce((sum, arc) => sum + arc.getTotalLength(), 0)"
+        )
+        for i in range(3)
+    ]
+    assert lengths[0] < lengths[1] < lengths[2]
+    expect(glyphs.nth(3).locator(".well-slice")).to_have_count(0)
     expect(glyphs.nth(3)).to_have_attribute("data-mix", "unknown")
     expect(glyphs.nth(3)).to_have_accessible_name(re.compile("Attention unavailable"))
     # The stock row: a sparkline cell for every coin, no caption under the glyph.

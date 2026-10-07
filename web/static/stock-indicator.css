@@ -95,8 +95,9 @@ h1 .ratified-mark{font-size:12px}
 
 /* The Well: a memecoin's sigil, drawn around its liquidity (memecoin_well.py).
    Rows use the inline SVG from well_svg(); the token map draws the same marks. */
-.indicator-glyph,.indicator-legend,[data-token-replay]{--well-water:#dceee6;--well-wall:#e4ece7;--well-chamber:color-mix(in srgb,var(--text) 13%,var(--bg));--well-open:var(--orange,#ffad70)}
-.indicator-glyph--well{width:48px;height:48px}
+.indicator-glyph,.indicator-legend,[data-token-replay]{--well-water:#b9c4be;--well-deep:#4fcaa6;--well-fair:#e6bf6c;--well-thin:#ef8778;--well-wall:var(--muted);--well-chamber:color-mix(in srgb,var(--text) 10%,var(--bg));--well-open:var(--orange,#ffad70)}
+.indicator-glyph--well{width:56px;height:auto;display:grid;justify-items:center;gap:1px}
+.well-score-label{font:650 12px/1 Inter,ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--text);letter-spacing:.01em}
 .well-glyph{display:block;overflow:visible}
 .well-track{fill:none;stroke:var(--line)}
 .well-slice{fill:none}
@@ -105,9 +106,19 @@ h1 .ratified-mark{font-size:12px}
 .well-bear{stroke:var(--red);stroke-dasharray:3 2}
 .well-hairline{stroke-width:2.5}
 .well-chamber{fill:var(--well-chamber)}
+.well-chamber[data-depth="deep"]{fill:color-mix(in srgb,var(--well-deep) 32%,var(--bg))}
+.well-chamber[data-depth="fair"]{fill:color-mix(in srgb,var(--well-fair) 32%,var(--bg))}
+.well-chamber[data-depth="thin"]{fill:color-mix(in srgb,var(--well-thin) 32%,var(--bg))}
 .well-phantom{fill:none;stroke:var(--muted);opacity:.45}
 .well-glyph .well-phantom{stroke-dasharray:1.4 2.2}
 .well-water{fill:var(--well-water)}
+.well-water[data-depth="deep"]{fill:var(--well-deep)}
+.well-water[data-depth="fair"]{fill:var(--well-fair)}
+.well-water[data-depth="thin"]{fill:var(--well-thin)}
+.well-standard{fill:none;stroke-width:4;stroke-linecap:butt}
+.well-standard[data-state="met"]{stroke:var(--text)}
+.well-standard[data-state="unmet"]{stroke:var(--red)}
+.well-standard[data-state="unchecked"]{stroke:color-mix(in srgb,var(--muted) 22%,var(--bg))}
 .well-ghost{fill:none;stroke:var(--text);stroke-width:1;stroke-dasharray:3 2.5;opacity:.75}
 .well-ghost--inside{stroke:var(--bg)}
 .well-line{fill:none;stroke:var(--muted);stroke-width:.8;stroke-dasharray:1 2.4}
@@ -115,7 +126,7 @@ h1 .ratified-mark{font-size:12px}
 .well-unknown{fill:var(--muted);font:600 22px ui-monospace,Menlo,monospace}
 [data-token-replay] .well-unknown{font-size:16px}
 .well-wall{fill:none;stroke:var(--line);stroke-width:1}
-.well-wall[data-lock="sealed"]{stroke:var(--well-wall);stroke-width:3.2}
+.well-wall[data-lock="sealed"]{stroke:var(--well-wall);stroke-width:1.5}
 .well-wall[data-lock="open"]{stroke:var(--well-open);stroke-width:3.2}
 .well-wall[data-lock="unread"]{stroke:var(--muted);stroke-width:2.2;stroke-dasharray:.1 4.5;stroke-linecap:round}
 .well-wall[data-lock="curve"]{stroke:var(--muted);stroke-width:1.5;stroke-dasharray:6 4}
@@ -130,8 +141,9 @@ h1 .ratified-mark{font-size:12px}
 [data-token-replay] .map-glyph[data-well][data-band="3"] .map-score-segment{pointer-events:stroke}
 [data-token-replay] .map-glyph[data-well] .well-risk{pointer-events:none}
 @media(forced-colors:active){
-  .indicator-glyph,.indicator-legend,[data-token-replay]{--well-water:CanvasText;--well-wall:CanvasText;--well-chamber:Canvas;--well-open:CanvasText}
-  .indicator-key-icon--well{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--line:CanvasText;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText;--well-water:CanvasText;--well-wall:CanvasText;--well-chamber:Canvas;--well-open:CanvasText}
+  .indicator-glyph,.indicator-legend,[data-token-replay]{--well-water:CanvasText;--well-deep:CanvasText;--well-fair:CanvasText;--well-thin:CanvasText;--well-wall:CanvasText;--well-chamber:Canvas;--well-open:CanvasText}
+  .indicator-key-icon--well{forced-color-adjust:none;--bg:Canvas;--text:CanvasText;--muted:CanvasText;--line:CanvasText;--indicator-market:CanvasText;--indicator-evidence:CanvasText;--indicator-social:CanvasText;--green:CanvasText;--red:CanvasText;--orange:CanvasText;--well-water:CanvasText;--well-deep:CanvasText;--well-fair:CanvasText;--well-thin:CanvasText;--well-wall:CanvasText;--well-chamber:Canvas;--well-open:CanvasText}
+  .well-chamber[data-depth]{fill:Canvas}
 }
 .indicator-key-icon--well{width:44px;height:44px;display:grid;place-items:center;background:none;border:0}
 
@@ -142,8 +154,15 @@ h1 .ratified-mark{font-size:12px}
 .well-glyph .well-ghost{stroke-width:3.5;stroke-dasharray:8 6;opacity:.9}
 .well-glyph .well-line{stroke-width:2.5;stroke-dasharray:3 6}
 .well-glyph .well-wall{stroke-width:3.5}
-.well-glyph .well-wall:is([data-lock="sealed"],[data-lock="open"]){stroke-width:9}
+.well-glyph .well-wall[data-lock="sealed"]{stroke:none}
+.well-glyph .well-wall[data-lock="open"]{stroke-width:10}
+.well-glyph .well-standard{stroke-width:8}
 .well-glyph .well-wall[data-lock="unread"]{stroke-width:7;stroke-dasharray:.1 13}
 .well-glyph .well-wall[data-lock="curve"]{stroke-width:4.5;stroke-dasharray:14 9}
 .well-glyph .well-crack{stroke-width:7}
 .well-glyph .well-unknown{font-size:44px}
+.well-standards{cursor:pointer}
+[data-token-replay] .well-standard{stroke-width:5}
+[data-token-replay] .well-bull,[data-token-replay] .well-bear{stroke-width:3}
+[data-token-replay] .map-glyph[data-well] .map-glyph-sentiment{stroke:transparent;stroke-dasharray:none;stroke-width:8}
+@media(max-width:500px){.indicator-glyph--well{width:44px}.indicator-glyph--well .well-glyph{width:44px;height:44px}.well-score-label{font-size:11px}}

@@ -29,6 +29,9 @@
       risk:allowed(value.risk,['none','detected','significant','unknown'],'unknown'),
       // The Well: the server's liquidity reading and radii (memecoin_well.py).
       liquidity:value.liquidity && typeof value.liquidity === 'object' && value.liquidity.radii ? value.liquidity : null,
+      flow:value.flow && typeof value.flow === 'object' ? value.flow : null,
+      standards:value.standards && Array.isArray(value.standards.marks) ? value.standards : null,
+      score:finite(value.score) ? value.score : null,
     };
     score = finite(value.score) ? number(value.score) : '—';
     const slices = Array.isArray(value.slices) ? value.slices : [];
@@ -39,7 +42,9 @@
     const total = contributions.reduce((sum,part) => sum + part.value,0);
     if (glyph.mix !== 'available' || !Number.isFinite(total) || total <= 0) contributions = [];
     contributions.forEach(part => {part.share = part.value / total;});
-    controls = [...contributions,{key:'sentiment',label:'Chain evidence tone'}];
+    // The Well's hairline is the last hour's trading, not the sampled tone.
+    controls = [...contributions,{key:'sentiment',label:glyph.liquidity ? 'Last hour of trading' : 'Chain evidence tone'}];
+    if (glyph.standards) controls.push({key:'standards',label:'RATi standards'});
     if (glyph.liquidity) controls.push({key:'liquidity',label:'Liquidity'});
     if (glyph.risk !== 'none') controls.push({key:'risk',label:'Risk factors'});
     if (!controls.some(part => part.key === selectedPart)) selectedPart = null;
@@ -53,6 +58,8 @@
     // Only what was measured: a reading that is unavailable is left out, not announced.
     const reading = [
       score === '—' ? null : window.RatiRingGlyph.attentionReading(score, glyph.band),
+      glyph.flow?.share != null ? glyph.flow.reading : null,
+      glyph.standards ? glyph.standards.reading : null,
       glyph.sentimentMix.state === 'available' ? `Chain evidence tone: ${glyph.sentimentMix.reading}` : null,
       glyph.risk === 'unknown' ? null : window.RatiRingGlyph.riskReading(glyph.risk),
     ].filter(Boolean);
@@ -65,6 +72,8 @@
         item.indicator.risk_factors.forEach(reason => factors.append(make('li',reason))); panel.append(factors);
       }
       if (part.key === 'liquidity') liquidityFacts(panel);
+      else if (part.key === 'standards') standardsFacts(panel);
+      else if (part.key === 'sentiment' && glyph.liquidity) panel.append(make('p',`${glyph.flow?.reading || 'No trades read in the last hour'}.`));
       else if (part.key === 'sentiment') panel.append(make('p',`${glyph.sentimentMix.reading}. ${glyph.sentimentMix.basis}.`));
       else if (part.key !== 'risk') panel.append(make('p',`${points(part.value)} · ${percent(part)}`,'map-score-breakdown'));
     }
@@ -75,13 +84,19 @@
     if (item.assessment?.reason) panel.append(make('p',item.assessment.reason));
     document.dispatchEvent(new CustomEvent('rati:map-time',{detail:{time:null}}));
   }
+  function standardsFacts(panel) {
+    panel.append(make('p',`${glyph.standards.reading}.`));
+    const list = make('ul',null,'map-score-legend well-facts');
+    glyph.standards.marks.forEach(mark => {const li = make('li'); li.dataset.state = mark.state; li.append(make('span',mark.label),make('strong',{met:'Met',unmet:'Not met',unchecked:'Not checked yet'}[mark.state])); list.append(li);});
+    panel.append(list);
+  }
   function liquidityFacts(panel) {
     const well = glyph.liquidity;
     panel.append(make('p',well.reading));
     const money = value => value == null ? 'Not read' : '$' + number(value);
     const list = make('ul',null,'map-score-legend well-facts');
     [['Real liquidity (water)',money(well.real)],['Quoted liquidity (ghost ring)',well.venue === 'bonding_curve' ? 'On its curve' : money(well.quoted)],
-     ['Fully diluted value (chamber)',money(well.fdv)],['Ratified line',money(well.line_usd)],
+     ['Fully diluted value (chamber)',money(well.fdv)],['Backed by real liquidity',well.backing == null ? 'Not read' : `${number(well.backing*100)}% (${well.depth})`],['Ratified line',money(well.line_usd)],
      ['Liquidity lock (wall)',{sealed:'Burned or locked',open:`${number(well.lock_left_pct || 0)}% still held`,unread:'Not readable',unchecked:'Not checked yet',curve:'No pool yet'}[well.lock] || 'Not checked yet']]
       .forEach(([label,value]) => {const li = make('li'); li.append(make('span',label),make('strong',value)); list.append(li);});
     panel.append(list);

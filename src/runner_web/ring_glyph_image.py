@@ -71,15 +71,24 @@ def glyph_state(indicator: dict[str, Any] | None) -> dict[str, Any]:
         "slices": [(key, amount / total) for key, amount in parts],
         "bullish": split,
         "score": _finite(value.get("score")),
-        "well": _well_state(value.get("liquidity")),
+        "well": _well_state(value),
     }
 
 
-def _well_state(liquidity: Any) -> tuple | None:
+def _well_state(indicator: dict[str, Any]) -> tuple | None:
     """The Well's drawn facts as a hashable tuple; None for a stock's ring."""
 
+    liquidity = indicator.get("liquidity")
     if not isinstance(liquidity, dict):
         return None
+    flow = indicator.get("flow") if isinstance(indicator.get("flow"), dict) else {}
+    standards = indicator.get("standards") if isinstance(indicator.get("standards"), dict) else {}
+    marks = tuple(
+        mark.get("state") if mark.get("state") in ("met", "unmet") else "unchecked"
+        for mark in standards.get("marks") or []
+        if isinstance(mark, dict)
+    )
+    depth = liquidity.get("depth")
     radii = liquidity.get("radii") if isinstance(liquidity.get("radii"), dict) else {}
     lock = liquidity.get("lock")
     return (
@@ -94,6 +103,9 @@ def _well_state(liquidity: Any) -> tuple | None:
         ),
         ("left", _finite(liquidity.get("lock_left_pct")) or 0.0),
         ("pulled", bool(liquidity.get("pulled"))),
+        ("depth", depth if depth in WELL_DEPTH else "unknown"),
+        ("flow", _finite(flow.get("share"))),
+        ("standards", marks),
     )
 
 
@@ -287,9 +299,12 @@ def _render(state_key: tuple, outer: float, background: str, line: str) -> Image
     return image.resize((final, final), Image.Resampling.LANCZOS)
 
 
-WATER = "#dceee6"
+WATER = "#b9c4be"
 WALL = "#e4ece7"
-WELL_BAND = {1: 4.0, 2: 8.0, 3: 14.0}
+# Real liquidity against fully diluted value (memecoin_well.DEPTHS).
+WELL_DEPTH = {"deep": "#4fcaa6", "fair": "#e6bf6c", "thin": "#ef8778"}
+WELL_GAUGE = 9.0
+STANDARD_TONES = {"met": WALL, "unmet": RED}
 
 
 def _mix(a: str, b: str, amount: float) -> tuple[int, int, int, int]:
@@ -325,30 +340,45 @@ def _render_well(state: dict, outer: float, background: str, line: str) -> Image
     def stroke(w: float) -> int:
         return max(1, round(w * unit))
 
-    # Frame: attention slices; thickness is the band.
-    band = WELL_BAND.get(state["band"], 4.0)
-    ring = (c - 86 * unit, c - 86 * unit, c + 86 * unit, c + 86 * unit)
-    draw.arc(ring, 0, 360, fill=_hex(line), width=stroke(band))
+    # Frame: an attention gauge filled clockwise to score/100, split by slice.
+    ring = box(86)  # PIL draws an arc's width inward from its box
+    draw.arc(ring, 0, 360, fill=_hex(line), width=stroke(WELL_GAUGE))
+    sweep_all = min(100.0, max(0.0, state["score"] or 0.0)) * 3.6
     angle = -90.0
-    for key, share in state["slices"]:
-        sweep = share * 360
+    parts = (state["slices"] or [("market", 1.0)]) if sweep_all else []
+    for key, share in parts:
+        sweep = share * sweep_all
         mask = Image.new("L", (size, size), 0)
-        ImageDraw.Draw(mask).arc(ring, angle, angle + sweep, fill=255, width=stroke(band))
+        ImageDraw.Draw(mask).arc(ring, angle, angle + sweep, fill=255, width=stroke(WELL_GAUGE))
         image.paste(Image.new("RGBA", (size, size), _hex(SLICE_COLORS[key])), (0, 0), mask)
         if key in ("evidence", "social"):
             pattern = _pattern(size, key, ink, unit / 1.2)
             image.paste(pattern, (0, 0), _mask_and(mask, pattern))
         angle += sweep
-    # Swap balance: the outer hairline.
-    if state["bullish"] is not None:
-        hair = (c - 94.25 * unit, c - 94.25 * unit, c + 94.25 * unit, c + 94.25 * unit)
-        split = -90 + state["bullish"] * 360
-        if state["bullish"] > 0:
+    # The last hour's buyers (green) against its sellers (dashed red).
+    if well["flow"] is not None:
+        hair = box(94.25)
+        split = -90 + well["flow"] * 360
+        if well["flow"] > 0:
             draw.arc(hair, -90, split, fill=_hex(GREEN), width=stroke(2.5))
-        if state["bullish"] < 1:
+        if well["flow"] < 1:
             _dashed_arc(draw, hair, split, 270, stroke(2.5), _hex(RED), 2.2, 1.6)
+    # Nine ticks, one per RATi standard.
+    marks = well["standards"]
+    if marks:
+        step = 360 / len(marks)
+        gap = min(9.0, step * 0.3)
+        for index, mark in enumerate(marks):
+            start = -90 + index * step + gap / 2
+            tone = (
+                _hex(STANDARD_TONES[mark])
+                if mark in STANDARD_TONES
+                else _mix(background, MUTED, 0.22)
+            )
+            draw.arc(box(75.5), start, start + step - gap, fill=tone, width=stroke(5))
     chamber, water, ghost = well["chamber"], well["real"], well["quoted"]
-    draw.ellipse(box(chamber), fill=_mix(background, WALL, 0.13))
+    tint = WELL_DEPTH.get(well["depth"])
+    draw.ellipse(box(chamber), fill=_mix(background, tint or WALL, 0.32 if tint else 0.1))
     if well["known"] and ghost > water + 1:
         mask = Image.new("L", (size, size), 0)
         shape = ImageDraw.Draw(mask)
@@ -357,7 +387,7 @@ def _render_well(state: dict, outer: float, background: str, line: str) -> Image
         hatch = _pattern(size, "evidence", _mix(background, MUTED, 0.6), unit / 1.4)
         image.paste(hatch, (0, 0), _mask_and(mask, hatch))
     if water > 0:
-        draw.ellipse(box(water), fill=_hex(WATER))
+        draw.ellipse(box(water), fill=_hex(tint or WATER))
     if ghost and abs(ghost - water) > 1:
         tone = ink if ghost < water else _hex(WALL)
         _dashed_circle(draw, c, c, ghost * unit, unit, tone, 3 * unit, 2.5 * unit)
@@ -368,9 +398,8 @@ def _render_well(state: dict, outer: float, background: str, line: str) -> Image
         font = ImageFont.load_default(size=max(8, round(22 * unit)))
         draw.text((c, c), "?", fill=_hex(MUTED), font=font, anchor="mm")
     lock = well["lock"]
-    if lock == "sealed":
-        draw.arc(box(chamber + 1.6), 0, 360, fill=_hex(WALL), width=stroke(3.2))
-    elif lock == "open":
+    # A sealed wall draws nothing: it is the usual state. Only an open one is loud.
+    if lock == "open":
         gap = min(100.0, max(5.0, well["left"])) * 3.6
         if gap < 359:
             draw.arc(

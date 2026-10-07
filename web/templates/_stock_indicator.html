@@ -6,7 +6,7 @@
 <span class="ticker-score indicator-glyph indicator-glyph--well" data-well data-band="{{ glyph.band }}"
       data-lock="{{ glyph.liquidity.lock }}" data-risk="{{ glyph.risk }}" data-mix="{{ glyph.mix_state }}"
       data-sentiment-mix="{{ glyph.sentiment_mix.state }}"
-      role="img" aria-label="{{ glyph.description }}" title="{{ glyph.description }}">{{ well_svg(glyph) | safe }}</span>
+      role="img" aria-label="{{ glyph.description }}" title="{{ glyph.description }}">{{ well_svg(glyph) | safe }}<span class="well-score-label" aria-hidden="true">{{ '%.0f' | format(glyph.score) if glyph.score is not none else '—' }}</span></span>
 {% else %}
 <span class="ticker-score indicator-glyph" data-band="{{ glyph.band }}"
       data-sentiment="{{ glyph.sentiment }}" data-risk="{{ glyph.risk }}" data-mix="{{ glyph.mix_state }}"

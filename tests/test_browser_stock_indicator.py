@@ -373,7 +373,7 @@ def test_significant_factor_circle_keeps_accessible_map_control(page, market, wi
 
 @pytest.mark.parametrize("width", [320, 390, 1280])
 @pytest.mark.parametrize("forced", ["none", "active"])
-def test_well_rows_show_swap_balance_risk_notch_and_liquidity(page, width, forced):
+def test_well_rows_show_trading_standards_risk_and_liquidity(page, width, forced):
     from tests.test_memecoin_indicator import assessed_coin
 
     page.set_viewport_size({"width": width, "height": 844})
@@ -388,15 +388,24 @@ def test_well_rows_show_swap_balance_risk_notch_and_liquidity(page, width, force
     source = [
         assessed_coin(
             id="MED",
-            chain_sentiment_counts={"bullish": 3, "bearish": 1},
+            buyers_h1=30,
+            sellers_h1=10,
+            ratification={
+                "standards": [
+                    {"key": "pool", "label": "Pool", "met": True},
+                    {"key": "age", "label": "Age", "met": False},
+                    {"key": "holders", "label": "Holders", "met": None},
+                ]
+            },
             rug_score=30,
             significant_risk_factor_count=1,
             **pooled,
         ),
-        assessed_coin(id="HIGH", chain_sentiment_counts={"bullish": 0, "bearish": 4}, rug_score=75),
+        assessed_coin(id="HIGH", buyers_h1=0, sellers_h1=4, rug_score=75),
         assessed_coin(
             id="GAP",
-            chain_sentiment_counts={"bullish": 0, "bearish": 0},
+            buyers_h1=0,
+            sellers_h1=0,
             rug_score=None,
             rug_level="unknown",
         ),
@@ -412,14 +421,27 @@ def test_well_rows_show_swap_balance_risk_notch_and_liquidity(page, width, force
     expect(first.locator("circle.well-risk")).to_have_attribute("data-risk", "significant")
     expect(second.locator("path.well-risk")).to_have_attribute("data-risk", "detected")
     expect(third.locator(".well-risk")).to_have_count(0)
+    # Standards ticks: one each for met, failed and not checked yet.
+    for state in ["met", "unmet", "unchecked"]:
+        expect(first.locator(f'.well-standard[data-state="{state}"]')).to_have_count(1)
+    expect(second.locator(".well-standard")).to_have_count(0)
+    # A thin pool reads coral; the sealed wall draws no rim.
+    expect(first.locator(".well-water")).to_have_attribute("data-depth", "thin")
+    if forced == "none":
+        expect(first.locator(".well-water")).to_have_css("fill", "rgb(239, 135, 120)")
+        expect(first.locator(".well-wall")).to_have_css("stroke", "none")
+    expect(glyphs.locator(".well-score-label")).to_have_text(["58", "58", "58"])
     # A phantom pool, sealed: $72.88 real under a $2,174 quote.
     expect(first).to_have_attribute("data-lock", "sealed")
     expect(first.locator(".well-phantom")).to_have_count(1)
     expect(first).to_have_accessible_name(
-        re.compile(r"^Real liquidity \$73; the pool quotes \$2.2K, 30×")
+        re.compile(
+            r"^Real liquidity \$73; the pool quotes \$2.2K, 30×.*"
+            r"Last hour: 30 buyers, 10 sellers \(75% buyers\)\. Standards: 1 of 3 met"
+        )
     )
     expect(second.locator(".well-unknown")).to_have_text("?")
-    box = first.bounding_box()
+    box = first.locator("svg").bounding_box()
     assert box["width"] >= 40 and box["height"] >= 40
     if forced == "active":
         expect(first).to_have_css("forced-color-adjust", "none")
@@ -438,10 +460,17 @@ def test_well_key_opens_by_keyboard_and_is_drawn_by_the_row_code(page, width, fo
     key.locator("summary").focus()
     key.locator("summary").press("Enter")
     expect(key).to_have_attribute("open", "")
-    expect(key.locator(".indicator-key-group h3")).to_have_text(["Liquidity", "Wall", "Frame"])
+    expect(key.locator(".indicator-key-group h3")).to_have_text(
+        ["Liquidity", "Wall", "Standards", "Attention and trading"]
+    )
     for label in [
-        "Deep, sealed",
+        "Deep",
+        "Fair",
+        "Thin",
         "Phantom pool",
+        "Ratified",
+        "82 of 100",
+        "75% buyers",
         "Open",
         "Bonding curve",
         "Liquidity pull",
@@ -450,7 +479,7 @@ def test_well_key_opens_by_keyboard_and_is_drawn_by_the_row_code(page, width, fo
     ]:
         expect(key.locator("li").filter(has_text=label).first).to_be_visible()
     icons = key.locator(".indicator-key-icon--well svg.well-glyph")
-    expect(icons).to_have_count(15)
+    expect(icons).to_have_count(17)
     assert all(icon.bounding_box()["width"] >= 24 for icon in icons.all())
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 

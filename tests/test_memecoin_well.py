@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from runner_web.memecoin_well import liquidity_state, radius, well_key, well_svg
+from runner_web.memecoin_well import (
+    flow_state,
+    gauge_arcs,
+    liquidity_state,
+    radius,
+    standards_state,
+    well_key,
+    well_svg,
+)
 from runner_web.ring_glyph_image import glyph_image
 from runner_web.stock_indicator import memecoin_indicator
 
@@ -109,17 +117,98 @@ def test_the_posted_image_draws_the_well_at_one_size():
     low = memecoin_indicator(coin(attention_score=10, score_components={"market": 10}))
     high = memecoin_indicator(coin(attention_score=90, score_components={"market": 90}))
     small, large = glyph_image(low), glyph_image(high)
-    assert small.size == large.size  # attention is the frame's thickness, not the size
+    assert small.size == large.size  # attention is a gauge, not the size
     centre = small.width // 2
-    water = small.getpixel((centre, centre))
-    assert water[3] == 255 and min(water[:3]) > 200  # the pale water fills the centre
+    # 12.8% of fully diluted value is real liquidity: fair, sand water.
+    assert small.getpixel((centre, centre))[:3] == (0xE6, 0xBF, 0x6C)
+    # The gauge fills to the score: 90 reaches the left side, 10 does not.
+    left = (round(centre - 82.5 * 72 / 86), centre)
+    assert large.getpixel(left)[:3] != small.getpixel(left)[:3]
 
 
 def test_the_key_is_drawn_by_the_same_code():
     groups = well_key()
-    assert [group["title"] for group in groups] == ["Liquidity", "Wall", "Frame"]
+    assert [group["title"] for group in groups] == [
+        "Liquidity",
+        "Wall",
+        "Standards",
+        "Attention and trading",
+    ]
     assert all(
         svg.startswith('<svg class="well-glyph"')
         for group in groups
         for svg, _, _ in group["items"]
     )
+
+
+@pytest.mark.parametrize(
+    ("real", "depth"),
+    [(20_000, "deep"), (15_000, "deep"), (14_999, "fair"), (5_000, "fair"), (4_999, "thin")],
+)
+def test_depth_is_real_liquidity_against_fully_diluted_value(real, depth):
+    well = liquidity_state(coin(real_liquidity_usd=real, fully_diluted_valuation=100_000))
+    assert well["depth"] == depth
+    assert f'class="well-water" data-depth="{depth}"' in well_svg({"liquidity": well})
+    assert liquidity_state(coin(fully_diluted_valuation=None))["depth"] == "unknown"
+
+
+def test_the_hairline_is_the_last_hours_buyers_against_sellers():
+    flow = flow_state({"buyers_h1": 30, "sellers_h1": 10})
+    assert (
+        flow["share"] == 0.75 and flow["reading"] == "Last hour: 30 buyers, 10 sellers (75% buyers)"
+    )
+    svg = well_svg({"flow": flow, "liquidity": liquidity_state(coin())})
+    assert 'class="well-bull"' in svg and 'class="well-bear"' in svg
+    assert flow_state({"buyers_h1": 0, "sellers_h1": 0})["share"] is None
+    assert flow_state({})["share"] is None
+
+
+def test_nine_ticks_carry_the_standards_in_the_rules_order():
+    ratification = {
+        "standards": [
+            {"key": "mint_authority", "label": "Mint", "met": True},
+            {"key": "pool", "label": "Pool", "met": False},
+            {"key": "holders", "label": "Holders", "met": None},
+            {"key": "cash", "label": "Cash", "met": None, "applies": False},
+        ]
+    }
+    standards = standards_state({"ratification": ratification})
+    assert [mark["state"] for mark in standards["marks"]] == ["met", "unmet", "unchecked"]
+    assert standards["reading"] == "Standards: 1 of 3 met, 1 not checked yet"
+    svg = well_svg({"standards": standards, "liquidity": liquidity_state(coin())})
+    assert svg.count('class="well-standard"') == 3
+    assert standards_state({}) is None
+
+
+def test_the_gauge_fills_to_the_score_split_by_slice():
+    arcs = gauge_arcs(
+        {
+            "score": 50,
+            "slices": [{"key": "market", "share": 0.6}, {"key": "evidence", "share": 0.4}],
+        }
+    )
+    import math
+
+    assert [key for key, _, _ in arcs] == ["market", "evidence"]
+    assert arcs[-1][2] - arcs[0][1] == pytest.approx(math.pi)
+    assert gauge_arcs({"score": None}) == gauge_arcs({"score": 0}) == []
+    # A score with no breakdown still fills, as market.
+    assert gauge_arcs({"score": 30, "slices": []})[0][0] == "market"
+
+
+def test_a_sealed_wall_is_quiet_and_the_indicator_reads_every_mark():
+    glyph = memecoin_indicator(
+        coin(
+            attention_score=50,
+            score_components={"market": 50},
+            buyers_h1=12,
+            sellers_h1=4,
+            ratification={"standards": [{"key": "pool", "label": "Pool", "met": True}]},
+        )
+    )
+    assert glyph["flow"]["share"] == 0.75 and glyph["standards"]["met"] == 1
+    assert (
+        "Last hour: 12 buyers, 4 sellers (75% buyers). Standards: 1 of 1 met."
+        in glyph["description"]
+    )
+    assert 'data-lock="sealed"' in well_svg(glyph)  # drawn, and hidden by the stylesheet
