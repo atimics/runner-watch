@@ -155,6 +155,14 @@ POOLED = {
     "liquidity_usd": 10_000.0,
     "fully_diluted_valuation": 500_000.0,
     "liquidity_lock": {"left_pct": 40.0, "dex": "Raydium CPMM"},
+    "buyers_h1": 30,
+    "sellers_h1": 10,
+    "ratification": {
+        "standards": [
+            {"key": "pool", "label": "Graduated pool with $10K+ real liquidity", "met": False},
+            {"key": "age", "label": "24 hours since its pool opened", "met": True},
+        ]
+    },
 }
 
 
@@ -172,8 +180,15 @@ def test_token_well_draws_liquidity_and_opens_each_reading(page: Page, width, sc
     expect(glyph).to_have_attribute("data-well", "")
     expect(glyph).to_have_attribute("data-lock", "open")
     expect(glyph).to_have_attribute("data-risk", "detected")
-    # Attention is the frame: every band keeps its slices as strokes, never a solid pie.
+    # Attention is a gauge: its slices are strokes filling score/100 of the frame.
     expect(glyph.locator(".map-score-segment")).to_have_count(3)
+    filled = glyph.evaluate(
+        "el => [...el.querySelectorAll('.map-score-segment')]"
+        ".reduce((sum, arc) => sum + arc.getTotalLength(), 0)"
+    )
+    track = glyph.locator(".map-score-track").evaluate("el => el.getTotalLength()")
+    assert filled / track == pytest.approx(score / 100, abs=0.02)
+    expect(glyph).to_have_attribute("data-depth", "thin")
     segment = glyph.locator('[data-score-key="evidence"]')
     assert segment.evaluate("el => getComputedStyle(el).stroke") == "rgb(181, 138, 244)"
     # A pool quoting 11× its real liquidity shows the phantom between ghost and water.
@@ -198,12 +213,18 @@ def test_token_well_draws_liquidity_and_opens_each_reading(page: Page, width, sc
     expect(panel).to_contain_text("the pool quotes $10.0K, 11×")
     expect(panel).to_contain_text("40% still held")
     well.press("ArrowLeft")
+    ticks = glyph.locator('[data-score-key="standards"]')
+    expect(ticks).to_be_focused()
+    ticks.press("Enter")
+    expect(panel.locator("h4")).to_have_text("RATi standards")
+    expect(panel).to_contain_text("Standards: 1 of 2 met.")
+    expect(panel).to_contain_text("Graduated pool with $10K+ real liquidityNot met")
+    ticks.press("ArrowLeft")
     tone = glyph.locator('[data-score-key="sentiment"]')
     expect(tone).to_be_focused()
     tone.press("Enter")
-    expect(panel).to_contain_text(
-        "0% bullish, 100% bearish. Saved chain evidence tone assessments."
-    )
+    expect(panel.locator("h4")).to_have_text("Last hour of trading")
+    expect(panel).to_contain_text("Last hour: 30 buyers, 10 sellers (75% buyers).")
     tone.press("Escape")
     expect(page.locator(".map-score-center")).to_be_focused()
     expect(page.locator("[data-replay-score-return]")).to_be_hidden()
@@ -267,22 +288,19 @@ def test_glyph_refresh_preserves_selection_and_clears_removed_assessment(page: P
 
 
 @pytest.mark.parametrize("width", [390, 1280])
-def test_token_sentiment_uses_the_shared_proportional_border(page, width):
+def test_token_hairline_splits_the_last_hours_buyers_and_sellers(page, width):
     from tests.test_memecoin_indicator import assessed_coin
 
     open_replay(
         page,
         width=width,
-        coin_overrides=assessed_coin(
-            id=COIN["id"], chain_sentiment_counts={"bullish": 1, "bearish": 3}
-        ),
+        coin_overrides=assessed_coin(id=COIN["id"], buyers_h1=1, sellers_h1=3),
     )
     glyph = page.locator(".map-glyph")
-    expect(glyph.locator('[data-sentiment-side="bullish"]')).to_have_attribute(
-        "stroke-dasharray", "25 75"
-    )
-    expect(glyph.locator('[data-sentiment-side="bearish"]')).to_have_attribute(
-        "stroke-dashoffset", "-25"
-    )
+    buyers = glyph.locator(".well-bull").evaluate("el => el.getTotalLength()")
+    sellers = glyph.locator(".well-bear").evaluate("el => el.getTotalLength()")
+    assert buyers / (buyers + sellers) == pytest.approx(0.25, abs=0.01)
     glyph.locator('[data-score-key="sentiment"]').press("Enter")
-    expect(page.locator("[data-replay-selection]")).to_contain_text("25% bullish, 75% bearish")
+    expect(page.locator("[data-replay-selection]")).to_contain_text(
+        "Last hour: 1 buyers, 3 sellers (25% buyers)"
+    )

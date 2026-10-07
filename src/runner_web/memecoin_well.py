@@ -13,11 +13,19 @@ centre to $10M at the chamber's widest:
 - wall: the chamber's rim. Sealed when the pool's liquidity tokens are burned
   or locked, open at the bottom by the share still held, dotted when it cannot
   be read, faint when not checked, dashed while the coin is on its curve;
-- crack: a liquidity pull on the record.
+- crack: a liquidity pull on the record;
+- depth color: real liquidity against fully diluted value tints the water and
+  chamber, teal when 15% or more of the value could be sold into, sand from 5%,
+  coral below.
 
-Attention moves to the frame's thickness and swap balance to its outer
-hairline. Radii are computed here once, in units where the frame's outer edge
-is 86, so the page (ring-glyph.js), the rows (well_svg) and the images
+Around it: nine ticks for the RATi standards (bright met, red failed, dim not
+checked yet; nine bright is Ratified), the frame as an attention gauge filled
+to score/100 in the colors of where attention came from, an outer hairline
+splitting the last hour's buyers from its sellers, and a risk notch at the top.
+Rows print the attention score under the glyph.
+
+Radii are computed here once, in units where the frame's outer edge is 86, so
+the page (ring-glyph.js), the rows (well_svg) and the images
 (ring_glyph_image.py) all scale the same numbers.
 """
 
@@ -34,14 +42,15 @@ from runner_web.memecoin_liquidity import CHAIN_SOURCE
 
 FRAME = 86.0
 SENTIMENT_R = 93.0
+STANDARDS_R = 73.0
 CHAMBER_MIN = 8.0
+CHAMBER_MAX = 64.0
+# The frame is an attention gauge: filled clockwise from the top to score/100.
+GAUGE_WIDTH = 6.0
+# Real liquidity as a share of fully diluted value: how much could be sold into.
+DEPTHS = ((0.15, "deep"), (0.05, "fair"), (0.0, "thin"))
 SCALE_LOW = 100.0
 SCALE_DECADES = 5.0
-# Frame thickness by attention band (low, medium, high).
-BAND_WIDTH = {1: 4.0, 2: 8.0, 3: 14.0}
-# Rows and the key draw the Well at about 48px, where a unit is a quarter pixel:
-# the same geometry, heavier lines (stroke weights live in stock-indicator.css).
-ROW_BAND_WIDTH = {1: 7.0, 2: 11.0, 3: 17.0}
 LOCK_STATES = ("sealed", "open", "unread", "unchecked", "curve")
 SLICE_COLORS = {
     "market": "var(--indicator-market)",
@@ -56,7 +65,7 @@ def radius(usd: float | None) -> float:
     if usd is None or usd <= 0:
         return 0.0
     share = (math.log10(usd) - math.log10(SCALE_LOW)) / SCALE_DECADES
-    return round(4 + 60 * min(1.0, max(0.0, share)), 3)
+    return round(4 + (CHAMBER_MAX - 4) * min(1.0, max(0.0, share)), 3)
 
 
 def _money(value: float | None) -> str:
@@ -115,8 +124,14 @@ def liquidity_state(item: Mapping[str, Any]) -> dict[str, Any]:
     ]
     if phantom:
         parts.append(f"the pool quotes {_money(quoted)}, {quoted / max(real or 1.0, 1.0):.0f}×")
-    if fdv is not None and real is not None:
-        parts.append(f"{real / fdv * 100:.1f}% of {_money(fdv)} fully diluted value")
+    backing = real / fdv if fdv is not None and real is not None else None
+    depth = (
+        next(name for floor, name in DEPTHS if backing >= floor)
+        if backing is not None
+        else "unknown"
+    )
+    if backing is not None:
+        parts.append(f"{backing * 100:.1f}% of {_money(fdv)} fully diluted value ({depth})")
     parts.append(
         {
             "curve": "on its bonding curve, no pool to lock",
@@ -138,6 +153,8 @@ def liquidity_state(item: Mapping[str, Any]) -> dict[str, Any]:
         "lock_dex": dex or None,
         "pulled": pulled,
         "phantom": phantom,
+        "backing": backing,
+        "depth": depth,
         "line_usd": MIN_LIQUIDITY_USD,
         "radii": {
             "real": radius(real),
@@ -147,6 +164,58 @@ def liquidity_state(item: Mapping[str, Any]) -> dict[str, Any]:
         },
         "reading": "; ".join(parts) + ".",
     }
+
+
+def flow_state(item: Mapping[str, Any]) -> dict[str, Any]:
+    """The last hour's buyers against its sellers: every coin's quote carries them."""
+
+    buyers = finite_number(item.get("buyers_h1"))
+    sellers = finite_number(item.get("sellers_h1"))
+    if buyers is None or sellers is None or buyers < 0 or sellers < 0 or buyers + sellers == 0:
+        return {
+            "buyers": None,
+            "sellers": None,
+            "share": None,
+            "reading": "No trades read in the last hour",
+        }
+    share = buyers / (buyers + sellers)
+    return {
+        "buyers": int(buyers),
+        "sellers": int(sellers),
+        "share": round(share, 4),
+        "reading": (
+            f"Last hour: {int(buyers):,} buyers, {int(sellers):,} sellers "
+            f"({share * 100:.0f}% buyers)"
+        ),
+    }
+
+
+def standards_state(item: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Each applicable RATi standard as met, unmet or unchecked, in the rules' order."""
+
+    ratification = item.get("ratification")
+    if not isinstance(ratification, Mapping):
+        return None
+    marks = []
+    for standard in ratification.get("standards") or []:
+        if not isinstance(standard, Mapping) or standard.get("applies") is False:
+            continue
+        met = standard.get("met")
+        marks.append(
+            {
+                "key": str(standard.get("key") or ""),
+                "label": str(standard.get("label") or ""),
+                "state": "met" if met is True else "unmet" if met is False else "unchecked",
+            }
+        )
+    if not marks:
+        return None
+    met = sum(mark["state"] == "met" for mark in marks)
+    unchecked = sum(mark["state"] == "unchecked" for mark in marks)
+    reading = f"Standards: {met} of {len(marks)} met"
+    if unchecked:
+        reading += f", {unchecked} not checked yet"
+    return {"marks": marks, "met": met, "total": len(marks), "reading": reading}
 
 
 def _point(r: float, angle: float) -> str:
@@ -160,11 +229,27 @@ def arc(r: float, start: float, end: float) -> str:
     return f"M {_point(r, start)} A {r} {r} 0 {large} 1 {_point(r, end)}"
 
 
-def frame_width(indicator: Mapping[str, Any], widths: Mapping[int, float] = BAND_WIDTH) -> float:
-    return widths.get(indicator.get("band"), widths[1])
+def gauge_arcs(indicator: Mapping[str, Any]) -> list[tuple[str, float, float]]:
+    """(slice key, start, end) for the attention gauge: score/100 of the circle,
+    split by each slice's share."""
+
+    score = finite_number(indicator.get("score"))
+    if score is None or score <= 0:
+        return []
+    sweep = min(100.0, score) / 100 * 2 * math.pi
+    parts = [
+        (part["key"], float(part.get("share") or 0))
+        for part in indicator.get("slices") or []
+        if part.get("key") in SLICE_COLORS and (part.get("share") or 0) > 0
+    ] or [("market", 1.0)]
+    arcs, angle = [], -math.pi / 2
+    for key, share in parts:
+        arcs.append((key, angle, angle + share * sweep))
+        angle += share * sweep
+    return arcs
 
 
-def well_svg(indicator: Mapping[str, Any], *, size: int = 48) -> str:
+def well_svg(indicator: Mapping[str, Any], *, size: int = 56) -> str:
     """The Well as inline SVG for rows and keys; the page's map draws it in JS."""
 
     well = indicator.get("liquidity") or {}
@@ -173,52 +258,40 @@ def well_svg(indicator: Mapping[str, Any], *, size: int = 48) -> str:
         f'<svg class="well-glyph" viewBox="-100 -100 200 200" width="{size}" height="{size}" '
         'aria-hidden="true" focusable="false">'
     ]
-    width = frame_width(indicator, ROW_BAND_WIDTH)
-    frame = FRAME - width / 2
-    out.append(f'<circle class="well-track" r="{frame}" stroke-width="{width}"/>')
-    parts = [
-        part
-        for part in indicator.get("slices") or []
-        if part.get("key") in SLICE_COLORS and (part.get("share") or 0) > 0
-    ]
-    angle = -math.pi / 2
-    for part in parts:
-        sweep = part["share"] * 2 * math.pi
-        color = SLICE_COLORS[part["key"]]
-        if sweep >= 2 * math.pi - 1e-6:
-            out.append(
-                f'<circle class="well-slice" data-key="{part["key"]}" r="{frame}" '
-                f'stroke="{color}" stroke-width="{width}"/>'
-            )
-        else:
-            out.append(
-                f'<path class="well-slice" data-key="{part["key"]}" '
-                f'd="{arc(frame, angle, angle + sweep)}" stroke="{color}" stroke-width="{width}"/>'
-            )
-        angle += sweep
-    mix = indicator.get("sentiment_mix") or {}
-    if mix.get("state") == "available":
-        bullish = float(mix.get("bullish") or 0)
-        start, split = -math.pi / 2, -math.pi / 2 + bullish * 2 * math.pi
-        if bullish >= 1:
+    gauge = FRAME - GAUGE_WIDTH / 2
+    out.append(f'<circle class="well-track" r="{gauge}" stroke-width="{GAUGE_WIDTH}"/>')
+    for key, start, end in gauge_arcs(indicator):
+        shape = (
+            f'<circle class="well-slice" data-key="{key}" r="{gauge}"'
+            if end - start >= 2 * math.pi - 1e-6
+            else f'<path class="well-slice" data-key="{key}" d="{arc(gauge, start, end)}"'
+        )
+        out.append(f'{shape} stroke="{SLICE_COLORS[key]}" stroke-width="{GAUGE_WIDTH}"/>')
+    # The last hour's buyers (green, from the top) against its sellers (dashed red).
+    share = (indicator.get("flow") or {}).get("share")
+    if share is not None:
+        start, split = -math.pi / 2, -math.pi / 2 + share * 2 * math.pi
+        if share >= 1:
             out.append(f'<circle class="well-bull" r="{SENTIMENT_R}"/>')
-        elif bullish <= 0:
+        elif share <= 0:
             out.append(f'<circle class="well-bear" r="{SENTIMENT_R}"/>')
         else:
             out.append(f'<path class="well-bull" d="{arc(SENTIMENT_R, start, split)}"/>')
             out.append(
                 f'<path class="well-bear" d="{arc(SENTIMENT_R, split, start + 2 * math.pi)}"/>'
             )
+    out.extend(_standards_ticks(indicator.get("standards")))
     chamber = radii.get("chamber", CHAMBER_MIN)
     water, ghost = radii.get("real", 0), radii.get("quoted", 0)
-    out.append(f'<circle class="well-chamber" r="{chamber}"/>')
+    depth = escape(str(well.get("depth") or "unknown"))
+    out.append(f'<circle class="well-chamber" data-depth="{depth}" r="{chamber}"/>')
     if well.get("real") is not None and ghost > water + 1:
         out.append(
             f'<circle class="well-phantom" r="{(ghost + water) / 2:.3f}" '
             f'stroke-width="{ghost - water:.3f}"/>'
         )
     if water > 0:
-        out.append(f'<circle class="well-water" r="{water}"/>')
+        out.append(f'<circle class="well-water" data-depth="{depth}" r="{water}"/>')
     if ghost and abs(ghost - water) > 1:
         inside = " well-ghost--inside" if ghost < water else ""
         out.append(f'<circle class="well-ghost{inside}" r="{ghost}"/>')
@@ -226,11 +299,6 @@ def well_svg(indicator: Mapping[str, Any], *, size: int = 48) -> str:
     line = radii.get("line", radius(MIN_LIQUIDITY_USD))
     if water < line:
         out.append(f'<circle class="well-line" r="{line}"/>')
-    if well.get("real") is None:
-        out.append(
-            '<text class="well-unknown" y="2" text-anchor="middle" '
-            'dominant-baseline="central">?</text>'
-        )
     state = well.get("lock", "unchecked")
     if state == "open":
         gap = min(100.0, max(5.0, well.get("lock_left_pct") or 0)) / 100 * 2 * math.pi
@@ -257,6 +325,11 @@ def well_svg(indicator: Mapping[str, Any], *, size: int = 48) -> str:
         ]
         points = " ".join(f"{x:.1f},{y:.1f}" for x, y in zig)
         out.append(f'<polyline class="well-crack" points="{points}"/>')
+    if well.get("real") is None:
+        out.append(
+            '<text class="well-unknown" y="2" text-anchor="middle" '
+            'dominant-baseline="central">?</text>'
+        )
     risk = indicator.get("risk")
     # A risk notch at twelve o'clock, the ring's shapes: detected is a diamond,
     # 1+ significant a circle. Unknown risk draws nothing.
@@ -272,11 +345,35 @@ def well_svg(indicator: Mapping[str, Any], *, size: int = 48) -> str:
     return "".join(out)
 
 
+def standards_arcs(count: int) -> list[tuple[float, float]]:
+    """Start and end angles of each standard's tick, clockwise from the top."""
+
+    if count <= 0:
+        return []
+    step = 2 * math.pi / count
+    gap = min(0.16, step * 0.3)
+    return [
+        (-math.pi / 2 + index * step + gap / 2, -math.pi / 2 + (index + 1) * step - gap / 2)
+        for index in range(count)
+    ]
+
+
+def _standards_ticks(standards: Mapping[str, Any] | None) -> list[str]:
+    marks = (standards or {}).get("marks") or []
+    return [
+        f'<path class="well-standard" data-state="{escape(mark["state"])}" '
+        f'd="{arc(STANDARDS_R, start, end)}"/>'
+        for mark, (start, end) in zip(marks, standards_arcs(len(marks)), strict=True)
+    ]
+
+
 def _example(
     band: int = 1,
     slices: tuple = (("market", 1.0),),
     risk: str = "none",
-    bullish: float | None = None,
+    buyers: tuple[int, int] | None = None,
+    score: float | None = None,
+    standards: str = "",
     **facts: Any,
 ) -> str:
     row = {
@@ -287,14 +384,24 @@ def _example(
         "liquidity_lock": {"left_pct": 0.0, "dex": ""},
     }
     row.update(facts)
+    states = {"m": True, "u": False, "c": None}
+    item = {
+        "buyers_h1": buyers[0] if buyers else None,
+        "sellers_h1": buyers[1] if buyers else None,
+        "ratification": {
+            "standards": [{"key": f"s{i}", "met": states[c]} for i, c in enumerate(standards)]
+        },
+    }
     indicator = {
         "band": band,
+        "score": score,
         "slices": [{"key": key, "share": share} for key, share in slices],
         "risk": risk,
-        "sentiment_mix": {"state": "available", "bullish": bullish} if bullish is not None else {},
+        "flow": flow_state(item),
+        "standards": standards_state(item),
         "liquidity": liquidity_state(row),
     }
-    return well_svg(indicator, size=44)
+    return well_svg(indicator, size=48)
 
 
 def well_key() -> list[dict[str, Any]]:
@@ -303,12 +410,21 @@ def well_key() -> list[dict[str, Any]]:
     return [
         {
             "title": "Liquidity",
-            "note": "One log scale from the centre out: $100 to $10M. Bigger means more dollars.",
+            "note": (
+                "One log scale from the centre out: $100 to $10M. Color is real liquidity "
+                "against fully diluted value: how much of the price could be sold into."
+            ),
             "items": [
+                (_example(), "Deep", "Teal: 15%+ of fully diluted value is real liquidity"),
                 (
-                    _example(),
-                    "Deep, sealed",
-                    "Water past the $10K Ratified line; liquidity tokens burned or locked",
+                    _example(fully_diluted_valuation=300000),
+                    "Fair",
+                    "Sand: 5–15%",
+                ),
+                (
+                    _example(real_liquidity_usd=20000, fully_diluted_valuation=4_000_000),
+                    "Thin",
+                    "Coral: under 5%; a wide, empty chamber",
                 ),
                 (
                     _example(
@@ -320,33 +436,26 @@ def well_key() -> list[dict[str, Any]]:
                     "Phantom pool",
                     "Hatched: liquidity the pool quotes but does not hold",
                 ),
-                (
-                    _example(
-                        real_liquidity_usd=20000,
-                        liquidity_usd=21000,
-                        fully_diluted_valuation=4_000_000,
-                    ),
-                    "Thin for its value",
-                    "Wide empty chamber: fully diluted value far above real liquidity",
-                ),
                 (_example(real_liquidity_usd=None), "Not read", "Real liquidity unknown"),
             ],
         },
         {
             "title": "Wall",
-            "note": "The chamber's rim: can the liquidity be pulled?",
+            "note": (
+                "The chamber's rim: can the liquidity be pulled? "
+                "No rim means sealed: burned or locked."
+            ),
             "items": [
                 (
                     _example(liquidity_lock={"left_pct": 40.0, "dex": ""}),
                     "Open",
-                    "The gap is the share of liquidity tokens still held",
+                    "Orange; the gap is the share of liquidity tokens still held",
                 ),
                 (
                     _example(liquidity_lock={"left_pct": None, "dex": None}),
                     "Not readable",
                     "Concentrated pools and lock programs",
                 ),
-                (_example(liquidity_lock=None), "Not checked yet", "Faint rim"),
                 (
                     _example(
                         venue="bonding_curve",
@@ -369,20 +478,32 @@ def well_key() -> list[dict[str, Any]]:
             ],
         },
         {
-            "title": "Frame",
+            "title": "Standards",
+            "note": "Nine ticks, one per RATi standard, clockwise from the top.",
+            "items": [
+                (_example(standards="mmmmmmmmm"), "Ratified", "All nine met"),
+                (_example(standards="mmmmucmmc"), "Partly met", "Bright met, red failed"),
+                (_example(standards="mmmcccccc"), "Not checked yet", "Dim ticks"),
+            ],
+        },
+        {
+            "title": "Attention and trading",
             "note": (
-                "Thickness is attention; color is where it came from. "
-                "Sampled swap balance runs on the outer hairline."
+                "The frame is an attention gauge, filled clockwise from the top to the "
+                "score out of 100; its colors show where attention came from."
             ),
             "items": [
-                (_example(band=1), "Under 40", "Attention points"),
-                (_example(band=2), "40–69.99", "Attention points"),
+                (_example(score=24), "24 of 100", "Attention points"),
                 (
-                    _example(band=3, slices=(("market", 0.7), ("evidence", 0.3))),
-                    "70+",
+                    _example(score=82, slices=(("market", 0.7), ("evidence", 0.3))),
+                    "82 of 100",
                     "Blue market, purple chain evidence, cyan external social",
                 ),
-                (_example(bullish=0.75), "▲75% / ▼25%", "Net buying green, net selling dashed red"),
+                (
+                    _example(buyers=(30, 10)),
+                    "75% buyers",
+                    "Outer hairline: last hour's buyers green, sellers dashed red",
+                ),
                 (
                     _example(risk="detected"),
                     "Risk factors detected",

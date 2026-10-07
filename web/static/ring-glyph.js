@@ -126,56 +126,67 @@
     ringLayer.append(center);
   }
   // The Well: a memecoin's sigil, drawn around its liquidity. The server computes
-  // every radius (memecoin_well.py) in units where the frame's outer edge is 86;
-  // this only scales them. Rows draw the same marks from well_svg().
-  const WELL_BAND = {1:4, 2:8, 3:14};
+  // every radius and state (memecoin_well.py) in units where the frame's outer
+  // edge is 86; this only scales them. Rows draw the same marks from well_svg().
+  const WELL_GAUGE = 9, WELL_STANDARDS_R = 73;
   const arcPath = (cx, cy, r, a0, a1) => `M ${cx + r*Math.cos(a0)} ${cy + r*Math.sin(a0)} A ${r} ${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${cx + r*Math.cos(a1)} ${cy + r*Math.sin(a1)}`;
-  function drawWell({ringLayer, glyph, geometry, contributions, controls = [], toneLabel, points, percent, wireControl}) {
+  const ringShape = (cx, cy, r, a0, a1, attrs) => a1 - a0 >= Math.PI*2 - 1e-6 ? svg('circle', {...attrs, cx, cy, r}) : svg('path', {...attrs, d:arcPath(cx, cy, r, a0, a1)});
+  function drawWell({ringLayer, glyph, geometry, contributions, controls = [], points, percent, wireControl}) {
     ringLayer.replaceChildren();
     const {cx, cy, outer} = geometry, u = outer / 86, well = glyph.liquidity, radii = well.radii || {};
-    const sentimentMix = glyph.sentimentMix;
+    const flow = glyph.flow || {}, standards = glyph.standards;
     const paint = patterns(ringLayer, u);
-    Object.assign(ringLayer.dataset, {band:String(glyph.band),sentiment:glyph.sentiment,sentimentMix:sentimentMix.state,risk:glyph.risk,mix:glyph.mix,well:'',lock:well.lock});
-    // Frame: attention. Its thickness is the band; slices keep the ring's colors.
-    const width = (WELL_BAND[glyph.band] || 4) * u, frame = 86*u - width/2;
+    Object.assign(ringLayer.dataset, {band:String(glyph.band),sentiment:glyph.sentiment,sentimentMix:glyph.sentimentMix.state,risk:glyph.risk,mix:glyph.mix,well:'',lock:well.lock,depth:well.depth || 'unknown'});
+    // Frame: an attention gauge, filled clockwise from the top to score/100,
+    // split in the colors of where attention came from.
+    const width = WELL_GAUGE * u, gauge = 86*u - width/2;
     ringLayer.style.setProperty('--map-band-stroke', String(width + 4*u));
-    ringLayer.append(svg('circle', {cx, cy, r:frame, class:'map-score-track', 'stroke-width':width}));
+    ringLayer.append(svg('circle', {cx, cy, r:gauge, class:'map-score-track', 'stroke-width':width}));
+    const sweepAll = Math.min(100, Math.max(0, glyph.score || 0)) / 100 * Math.PI * 2;
     let angle = -Math.PI / 2;
     contributions.forEach(part => {
-      const sweep = part.share * Math.PI * 2;
-      const attrs = {class:'map-score-segment', 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'stroke-width':width};
-      const segment = contributions.length === 1 ? svg('circle', {...attrs, cx, cy, r:frame}) : svg('path', {...attrs, d:arcPath(cx, cy, frame, angle, angle + sweep)});
+      const end = angle + part.share * sweepAll;
+      const segment = ringShape(cx, cy, gauge, angle, end, {class:'map-score-segment', 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'stroke-width':width});
       segment.style.stroke = color(part);
       segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
       wireControl?.(segment, part); ringLayer.append(segment);
       if (paint[part.key]) {
         const pattern = segment.cloneNode(false);
         pattern.setAttribute('class', 'map-score-pattern'); pattern.setAttribute('aria-hidden', 'true');
-        pattern.removeAttribute('data-score-key'); pattern.removeAttribute('aria-label'); pattern.removeAttribute('role'); pattern.removeAttribute('tabindex'); pattern.removeAttribute('aria-pressed');
+        ['data-score-key','aria-label','role','tabindex','aria-pressed'].forEach(name => pattern.removeAttribute(name));
         pattern.style.stroke = paint[part.key]; ringLayer.append(pattern);
       }
-      angle += sweep;
+      angle = end;
     });
-    // Swap balance: the outer hairline, green from the top, then dashed red.
+    // The last hour's buyers (green, from the top) against its sellers (dashed red).
     const hair = 93*u;
-    if (sentimentMix.state === 'available') {
-      ['bullish','bearish'].forEach(side => {
-        const share = sentimentMix[side];
-        if (share <= 0) return;
-        ringLayer.append(svg('circle', {cx, cy, r:hair, class:'map-sentiment-part well-hairline', 'data-sentiment-side':side, 'aria-hidden':'true', pathLength:100,
-          'stroke-dasharray':`${share*100} ${100-share*100}`, 'stroke-dashoffset':side === 'bullish' ? 0 : -sentimentMix.bullish*100, transform:`rotate(-90 ${cx} ${cy})`}));
-      });
+    if (flow.share != null) {
+      const split = -Math.PI/2 + flow.share * Math.PI * 2;
+      if (flow.share > 0) ringLayer.append(ringShape(cx, cy, hair, -Math.PI/2, split, {class:'well-bull', 'aria-hidden':'true'}));
+      if (flow.share < 1) ringLayer.append(ringShape(cx, cy, hair, split, Math.PI*1.5, {class:'well-bear', 'aria-hidden':'true'}));
     }
-    const sentiment = svg('circle', {cx, cy, r:hair, class:'map-glyph-sentiment', 'aria-label':`${toneLabel}: ${sentimentMix.reading}. Show sentiment.`});
-    wireControl?.(sentiment, controls.find(part => part.key === 'sentiment')); ringLayer.append(sentiment);
+    const trading = svg('circle', {cx, cy, r:hair, class:'map-glyph-sentiment well-flow-target', 'aria-label':`${flow.reading || 'No trades read in the last hour'}. Show trading.`});
+    wireControl?.(trading, controls.find(part => part.key === 'sentiment')); ringLayer.append(trading);
+    // Nine ticks, one per RATi standard: bright met, red failed, dim not checked yet.
+    if (standards && standards.marks?.length) {
+      const ticks = svg('g', {class:'well-standards', 'aria-label':`${standards.reading}. Show standards.`});
+      const step = Math.PI * 2 / standards.marks.length, gap = Math.min(0.16, step * 0.3);
+      standards.marks.forEach((mark, index) => {
+        const a0 = -Math.PI/2 + index*step + gap/2;
+        ticks.append(svg('path', {d:arcPath(cx, cy, WELL_STANDARDS_R*u, a0, a0 + step - gap), class:'well-standard', 'data-state':mark.state}));
+      });
+      ticks.append(svg('title', {}, standards.reading));
+      wireControl?.(ticks, controls.find(part => part.key === 'standards')); ringLayer.append(ticks);
+    }
     // The well itself is one control: it opens the liquidity reading.
+    const depth = well.depth || 'unknown';
     const body = svg('g', {class:'well-body', 'aria-label':`${well.reading} Show liquidity.`});
     const chamber = radii.chamber * u, water = radii.real * u, ghost = radii.quoted * u, line = radii.line * u;
-    body.append(svg('circle', {cx, cy, r:chamber, class:'well-chamber'}));
+    body.append(svg('circle', {cx, cy, r:chamber, class:'well-chamber', 'data-depth':depth}));
     if (well.real != null && ghost > water + u) body.append(svg('circle', {cx, cy, r:(ghost + water)/2, class:'well-phantom', 'stroke-width':ghost - water}));
-    if (water > 0) body.append(svg('circle', {cx, cy, r:water, class:'well-water'}));
+    if (water > 0) body.append(svg('circle', {cx, cy, r:water, class:'well-water', 'data-depth':depth}));
     if (ghost && Math.abs(ghost - water) > u) body.append(svg('circle', {cx, cy, r:ghost, class:`well-ghost${ghost < water ? ' well-ghost--inside' : ''}`}));
-    body.append(svg('circle', {cx, cy, r:line, class:`well-line${water >= line ? ' well-line--under' : ''}`}));
+    if (water < line) body.append(svg('circle', {cx, cy, r:line, class:'well-line'}));
     if (well.real == null) body.append(svg('text', {x:cx, y:cy, 'text-anchor':'middle', 'dominant-baseline':'central', class:'well-unknown'}, '?'));
     if (well.lock === 'open') {
       const gap = Math.min(100, Math.max(5, well.lock_left_pct || 0)) / 100 * Math.PI * 2, bottom = Math.PI / 2;
