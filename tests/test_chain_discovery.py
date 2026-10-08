@@ -125,10 +125,11 @@ def test_real_worker_path_and_failure_receipts(market_db):  # noqa: F811
         return json.dumps({"data": [pool()]}).encode()
 
     assert memecoins.refresh_memecoins(download=download, at=AT)["count"] == 1
-    # One quote from GeckoTerminal; the pool's real liquidity from DexScreener.
+    # One quote from GeckoTerminal; real liquidity and the coin's pools from DexScreener.
     assert requests == [
         "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/Pool123",
         "https://api.dexscreener.com/latest/dex/pairs/solana/Pool123",
+        "https://api.dexscreener.com/tokens/v1/solana/AbC123",
     ]
     market = memecoins.memecoin_market(at=AT)
     assert market["source"] == "GeckoTerminal"

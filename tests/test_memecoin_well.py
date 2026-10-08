@@ -220,3 +220,39 @@ def test_a_sealed_wall_is_quiet_and_the_indicator_reads_every_mark():
         in glyph["description"]
     )
     assert 'data-lock="sealed"' in well_svg(glyph)  # drawn, and hidden by the stylesheet
+
+
+THREE_POOLS = [
+    {"dex": "meteora", "quote": "SOL", "real_liquidity_usd": 30_000, "liquidity_usd": 31_000},
+    {"dex": "meteora", "quote": "RATI", "real_liquidity_usd": 15_000, "liquidity_usd": 15_000},
+    {"dex": "others", "quote": "", "real_liquidity_usd": 5_000, "liquidity_usd": 5_000},
+]
+
+
+def test_several_pools_fill_the_water_together_one_wedge_each():
+    well = liquidity_state(coin(pools=THREE_POOLS, fully_diluted_valuation=200_000))
+
+    assert well["real"] == 50_000 and well["quoted"] == 51_000
+    assert well["backing"] == 0.25 and well["depth"] == "deep"
+    assert well["pools"] == [
+        {"label": "Meteora SOL", "share": 0.6},
+        {"label": "Meteora RATI", "share": 0.3},
+        {"label": "Others", "share": 0.1},
+    ]
+    assert well["reading"].startswith(
+        "Real liquidity $50.0K across 3 pools (Meteora SOL 60%, Meteora RATI 30%, Others 10%)"
+    )
+    svg = well_svg({"liquidity": well})
+    # Every other wedge shaded; a cut at each wedge's start, the first at the top.
+    assert svg.count('class="well-wedge"') == 1
+    assert svg.count('class="well-split"') == 3
+    assert 'x2="0.00" y2="-' in svg
+
+
+def test_one_pool_draws_plain_water():
+    well = liquidity_state(coin(pools=THREE_POOLS[:1]))
+
+    assert well["pools"] == [] and well["real"] == 64_843.0
+    assert "well-split" not in well_svg({"liquidity": well})
+    # A curve has no pools to split, whatever the list says.
+    assert liquidity_state(coin(venue="bonding_curve", pools=THREE_POOLS))["pools"] == []

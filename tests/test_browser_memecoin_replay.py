@@ -234,6 +234,39 @@ def test_token_well_draws_liquidity_and_opens_each_reading(page: Page, width, sc
     assert not errors
 
 
+def test_a_coin_in_several_pools_splits_its_water_and_lists_them(page: Page):
+    from tests.test_memecoin_indicator import assessed_coin
+
+    pools = [
+        {"dex": "meteora", "quote": "SOL", "real_liquidity_usd": 30_000, "liquidity_usd": 30_000},
+        {"dex": "meteora", "quote": "RATI", "real_liquidity_usd": 15_000, "liquidity_usd": 15_000},
+        {"dex": "pumpswap", "quote": "SOL", "real_liquidity_usd": 5_000, "liquidity_usd": 5_000},
+    ]
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    open_replay(
+        page,
+        width=390,
+        coin_overrides=assessed_coin(id=COIN["id"], score=58, **{**POOLED, "pools": pools}),
+    )
+    glyph = page.locator(".map-glyph")
+    expect(glyph.locator(".well-split")).to_have_count(3)
+    expect(glyph.locator(".well-wedge")).to_have_count(1)
+    # The first cut runs from the centre straight up.
+    x1, x2 = (float(glyph.locator(".well-split").first.get_attribute(k)) for k in ("x1", "x2"))
+    assert x2 == pytest.approx(x1, abs=0.01)
+    well = glyph.locator('[data-score-key="liquidity"]')
+    well.focus()
+    well.press("Enter")
+    panel = page.locator("[data-replay-selection]")
+    expect(panel).to_contain_text(
+        "Real liquidity $50.0K across 3 pools (Meteora SOL 60%, Meteora RATI 30%, PumpSwap SOL 10%)"
+    )
+    expect(panel).to_contain_text("Meteora RATI pool (wedge)30% of real liquidity")
+    expect(panel).to_contain_text("Liquidity lock (wall, the board's pool)")
+    assert not errors
+
+
 def test_quote_only_well_explains_unknown_values(page: Page):
     open_replay(page)
     glyph = page.locator(".map-glyph")

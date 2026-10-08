@@ -185,6 +185,19 @@
     body.append(svg('circle', {cx, cy, r:chamber, class:'well-chamber', 'data-depth':depth}));
     if (well.real != null && ghost > water + u) body.append(svg('circle', {cx, cy, r:(ghost + water)/2, class:'well-phantom', 'stroke-width':ghost - water}));
     if (water > 0) body.append(svg('circle', {cx, cy, r:water, class:'well-water', 'data-depth':depth}));
+    // Several pools: one wedge each, busiest first from the top; every other one shaded.
+    const shares = (well.pools || []).map(pool => pool.share).filter(share => share > 0);
+    if (water > 0 && shares.length > 1) {
+      const total = shares.reduce((sum, share) => sum + share, 0);
+      const at = a => `${cx + water*Math.cos(a)} ${cy + water*Math.sin(a)}`;
+      let a0 = -Math.PI / 2;
+      const starts = shares.map((share, index) => {
+        const a1 = a0 + share / total * Math.PI * 2, start = a0;
+        if (index % 2) body.append(svg('path', {d:`M ${cx} ${cy} L ${at(a0)} A ${water} ${water} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${at(a1)} Z`, class:'well-wedge'}));
+        a0 = a1; return start;
+      });
+      starts.forEach(a => body.append(svg('line', {x1:cx, y1:cy, x2:cx + water*Math.cos(a), y2:cy + water*Math.sin(a), class:'well-split'})));
+    }
     if (ghost && Math.abs(ghost - water) > u) body.append(svg('circle', {cx, cy, r:ghost, class:`well-ghost${ghost < water ? ' well-ghost--inside' : ''}`}));
     if (water < line) body.append(svg('circle', {cx, cy, r:line, class:'well-line'}));
     if (well.real == null) body.append(svg('text', {x:cx, y:cy, 'text-anchor':'middle', 'dominant-baseline':'central', class:'well-unknown'}, '?'));

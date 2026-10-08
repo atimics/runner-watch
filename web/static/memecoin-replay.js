@@ -97,7 +97,8 @@
     const list = make('ul',null,'map-score-legend well-facts');
     [['Real liquidity (water)',money(well.real)],['Quoted liquidity (ghost ring)',well.venue === 'bonding_curve' ? 'On its curve' : money(well.quoted)],
      ['Fully diluted value (chamber)',money(well.fdv)],['Backed by real liquidity',well.backing == null ? 'Not read' : `${number(well.backing*100)}% (${well.depth})`],['Ratified line',money(well.line_usd)],
-     ['Liquidity lock (wall)',{sealed:'Burned or locked',open:`${number(well.lock_left_pct || 0)}% still held`,unread:'Not readable',unchecked:'Not checked yet',curve:'No pool yet'}[well.lock] || 'Not checked yet']]
+     ...(well.pools || []).map(pool => [`${pool.label} pool (wedge)`, `${number(pool.share*100)}% of real liquidity`]),
+     [well.pools?.length ? 'Liquidity lock (wall, the board\'s pool)' : 'Liquidity lock (wall)',{sealed:'Burned or locked',open:`${number(well.lock_left_pct || 0)}% still held`,unread:'Not readable',unchecked:'Not checked yet',curve:'No pool yet'}[well.lock] || 'Not checked yet']]
       .forEach(([label,value]) => {const li = make('li'); li.append(make('span',label),make('strong',value)); list.append(li);});
     panel.append(list);
   }
