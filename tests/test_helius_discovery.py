@@ -732,6 +732,22 @@ def test_chain_mode_shows_a_pool_geckoterminal_did_not_quote(database, monkeypat
     assert rows[0]["source"] == "Solana (Helius)" and rows[0]["volume_24h"] is None
 
 
+def test_a_chain_only_pool_is_valued_from_its_mint_supply(database, monkeypatch):
+    from tests.test_memecoin_chain_prices import mint_account
+
+    monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
+    monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "chain")
+    accounts = {**_pool_accounts(), MINT: mint_account(1_000_000_000 * 10**6, 6)}
+
+    rows, _ = memecoins._collect_helius(
+        at=AT, rpc=_chain_rpc(accounts), download=lambda *_: b'{"data":[]}'
+    )
+
+    # GeckoTerminal never listed it, so the mint is the only source of its value.
+    assert rows[0]["total_supply"] == 1_000_000_000
+    assert rows[0]["fully_diluted_valuation"] == pytest.approx(CHAIN_PRICE * 1_000_000_000)
+
+
 def test_chain_mode_falls_back_to_gecko_when_the_chain_read_fails(database, monkeypatch):
     monkeypatch.setattr(memecoins, "QUOTE_PAUSE_SECONDS", 0)
     monkeypatch.setenv("MEMECOIN_PRICE_SOURCE", "chain")

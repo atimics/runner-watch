@@ -885,6 +885,11 @@ def _with_chain_prices(
                 source="Solana (Helius)",
                 activity_source=row["source"],
             )
+        if supply := quote.get("supply"):
+            # Valued at the same chain price as the row, so its depth is too.
+            by_pool[address].update(
+                total_supply=supply, fully_diluted_valuation=quote["price"] * supply
+            )
     merged = list(by_pool.values())
     history = _history_changes([row["id"] for row in merged if row.get("change_h1") is None], at)
     for row in merged:
@@ -1024,6 +1029,7 @@ def _collect_helius(
                 curves,
                 # Prices spend from their own lane, which other reads cannot use up.
                 rpc=rpc or price_request,
+                supply=True,
             )
         except Exception:
             LOG.warning("Chain prices failed; quoting from GeckoTerminal", exc_info=True)

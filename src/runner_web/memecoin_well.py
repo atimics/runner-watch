@@ -48,6 +48,8 @@ CHAMBER_MAX = 64.0
 # The frame is an attention gauge: filled clockwise from the top to score/100.
 GAUGE_WIDTH = 6.0
 # Real liquidity as a share of fully diluted value: how much could be sold into.
+# Deep also needs the Ratified pool's $10K: a $900 pool that is most of a
+# $3,000 coin is still too small to sell into, so it is fair at best.
 DEPTHS = ((0.15, "deep"), (0.05, "fair"), (0.0, "thin"))
 SCALE_LOW = 100.0
 SCALE_DECADES = 5.0
@@ -130,6 +132,8 @@ def liquidity_state(item: Mapping[str, Any]) -> dict[str, Any]:
         if backing is not None
         else "unknown"
     )
+    if depth == "deep" and (real or 0) < MIN_LIQUIDITY_USD:
+        depth = "fair"
     if backing is not None:
         parts.append(f"{backing * 100:.1f}% of {_money(fdv)} fully diluted value ({depth})")
     parts.append(
@@ -415,11 +419,15 @@ def well_key() -> list[dict[str, Any]]:
                 "against fully diluted value: how much of the price could be sold into."
             ),
             "items": [
-                (_example(), "Deep", "Teal: 15%+ of fully diluted value is real liquidity"),
+                (
+                    _example(),
+                    "Deep",
+                    "Teal: 15%+ of fully diluted value is real liquidity, and $10K or more",
+                ),
                 (
                     _example(fully_diluted_valuation=300000),
                     "Fair",
-                    "Sand: 5–15%",
+                    "Sand: 5–15%, or a deep pool under $10K",
                 ),
                 (
                     _example(real_liquidity_usd=20000, fully_diluted_valuation=4_000_000),
