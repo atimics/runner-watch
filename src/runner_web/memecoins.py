@@ -25,7 +25,7 @@ from runner_web.memecoin_copycats import copycat_bursts, find_originals, mark_co
 from runner_web.memecoin_early import early_signal
 from runner_web.memecoin_forensics import analyze_events
 from runner_web.memecoin_integrity import creator_trades
-from runner_web.memecoin_liquidity import attach_real_liquidity
+from runner_web.memecoin_liquidity import attach_pools, attach_real_liquidity
 from runner_web.memecoin_model import assess_memecoin, display_assessment
 from runner_web.memecoin_ratify import ratify_rows
 from runner_web.memecoin_ratify import standards as ratify_standards
@@ -1095,6 +1095,7 @@ def _collect_helius(
         row["early"] = early_signal(row)
     stages.mark("assess")
     attach_real_liquidity(rows, download=download)
+    attach_pools(rows, download=download)
     stages.mark("liquidity")
     _ratify(rows, chain, rpc=rpc or rpc_request, at=at)
     stages.mark("ratify")

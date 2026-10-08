@@ -467,6 +467,7 @@ def test_well_key_opens_by_keyboard_and_is_drawn_by_the_row_code(page, width, fo
         "Deep",
         "Fair",
         "Thin",
+        "Several pools",
         "Phantom pool",
         "Ratified",
         "82 of 100",
@@ -479,7 +480,7 @@ def test_well_key_opens_by_keyboard_and_is_drawn_by_the_row_code(page, width, fo
     ]:
         expect(key.locator("li").filter(has_text=label).first).to_be_visible()
     icons = key.locator(".indicator-key-icon--well svg.well-glyph")
-    expect(icons).to_have_count(17)
+    expect(icons).to_have_count(18)
     assert all(icon.bounding_box()["width"] >= 24 for icon in icons.all())
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 

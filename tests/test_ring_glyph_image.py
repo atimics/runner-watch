@@ -91,3 +91,27 @@ def test_share_cards_carry_the_glyph():
         # 0.9 × 72 px, and low attention draws it 4 of 86 units thick.
         assert near(rgb.getpixel((600, 56)), "#c9aaf7")
         assert near(rgb.getpixel((1020 + 63, 406)), SLICE_COLORS["market"])
+
+
+def test_a_coin_in_several_pools_draws_its_wedges():
+    from runner_web.memecoin_well import liquidity_state
+
+    pools = [
+        {"dex": "meteora", "quote": "SOL", "real_liquidity_usd": 30_000},
+        {"dex": "meteora", "quote": "RATI", "real_liquidity_usd": 30_000},
+    ]
+    row = {"venue": "pool", "fully_diluted_valuation": 200_000, "pools": pools}
+    split = glyph_image({**indicator(risk="none"), "liquidity": liquidity_state(row)})
+    whole = glyph_image(
+        {
+            **indicator(risk="none"),
+            "liquidity": liquidity_state({**row, "pools": None, "real_liquidity_usd": 60_000}),
+        }
+    )
+    c = split.width // 2
+    right, left = split.getpixel((c + c // 6, c)), split.getpixel((c - c // 6, c))
+
+    # Two even pools: the right half is plain water, the left half shaded.
+    assert near(right, "#4fcaa6") and not near(left, "#4fcaa6", tolerance=12)
+    # One pool, the same total: plain water on both sides.
+    assert near(whole.getpixel((c - c // 6, c)), "#4fcaa6")

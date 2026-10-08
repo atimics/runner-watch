@@ -14,6 +14,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from runner_web.memecoin_well import pool_wedges
+
 SLICE_COLORS = {
     "market": "#418cf4",
     "evidence": "#b58af4",
@@ -106,6 +108,7 @@ def _well_state(indicator: dict[str, Any]) -> tuple | None:
         ("depth", depth if depth in WELL_DEPTH else "unknown"),
         ("flow", _finite(flow.get("share"))),
         ("standards", marks),
+        ("pools", tuple(start for start, _ in pool_wedges(liquidity.get("pools")))),
     )
 
 
@@ -388,6 +391,16 @@ def _render_well(state: dict, outer: float, background: str, line: str) -> Image
         image.paste(hatch, (0, 0), _mask_and(mask, hatch))
     if water > 0:
         draw.ellipse(box(water), fill=_hex(tint or WATER))
+        # Several pools: every other wedge shaded toward the page, a cut between them.
+        starts = [math.degrees(a) for a in well["pools"]]
+        ends = [*starts[1:], 270.0] if starts else []
+        for index, (start, end) in enumerate(zip(starts, ends, strict=True)):
+            if index % 2:
+                draw.pieslice(box(water), start, end, fill=_mix(background, tint or WATER, 0.7))
+        for start in starts:
+            a = math.radians(start)
+            tip = (c + water * unit * math.cos(a), c + water * unit * math.sin(a))
+            draw.line([(c, c), tip], fill=ink, width=stroke(2.5))
     if ghost and abs(ghost - water) > 1:
         tone = ink if ghost < water else _hex(WALL)
         _dashed_circle(draw, c, c, ghost * unit, unit, tone, 3 * unit, 2.5 * unit)

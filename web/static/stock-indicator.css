@@ -115,6 +115,9 @@ h1 .ratified-mark{font-size:12px}
 .well-water[data-depth="deep"]{fill:var(--well-deep)}
 .well-water[data-depth="fair"]{fill:var(--well-fair)}
 .well-water[data-depth="thin"]{fill:var(--well-thin)}
+/* Several pools: every other wedge shaded, a cut between neighbours. */
+.well-wedge{fill:var(--bg);opacity:.3;pointer-events:none}
+.well-split{stroke:var(--bg);stroke-width:1.5;stroke-linecap:round;pointer-events:none}
 .well-standard{fill:none;stroke-width:4;stroke-linecap:butt}
 .well-standard[data-state="met"]{stroke:var(--text)}
 .well-standard[data-state="unmet"]{stroke:var(--red)}
@@ -152,6 +155,7 @@ h1 .ratified-mark{font-size:12px}
 .well-glyph .well-bear{stroke-dasharray:8 5}
 .well-glyph .well-phantom{opacity:.7;stroke-dasharray:3 4}
 .well-glyph .well-ghost{stroke-width:3.5;stroke-dasharray:8 6;opacity:.9}
+.well-glyph .well-split{stroke-width:3.5}
 .well-glyph .well-line{stroke-width:2.5;stroke-dasharray:3 6}
 .well-glyph .well-wall{stroke-width:3.5}
 .well-glyph .well-wall[data-lock="sealed"]{stroke:none}

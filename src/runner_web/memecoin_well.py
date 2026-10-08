@@ -80,6 +80,42 @@ def _money(value: float | None) -> str:
     return f"${value:,.0f}"
 
 
+DEX_NAMES = {
+    "pumpswap": "PumpSwap",
+    "meteora": "Meteora",
+    "raydium": "Raydium",
+    "orca": "Orca",
+    "others": "Others",
+}
+
+
+def _pools(item: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The coin's pools as wedges, busiest first; empty unless it trades in two or more."""
+
+    pools = []
+    for pool in item.get("pools") or []:
+        if not isinstance(pool, Mapping):
+            continue
+        real = finite_number(pool.get("real_liquidity_usd"))
+        if real is None or real <= 0:
+            continue
+        quoted = finite_number(pool.get("liquidity_usd"))
+        dex = str(pool.get("dex") or "")
+        quote = str(pool.get("quote") or "")
+        label = " ".join(filter(None, (DEX_NAMES.get(dex, dex.title() or "Pool"), quote)))
+        pools.append(
+            {
+                "label": label,
+                "real": real,
+                "quoted": quoted if quoted is not None and quoted >= 0 else real,
+            }
+        )
+    if len(pools) < 2:
+        return []
+    total = sum(pool["real"] for pool in pools)
+    return [{**pool, "share": pool["real"] / total} for pool in pools]
+
+
 def _pulled(item: Mapping[str, Any]) -> bool:
     assessment = item.get("memecoin_assessment")
     risk = assessment.get("risk") if isinstance(assessment, Mapping) else None
@@ -104,6 +140,11 @@ def liquidity_state(item: Mapping[str, Any]) -> dict[str, Any]:
     else:
         real = finite_number(item.get("real_liquidity_usd"))
         real = real if real is not None and real >= 0 else None
+    # Several pools: the water is all of them, one wedge each.
+    pools = _pools(item) if venue == "pool" else []
+    if pools:
+        real = sum(pool["real"] for pool in pools)
+        quoted = sum(pool["quoted"] for pool in pools)
     fdv = finite_number(item.get("fully_diluted_valuation"))
     fdv = fdv if fdv is not None and fdv > 0 else None
     lock = item.get("liquidity_lock") if isinstance(item.get("liquidity_lock"), Mapping) else None
@@ -124,6 +165,9 @@ def liquidity_state(item: Mapping[str, Any]) -> dict[str, Any]:
     parts = [
         f"Real liquidity {_money(real)}" if real is not None else "Real liquidity not read",
     ]
+    if pools:
+        split = ", ".join(f"{pool['label']} {pool['share'] * 100:.0f}%" for pool in pools)
+        parts[0] += f" across {len(pools)} pools ({split})"
     if phantom:
         parts.append(f"the pool quotes {_money(quoted)}, {quoted / max(real or 1.0, 1.0):.0f}×")
     backing = real / fdv if fdv is not None and real is not None else None
@@ -160,6 +204,7 @@ def liquidity_state(item: Mapping[str, Any]) -> dict[str, Any]:
         "backing": backing,
         "depth": depth,
         "line_usd": MIN_LIQUIDITY_USD,
+        "pools": [{"label": pool["label"], "share": round(pool["share"], 4)} for pool in pools],
         "radii": {
             "real": radius(real),
             "quoted": radius(quoted),
@@ -296,6 +341,7 @@ def well_svg(indicator: Mapping[str, Any], *, size: int = 56) -> str:
         )
     if water > 0:
         out.append(f'<circle class="well-water" data-depth="{depth}" r="{water}"/>')
+        out.extend(_wedges(well.get("pools"), water))
     if ghost and abs(ghost - water) > 1:
         inside = " well-ghost--inside" if ghost < water else ""
         out.append(f'<circle class="well-ghost{inside}" r="{ghost}"/>')
@@ -347,6 +393,44 @@ def well_svg(indicator: Mapping[str, Any], *, size: int = 56) -> str:
         out.append('<circle class="well-risk" data-risk="significant" cy="-92" r="12"/>')
     out.append("</svg>")
     return "".join(out)
+
+
+def pool_wedges(pools: Any) -> list[tuple[float, float]]:
+    """Each pool's (start, end) angle, clockwise from the top, busiest first."""
+
+    shares = [
+        share
+        for pool in pools or []
+        if isinstance(pool, Mapping)
+        and (share := finite_number(pool.get("share"))) is not None
+        and share > 0
+    ]
+    if len(shares) < 2:
+        return []
+    total, angle, spans = sum(shares), -math.pi / 2, []
+    for share in shares:
+        end = angle + share / total * 2 * math.pi
+        spans.append((angle, end))
+        angle = end
+    return spans
+
+
+def _wedges(pools: Any, water: float) -> list[str]:
+    """Every other pool's wedge shaded, and a cut between neighbours."""
+
+    out = []
+    spans = pool_wedges(pools)
+    for index, (start, end) in enumerate(spans):
+        if index % 2:
+            large = 1 if end - start > math.pi else 0
+            out.append(
+                f'<path class="well-wedge" d="M 0 0 L {_point(water, start)} '
+                f'A {water} {water} 0 {large} 1 {_point(water, end)} Z"/>'
+            )
+    for start, _ in spans:
+        x, y = water * math.cos(start), water * math.sin(start)
+        out.append(f'<line class="well-split" x1="0" y1="0" x2="{x:.2f}" y2="{y:.2f}"/>')
+    return out
 
 
 def standards_arcs(count: int) -> list[tuple[float, float]]:
@@ -433,6 +517,17 @@ def well_key() -> list[dict[str, Any]]:
                     _example(real_liquidity_usd=20000, fully_diluted_valuation=4_000_000),
                     "Thin",
                     "Coral: under 5%; a wide, empty chamber",
+                ),
+                (
+                    _example(
+                        pools=[
+                            {"dex": "meteora", "quote": "SOL", "real_liquidity_usd": 18000},
+                            {"dex": "meteora", "quote": "RATI", "real_liquidity_usd": 8000},
+                            {"dex": "meteora", "quote": "USDC", "real_liquidity_usd": 4000},
+                        ]
+                    ),
+                    "Several pools",
+                    "One wedge per pool, sized by its share of the real liquidity",
                 ),
                 (
                     _example(
