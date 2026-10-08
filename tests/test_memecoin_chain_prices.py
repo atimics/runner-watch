@@ -14,6 +14,7 @@ from runner_web.memecoin_chain_prices import (
     USDC,
     USDC_VAULT,
     chain_prices,
+    mint_supply,
 )
 
 
@@ -142,3 +143,41 @@ def test_no_sol_price_means_no_chain_prices():
 
     with pytest.raises(ValueError):
         chain_prices([{"pool_address": POOL, "token_address": MINT}], [], rpc=rpc)
+
+
+def mint_account(supply, decimals):
+    return {"data": {"parsed": {"info": {"supply": str(supply), "decimals": decimals}}}}
+
+
+def test_supply_is_read_with_the_vaults_when_asked():
+    accounts = base_accounts()
+    accounts[MINT] = mint_account(1_000_000_000 * 10**6, 6)
+    rpc, calls = fake_rpc(accounts)
+    pool = {"pool_address": POOL, "token_address": MINT}
+
+    quote = chain_prices([pool], [], rpc=rpc, supply=True)["prices"][POOL]
+
+    assert quote["supply"] == 1_000_000_000
+    # The mint rides in the vault call: still two calls.
+    assert len(calls) == 2 and MINT in calls[1][2]
+    assert "supply" not in chain_prices([pool], [], rpc=fake_rpc(accounts)[0])["prices"][POOL]
+
+
+def test_a_curve_supply_is_read_too():
+    accounts = base_accounts()
+    accounts[CURVE] = curve_account(
+        virtual_token=1_000_000_000 * 10**6, virtual_sol=30 * 10**9, real_sol=2 * 10**9
+    )
+    accounts[MINT] = mint_account(1_000_000_000 * 10**6, 6)
+    rpc, _ = fake_rpc(accounts)
+
+    prices = chain_prices(
+        [], [{"pool_address": CURVE, "token_address": MINT}], rpc=rpc, supply=True
+    )
+
+    assert prices["prices"][CURVE]["supply"] == 1_000_000_000
+
+
+def test_an_unreadable_mint_has_no_supply():
+    assert mint_supply(None) is None
+    assert mint_supply(mint_account(0, 6)) is None

@@ -8,6 +8,7 @@ its reserves directly. Checked against GeckoTerminal at the same moment on
     pool price  = (quote vault + virtual quote reserves) / base vault
     curve price = virtual SOL reserves / virtual token reserves
     liquidity   = 2 x the real quote side, the money actually in the pool
+    supply      = the coin's mint supply, read in the vault pass when asked
 
 Only PumpSwap pools and Pump curves are read here; other pools keep their
 GeckoTerminal quote.
@@ -81,6 +82,17 @@ def token_amount(account: dict[str, Any] | None) -> tuple[float, int] | None:
         return None
 
 
+def mint_supply(account: dict[str, Any] | None) -> float | None:
+    """A mint's whole supply in tokens, from its jsonParsed account."""
+
+    try:
+        info = account["data"]["parsed"]["info"]  # type: ignore[index]
+        supply = int(info["supply"]) / 10 ** int(info["decimals"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return supply if supply > 0 else None
+
+
 def _pool_layout(raw: bytes | None) -> dict[str, Any] | None:
     # discriminator, bump u8, index u16, creator, base mint, quote mint, lp mint,
     # base vault, quote vault, lp supply u64, coin creator, two bools, i128.
@@ -100,13 +112,19 @@ def _pool_layout(raw: bytes | None) -> dict[str, Any] | None:
 
 
 def chain_prices(
-    pools: list[dict[str, Any]], curves: list[dict[str, Any]], *, rpc: Rpc
+    pools: list[dict[str, Any]],
+    curves: list[dict[str, Any]],
+    *,
+    rpc: Rpc,
+    supply: bool = False,
 ) -> dict[str, Any]:
     """Chain price and liquidity by pool address, for PumpSwap pools and Pump curves.
 
     Pools are read in two passes (pool account, then its vaults); curves and
     the SOL price in the first. A pool that does not decode, or whose quote is
-    neither SOL nor USDC, is left out and keeps its GeckoTerminal quote.
+    neither SOL nor USDC, is left out and keeps its GeckoTerminal quote. With
+    `supply`, each priced coin's mint is read in the vault pass too, so its
+    fully diluted value is known even when GeckoTerminal never listed it.
     """
 
     pumpswap = [pool for pool in pools if pool.get("program") in (None, PUMP_SWAP)]
@@ -140,12 +158,20 @@ def chain_prices(
         and layout["base_mint"] == pool["token_address"]
         and layout["quote_mint"] in (SOL, USDC)
     }
+    mints = {
+        item["pool_address"]: item["token_address"]
+        for item in pumpswap + curves
+        if supply
+        and item.get("token_address")
+        and (item["pool_address"] in layouts or item["pool_address"] in prices)
+    }
     vaults = read_accounts(
         [
             key
             for layout in layouts.values()
             for key in (layout["base_vault"], layout["quote_vault"])
-        ],
+        ]
+        + list(mints.values()),
         rpc,
     )
     for address, layout in layouts.items():
@@ -163,4 +189,7 @@ def chain_prices(
             # The pool's own token account, left out when counting top holders.
             "base_vault": layout["base_vault"],
         }
+    for address, mint in mints.items():
+        if address in prices and (tokens := mint_supply(vaults[mint])):
+            prices[address]["supply"] = tokens
     return {"sol_usd": sol_usd, "prices": prices}

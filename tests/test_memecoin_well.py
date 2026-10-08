@@ -152,6 +152,14 @@ def test_depth_is_real_liquidity_against_fully_diluted_value(real, depth):
     assert liquidity_state(coin(fully_diluted_valuation=None))["depth"] == "unknown"
 
 
+def test_a_pool_under_the_ratified_line_is_never_deep():
+    # Most of a $3,000 coin, but only $900 to sell into.
+    tiny = liquidity_state(coin(real_liquidity_usd=900, fully_diluted_valuation=3_000))
+    assert tiny["depth"] == "fair"
+    line = liquidity_state(coin(real_liquidity_usd=10_000, fully_diluted_valuation=20_000))
+    assert line["depth"] == "deep"
+
+
 def test_the_hairline_is_the_last_hours_buyers_against_sellers():
     flow = flow_state({"buyers_h1": 30, "sellers_h1": 10})
     assert (
