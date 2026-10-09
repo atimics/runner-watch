@@ -150,7 +150,12 @@ def page_tickers(database: Any, text: str) -> set[str]:
 
 
 def format_reply(
-    text: str, *, origin: str, coins: dict[str, str], tickers: set[str]
+    text: str,
+    *,
+    origin: str,
+    coins: dict[str, str],
+    tickers: set[str],
+    searches: set[str] = frozenset(),
 ) -> tuple[str, str]:
     """Dash's plain words as Telegram HTML, and the page to unfurl under them.
 
@@ -178,6 +183,8 @@ def format_reply(
                 rendered += "\n"
             if token in coins:
                 pages.append(("coin", f"{base}/memecoins/coin/{coins[token]}"))
+            elif token in searches:
+                pages.append(("coin", f"{base}/memecoins?q={token}"))
             parts.append(html.escape(before))
             parts.append(rendered)
             cursor = tail.end()
@@ -228,12 +235,20 @@ class InboundMessage:
     reply_to_bot: bool
     tickers: tuple[str, ...]
     sent_at: datetime
+    chat_type: str = "supergroup"
+    addresses: tuple[str, ...] = ()
+    source: dict[str, Any] | None = None
+    forwarded: bool = False
+    sender_is_bot: bool = False
+    coin_lookups: tuple[dict[str, Any], ...] = ()
 
 
 def _entity_text(text: str, entity: dict[str, Any]) -> str:
     start = int(entity.get("offset") or 0)
     length = int(entity.get("length") or 0)
-    return text[start : start + length]
+    return text.encode("utf-16-le")[start * 2 : (start + length) * 2].decode(
+        "utf-16-le", errors="ignore"
+    )
 
 
 def parse_update(
@@ -245,17 +260,26 @@ def parse_update(
     if not isinstance(message, dict):
         return None
     chat = message.get("chat")
-    if not isinstance(chat, dict) or chat.get("type") not in {"group", "supergroup"}:
+    if not isinstance(chat, dict) or chat.get("type") not in {"private", "group", "supergroup"}:
         return None
-    text = str(message.get("text") or message.get("caption") or "").strip()
-    if not text:
+    text = str(message.get("text") or message.get("caption") or "")
+    if not text.strip():
         return None
     sender = message.get("from") if isinstance(message.get("from"), dict) else {}
-    if sender.get("is_bot"):
+    if not isinstance(sender.get("id"), int) or sender.get("id") == bot_id:
+        return None
+
+    from runner_web.dash_intake import extract_addresses, forward_source
+
+    entities = message.get("entities") or message.get("caption_entities") or []
+    addresses = extract_addresses(text, entities)
+    trusted_forwarders = os.getenv("TELEGRAM_FORWARDER_BOT_IDS", "").split(",")
+    if sender.get("is_bot") and (
+        str(sender["id"]) not in {item.strip() for item in trusted_forwarders} or not addresses
+    ):
         return None
 
     handle = f"@{bot_username}".lower()
-    entities = message.get("entities") or message.get("caption_entities") or []
     mentioned = any(
         entity.get("type") == "mention" and _entity_text(text, entity).lower() == handle
         for entity in entities
@@ -274,11 +298,16 @@ def parse_update(
         message_id=int(message.get("message_id") or 0),
         user_id=int(sender["id"]) if sender.get("id") is not None else None,
         user_name=str(sender.get("first_name") or sender.get("username") or "someone"),
-        text=text[:MAX_TEXT_CHARS],
-        addressed=mentioned or reply_to_bot,
+        text=text.strip()[:MAX_TEXT_CHARS],
+        addressed=chat["type"] == "private" or mentioned or reply_to_bot,
         reply_to_bot=reply_to_bot,
         tickers=tuple(dict.fromkeys(match.upper() for match in TICKER_PATTERN.findall(text))),
         sent_at=sent_at,
+        chat_type=chat["type"],
+        addresses=addresses,
+        source=forward_source(message),
+        forwarded=bool(message.get("forward_origin") or message.get("forward_date")),
+        sender_is_bot=bool(sender.get("is_bot")),
     )
 
 
@@ -457,6 +486,11 @@ CHEETAH_PERSONA = (
     "short lines rather than one block. "
     "Name a coin by its full contract address and a stock as $SYMBOL; the room "
     "turns those into copyable addresses, page links and a preview card for you. "
+    "A submitted CA uses the website's shared search and assessment queue. "
+    "Use the website assessment, RATi checks, freshness and risks supplied in "
+    "looked_up_coins. Describe a queued lookup as pending until its data arrives. "
+    "Forwarded source labels describe where a message came from; assess each "
+    "coin from the website evidence. "
     "Keep it under about forty words unless someone asked for detail."
 )
 
@@ -626,7 +660,14 @@ def prefetch_for(message: InboundMessage, database: Any) -> dict[str, Any]:
     symbols = resolve_tickers(database, message.text)
     looked = [look_up_ticker(symbol) for symbol in symbols]
     grounded: dict[str, Any] = {"resolved_tickers": symbols, "looked_up": looked}
-    if not looked:
+    if message.addresses:
+        from runner_web.dash import coin_detail
+
+        grounded["looked_up_coins"] = list(message.coin_lookups) or [
+            coin_detail(address) for address in message.addresses[:5]
+        ]
+        grounded["forwarded_source"] = message.source
+    if not looked and not message.addresses:
         try:
             from runner_web.dash import market_now, recent_runners
 
@@ -876,15 +917,19 @@ def room_chat_id() -> int | None:
     from runner_web.db import connection
 
     with connection() as database:
-        row = database.execute(
-            "SELECT chat_id FROM telegram_updates ORDER BY update_id DESC LIMIT 1"
-        ).fetchone()
-    if row is None:
-        return None
-    try:
-        return int(row["chat_id"])
-    except (TypeError, ValueError):
-        return None
+        rows = database.execute(
+            "SELECT chat_id,payload_json FROM telegram_updates WHERE chat_id<0 "
+            "ORDER BY update_id DESC LIMIT 100"
+        ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"])
+            message = payload.get("message") or payload.get("edited_message") or {}
+            if (message.get("chat") or {}).get("type") in {"group", "supergroup"}:
+                return int(row["chat_id"])
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def recent_transcript(database: Any, chat_id: int, limit: int = 12) -> list[dict[str, Any]]:

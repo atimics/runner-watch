@@ -381,6 +381,37 @@ The daily free-report cap lives in `TELEGRAM_RUNNER_REPORTS_PER_DAY` (20) and
 the per-batch pick in `TELEGRAM_RUNNER_REPORTS_PER_RUN` (3), staggered by
 `TELEGRAM_RUNNER_REPORT_STAGGER_MINUTES`.
 
+## Contract addresses sent to Dash
+
+A Solana CA sent to Dash enters the same assessment queue as a search on
+`runners.rati.chat/memecoins`. The existing quote worker finds its pool, reads the
+market data, and adds the coin to the website. The website's normal assessment,
+RATi checks, ranking, and retention rules apply.
+
+Dash accepts direct messages, forwarded text, photo captions, and full token links
+from Pump.fun, Solscan, and GMGN. Telegram's `forward_origin` keeps the channel label
+when it is available. A copied forward works with the CA in its text. Token identity
+uses the full, case-sensitive Solana address. Pool links need the token's CA.
+
+Each message processes up to five unique CAs. The existing Dash queue limit allows
+five new addresses per five minutes. Repeated submissions share the same queue entry
+and keep its first request time. Group messages can add CAs while Dash's normal
+attention rules decide whether to reply. Direct messages count as addressed messages.
+
+A forwarded submission receives a short receipt and a link to the website search
+or saved coin page. A normal question receives the website's current assessment,
+freshness, risks, and RATi checks as context for Dash's reply. Once a coin leaves the
+live board, sending its CA queues it for a new quote while keeping its saved page.
+
+Account-based forwarders can send messages directly. For a bot-based forwarder,
+set `TELEGRAM_FORWARDER_BOT_IDS` to its numeric Telegram sender ID. Separate multiple
+IDs with commas. Those senders enter the CA intake path. Telegram must also deliver
+their messages to Dash under its bot communication settings. The Bot API describes
+[message origins and entities](https://core.telegram.org/bots/api#message).
+
+The proactive desk note continues to use a group destination. Each direct-message
+reply stays in the chat that supplied the CA.
+
 ## Anti-flood watch
 
 `TELEGRAM_SEGMENT_GAP_MINUTES` (12) is the primary flood control: one message

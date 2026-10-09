@@ -1988,7 +1988,9 @@ def _telegram_identity() -> tuple[str, int] | None:
     return str(username), bot_id
 
 
-def _dash_reply_markup(database: Any, text: str) -> tuple[str, str]:
+def _dash_reply_markup(
+    database: Any, text: str, *, searches: set[str] = frozenset()
+) -> tuple[str, str]:
     """Links, copyable addresses and a preview card for one of Dash's replies."""
 
     coins: dict[str, str] = {}
@@ -2020,6 +2022,7 @@ def _dash_reply_markup(database: Any, text: str) -> tuple[str, str]:
         origin=RUNNERS_ORIGIN,
         coins=coins,
         tickers=telegram_page_tickers(database, text),
+        searches=searches,
     )
 
 
@@ -2038,7 +2041,12 @@ def _act_on_telegram_message(
         if not text:
             action = "hold"
         else:
-            body, preview = _dash_reply_markup(database, text)
+            searches = {
+                str(coin.get("query") or coin.get("contract_address"))
+                for coin in message.coin_lookups
+                if coin.get("requested")
+            }
+            body, preview = _dash_reply_markup(database, text, searches=searches)
             send_telegram_reply(
                 config,
                 message.chat_id,
@@ -2105,6 +2113,17 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
                 telegram_open_engagement(database, message.chat_id, message.user_id, now)
             transcript = telegram_recent_transcript(database, message.chat_id)
         if not attention.consider:
+            if message.addresses and attention.reason != "muted":
+                from runner_web.dash_intake import ingest_message
+
+                try:
+                    ingest_message(message, at=now)
+                except Exception as exc:
+                    with connection() as database:
+                        telegram_finish_update(
+                            database, update_id, "pending", error=type(exc).__name__, now=now
+                        )
+                    continue
             with connection() as database:
                 telegram_finish_update(
                     database, update_id, "skipped", error=attention.reason, now=now
@@ -2112,11 +2131,25 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
             counts["skipped"] += 1
             continue
         try:
-            decision = (
-                generate(message, transcript)
-                if generate
-                else {"action": "hold", "why": "no model configured"}
-            )
+            if message.addresses:
+                from runner_web.dash_intake import ingest_message
+
+                message = ingest_message(message, at=now)
+            if message.coin_lookups and (
+                message.forwarded
+                or message.sender_is_bot
+                or message.text in message.addresses
+                or not generate
+            ):
+                from runner_web.dash_intake import intake_reply
+
+                decision = intake_reply(message)
+            else:
+                decision = (
+                    generate(message, transcript)
+                    if generate
+                    else {"action": "hold", "why": "no model configured"}
+                )
             with connection() as database:
                 outcome = _act_on_telegram_message(database, config, message, decision, now)
                 telegram_finish_update(database, update_id, "handled", now=now)

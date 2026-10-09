@@ -1006,21 +1006,32 @@ def memecoins_now(limit: int = 6, at: datetime | None = None) -> dict[str, Any]:
     }
 
 
-def coin_detail(query: str) -> dict[str, Any]:
+def coin_detail(query: str, *, at: datetime | None = None) -> dict[str, Any]:
     """One coin by contract address or coin id, with a short price trail.
 
     A symbol or name never resolves to a coin: any launch can copy one. It
     returns the matching contract addresses so the reader picks by address.
     """
 
+    from runner_web.market_actors import coin_subject_key
     from runner_web.memecoin_chain_parser import display_claim, looks_like_address
     from runner_web.memecoins import memecoin_detail, memecoin_market, request_memecoin
 
     wanted = query.strip()
-    rows = memecoin_market(sort="volume")["rows"]
+    rows = memecoin_market(sort="volume", at=at)["rows"]
     # Solana addresses are case sensitive, so they match exactly as given.
     by_address = next((row for row in rows if row.get("token_address") == wanted), None)
-    detail = memecoin_detail(str(by_address["id"] if by_address else wanted.lower()))
+    is_address = looks_like_address(wanted)
+    # A saved coin can leave the board. Search still queues it for another quote.
+    requested = bool(
+        is_address and by_address is None and request_memecoin(wanted, source="dash", at=at)
+    )
+    coin_id = (
+        by_address["id"]
+        if by_address
+        else (coin_subject_key(wanted) if is_address else wanted.lower())
+    )
+    detail = memecoin_detail(str(coin_id), at=at)
     if detail is None:
         # An address that is not on the board is unknown. It never falls back
         # to names, or a coin could answer for another by copying its address.
@@ -1036,7 +1047,6 @@ def coin_detail(query: str) -> dict[str, Any]:
         ][:10]
         # An address not on the board is queued, as a board search would: the
         # worker quotes it next cycle, so Dash can say it is being looked up.
-        requested = looks_like_address(wanted) and request_memecoin(wanted, source="dash")
         return {
             "known": False,
             "query": query,
@@ -1044,8 +1054,8 @@ def coin_detail(query: str) -> dict[str, Any]:
                 {
                     "requested": True,
                     "note": (
-                        "Not on the board yet. Queued: RATi quotes it within about five "
-                        "minutes if it trades in a pool. Ask again then."
+                        "Queued in the website's shared assessment queue. RATi checks "
+                        "for a trading pool on its next quote cycle, usually about five minutes."
                     ),
                 }
                 if requested
@@ -1066,6 +1076,15 @@ def coin_detail(query: str) -> dict[str, Any]:
         "known": True,
         **_coin(coin),
         "status": detail["status"],
+        "requested": requested,
+        "stale": bool(coin.get("stale")) or detail["status"] != "ok",
+        "observed_at": coin.get("observed_at"),
+        "liquidity": coin.get("liquidity_label"),
+        "real_liquidity_usd": coin.get("real_liquidity_usd"),
+        "attention_score": coin.get("attention_score"),
+        "assessment": coin.get("memecoin_assessment"),
+        "ratification": coin.get("ratification"),
+        "risks": coin.get("risks") or [],
         "high_24h": coin.get("high_24h"),
         "low_24h": coin.get("low_24h"),
         "findings": coin.get("findings") or [],
