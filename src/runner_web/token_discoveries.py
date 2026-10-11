@@ -11,12 +11,12 @@ from typing import Any
 import ratitrust
 from ratitrust.memecoin import LABELS
 from runner_web.db import connection
-from runner_web.flash_wallet import PUBLISH_REPORT_REWARD, credit_flash
+from runner_web.flash_wallet import credit_flash
 from runner_web.helius_discovery import _decode
 from runner_web.ratification_records import fingerprint, rules_digest
 from runner_web.token_rejections import append, canonical, checkpoint
 
-DISCOVERY_REWARD = PUBLISH_REPORT_REWARD
+DISCOVERY_REWARD = 50
 WRITE_LOCK = 721906102
 
 

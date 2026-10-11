@@ -3991,7 +3991,7 @@ def _migration_101_wallet_backfills(db: DatabaseConnection) -> None:
 def _migration_102_token_discoveries(db: DatabaseConnection) -> None:
     db.executescript(
         """
-        CREATE TABLE token_discoveries (
+        CREATE TABLE IF NOT EXISTS token_discoveries (
             mint TEXT PRIMARY KEY,
             status TEXT NOT NULL CHECK(status IN ('review','tracked','rejected')),
             first_seen_at TEXT NOT NULL,
@@ -4008,23 +4008,24 @@ def _migration_102_token_discoveries(db: DatabaseConnection) -> None:
             rewarded_at TEXT,
             rejection_index INTEGER
         );
-        CREATE INDEX token_discoveries_watch ON token_discoveries(status,checked_at);
-        CREATE INDEX token_discoveries_submitter ON token_discoveries(submitter_id,claimed_at);
-        CREATE TABLE token_rejections (
+        CREATE INDEX IF NOT EXISTS token_discoveries_watch ON token_discoveries(status,checked_at);
+        CREATE INDEX IF NOT EXISTS token_discoveries_submitter
+            ON token_discoveries(submitter_id,claimed_at);
+        CREATE TABLE IF NOT EXISTS token_rejections (
             leaf_index INTEGER PRIMARY KEY,
             mint TEXT NOT NULL,
             leaf_json TEXT NOT NULL,
             evidence_json TEXT NOT NULL,
             recorded_at TEXT NOT NULL
         );
-        CREATE INDEX token_rejections_mint ON token_rejections(mint,leaf_index);
-        CREATE TABLE token_rejection_nodes (
+        CREATE INDEX IF NOT EXISTS token_rejections_mint ON token_rejections(mint,leaf_index);
+        CREATE TABLE IF NOT EXISTS token_rejection_nodes (
             height INTEGER NOT NULL,
             node_index INTEGER NOT NULL,
             hash TEXT NOT NULL,
             PRIMARY KEY(height,node_index)
         );
-        CREATE TABLE token_rejection_roots (
+        CREATE TABLE IF NOT EXISTS token_rejection_roots (
             tree_size INTEGER PRIMARY KEY,
             root_hash TEXT NOT NULL,
             recorded_at TEXT NOT NULL

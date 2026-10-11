@@ -304,3 +304,15 @@ def test_a_rules_digest_change_gets_a_new_rejection_receipt(database, monkeypatc
         assert checkpoint(connection)["tree_size"] == 2
         assert verify(proof(connection, 0, 1))
         assert json.loads(proof(connection, 1)["leaf_json"])["rules_digest"] == "a" * 64
+
+
+def test_schema_setup_recovers_after_an_interrupted_migration(database):
+    discoveries.submit(MINT, "alice", at=AT)
+    with db.connection() as connection:
+        connection.execute("DELETE FROM schema_migrations WHERE version=102")
+        connection.execute("DROP TABLE token_rejection_nodes")
+    db.init_db()
+    assert discoveries.discovery(MINT, user_id="alice")["reward_status"] == "reserved"
+    settle(reading(state=False))
+    with db.connection() as connection:
+        assert verify(proof(connection, 0))
