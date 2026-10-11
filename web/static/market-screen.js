@@ -502,6 +502,9 @@
     clearTimeout(timer); controller?.abort(); const current = ++version;
     const query = input.value.trim();
     if (!query) { render(recent, 'Recently viewed', recent.length ? '' : 'Items you view will appear here.'); return; }
+    if (market === 'memecoins' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(query)) {
+      render([], 'Token lookup', 'Press Enter to open token details.'); return;
+    }
     render([], 'Matches', 'Searching…');
     timer = setTimeout(async () => {
       controller = new AbortController();
@@ -513,8 +516,7 @@
         if (current !== version) return;
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const rows = [...doc.querySelectorAll('.ticker-list a.ticker')].map(link => safe({href:link.getAttribute('href'),name:link.querySelector('.ticker-name strong')?.textContent,subtitle:link.querySelector('.ticker-name small')?.textContent})).filter(Boolean);
-        const token = doc.querySelector('[data-token-lookup]');
-        render(rows.slice(0,8), 'Matches', rows.length ? '' : token ? 'Press Enter to open token details.' : 'Try another name or symbol.');
+        render(rows.slice(0,8), 'Matches', rows.length ? '' : 'Try another name or symbol.');
       } catch (error) {
         if (current === version && error.name !== 'AbortError') render([], 'Matches', 'Press Enter to search.');
       }

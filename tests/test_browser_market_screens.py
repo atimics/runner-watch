@@ -85,12 +85,21 @@ def test_token_search_names_render_as_text_and_typeahead_opens_details(page: Pag
     open_screen(page, screen)
     expect(page.locator("#tokenLookupTitle")).to_have_text(screen["token_lookup"]["name"])
     assert page.evaluate("window.tokenScript === undefined")
-    page.route(
-        "http://app.test/memecoins?*",
-        lambda route: route.fulfill(content_type="text/html", body=fixtures.render(screen)),
-    )
+    reads = []
+
+    def submit(route):
+        reads.append(route.request.url)
+        route.fulfill(content_type="text/html", body=fixtures.render(screen))
+
+    page.route("http://app.test/memecoins?*", submit)
+    page.clock.install()
     page.get_by_role("combobox").fill(address)
     expect(page.get_by_text("Press Enter to open token details.")).to_be_visible()
+    page.clock.fast_forward(1000)
+    assert reads == []
+    page.get_by_role("combobox").press("Enter")
+    expect(page).to_have_url(re.compile(r"/memecoins\?.*q=" + address))
+    assert len(reads) == 1
 
 
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
