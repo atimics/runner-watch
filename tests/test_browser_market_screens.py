@@ -38,6 +38,70 @@ def open_screen(page, screen, user=None):
     page.goto("http://app.test/")
 
 
+@pytest.mark.parametrize("width", [390, 1280])
+def test_first_token_search_shows_a_snapshot_that_fits(page: Page, width, tmp_path):
+    address = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
+    screen = listing("memecoins", [], query=address)
+    screen["token_lookup"] = {
+        "address": address,
+        "name": "Sample token",
+        "symbol": "SAMPLE",
+        "status": "ready",
+        "checked_at": "2026-10-10T12:00:00+00:00",
+        "slot": 12345,
+        "facts": [
+            {"label": "Token program", "value": "SPL Token"},
+            {"label": "Supply", "value": "18446744073.709551615"},
+            {"label": "Decimals", "value": "9"},
+            {"label": "Mint authority", "value": "Revoked"},
+            {"label": "Freeze authority", "value": address, "address": True},
+            {"label": "Metadata edits", "value": "Locked"},
+            {"label": "Metadata update authority", "value": address, "address": True},
+            {"label": "Price · GeckoTerminal", "value": "$0.0000123"},
+        ],
+    }
+    page.set_viewport_size({"width": width, "height": 844})
+    open_screen(page, screen)
+    card = page.locator("[data-token-lookup]")
+    expect(card.get_by_role("heading", name="Sample token")).to_be_visible()
+    expect(card.locator(".token-lookup-head code")).to_have_text(address)
+    expect(card.locator("dl")).to_contain_text("18446744073.709551615")
+    expect(card.locator("dl")).to_contain_text("Locked")
+    expect(card.get_by_role("link", name="Refresh details")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert card.bounding_box()["y"] < 450
+    page.screenshot(path=str(tmp_path / f"token-basics-{width}.png"), full_page=True)
+
+
+def test_token_search_names_render_as_text_and_typeahead_opens_details(page: Page):
+    address = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
+    screen = listing("memecoins", [])
+    screen["token_lookup"] = {
+        "address": address,
+        "name": '<img src=x onerror="window.tokenScript=true">',
+        "status": "pending",
+        "facts": [{"label": "Mint authority", "value": "Pending"}],
+    }
+    open_screen(page, screen)
+    expect(page.locator("#tokenLookupTitle")).to_have_text(screen["token_lookup"]["name"])
+    assert page.evaluate("window.tokenScript === undefined")
+    reads = []
+
+    def submit(route):
+        reads.append(route.request.url)
+        route.fulfill(content_type="text/html", body=fixtures.render(screen))
+
+    page.route("http://app.test/memecoins?*", submit)
+    page.clock.install()
+    page.get_by_role("combobox").fill(address)
+    expect(page.get_by_text("Press Enter to open token details.")).to_be_visible()
+    page.clock.fast_forward(1000)
+    assert reads == []
+    page.get_by_role("combobox").press("Enter")
+    expect(page).to_have_url(re.compile(r"/memecoins\?.*q=" + address))
+    assert len(reads) == 1
+
+
 @pytest.mark.parametrize("market", ["stocks", "memecoins", "sports"])
 @pytest.mark.parametrize("width", [390, 1280])
 def test_list_layout_and_navigation_are_shared(page: Page, market, width):

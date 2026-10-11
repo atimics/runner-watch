@@ -498,3 +498,16 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 
 @media(max-width:360px){.markets{gap:2px}.markets a{padding:7px 6px;min-width:0}}
 .facts>div{min-width:0;max-width:100%}.facts dd{overflow-wrap:anywhere}
+.token-lookup{max-width:760px;margin:24px auto 48px;padding:24px;border:1px solid var(--line);border-radius:20px;background:var(--panel)}
+.token-lookup-head h2{margin:8px 0;font-size:26px;overflow-wrap:anywhere}
+.token-lookup-head p{margin:6px 0;color:var(--muted)}
+.token-lookup-address{display:block;max-width:100%;font-size:12px;line-height:1.6;overflow-wrap:anywhere;white-space:normal}
+.token-lookup-facts{margin:24px 0}
+.token-lookup-facts>div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}
+.token-lookup-facts dt{color:var(--muted);font-size:13px}
+.token-lookup-facts dd{margin:0;text-align:right;font-size:14px;overflow-wrap:anywhere}
+.token-lookup-facts dd.token-lookup-address{font-size:12px}
+.token-lookup-note,.token-lookup-footer small{color:var(--muted);font-size:13px;line-height:1.6}
+.token-lookup-footer{display:flex;flex-wrap:wrap;gap:16px;font-size:13px}
+.token-lookup-footer small{flex-basis:100%;overflow-wrap:anywhere}
+@media(max-width:480px){.token-lookup{margin-top:16px;padding:18px}.token-lookup-facts>div{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:12px}}
