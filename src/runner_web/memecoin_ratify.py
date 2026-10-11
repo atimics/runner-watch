@@ -22,7 +22,6 @@ from ratitrust.memecoin import (
     MAX_LP_LEFT_PCT,
     MAX_TOP10_PCT,
     POOL_AUTHORITIES,
-    classify_mint,
     lp_left_pct,
     passes_free_standards,
     standards,
@@ -78,7 +77,11 @@ def mint_controls(
 ) -> dict[str, dict[str, Any]]:
     """Authorities, risky extensions and supply for each mint, reusing clean answers."""
 
-    controls = {mint: known[mint] for mint in mints if (known.get(mint) or {}).get("clean")}
+    controls = {
+        mint: known[mint]
+        for mint in mints
+        if (known.get(mint) or {}).get("clean") and known[mint].get("read_version") == 2
+    }
     unknown = [mint for mint in mints if mint not in controls]
     if unknown:
         try:
@@ -89,10 +92,13 @@ def mint_controls(
             return controls
         for mint, account in accounts.items():
             try:
-                info = account["data"]["parsed"]["info"]  # type: ignore[index]
-            except (KeyError, TypeError):
+                from runner_web.memecoin_lookup import _chain_basics
+
+                value = _chain_basics(mint, {"result": {"value": [account, None]}})
+            except (KeyError, TypeError, ValueError):
                 continue
-            controls[mint] = classify_mint(info)
+            if value.get("controls"):
+                controls[mint] = value["controls"]
     return controls
 
 

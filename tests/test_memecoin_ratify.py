@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from runner_web.memecoin_ratify import mint_controls, ratify_rows, standards, top10_share
-from runner_web.solana_keys import PUMP
+from runner_web.solana_keys import PUMP, TOKEN_2022_PROGRAM
 
 AT = datetime(2026, 9, 27, 12, tzinfo=UTC)
 MINT = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
@@ -17,6 +17,7 @@ CLEAN = {
     "risky_extensions": [],
     "supply": 1_000_000_000.0,
     "clean": True,
+    "read_version": 2,
 }
 
 
@@ -177,9 +178,12 @@ class FakeRpc:
 
 def mint_account(*, authority=None, freeze=None, extensions=("metadataPointer", "tokenMetadata")):
     return {
+        "owner": TOKEN_2022_PROGRAM,
         "data": {
             "parsed": {
+                "type": "mint",
                 "info": {
+                    "isInitialized": True,
                     "mintAuthority": authority,
                     "freezeAuthority": freeze,
                     "supply": str(10**15),

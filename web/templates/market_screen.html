@@ -88,7 +88,6 @@
   {% endblock %}
   <main id="content">
   {% block screen_main %}
-  {% if screen.market == 'memecoins' %}<p class="board-scope"><a href="/wallets">Wallets · on-chain PnL ↗</a></p>{% endif %}
   {% if screen.kind != 'detail' %}
     <div data-live-surface>
     {% if screen.ranking_status %}<p class="ranking-status" role="status">{{ screen.ranking_status }}</p>{% endif %}
@@ -113,7 +112,6 @@
         {% endif %}
         <span class="row-arrow" aria-hidden="true">↗</span>
       </a>{% endfor %}</div>
-    {% elif screen.token_lookup %}{% include '_token_lookup.html' %}
     {% elif screen.requested %}<div class="empty" role="status"><span aria-hidden="true">◌</span><h2>Added to the watch</h2><p>Token details are loading. The page checks for updates automatically.</p><code class="token-lookup-address">{{ screen.requested }}</code><a href="{{ request.url }}">Refresh details</a></div>
     {% else %}<div class="empty"><span aria-hidden="true">◌</span><h2>{{ 'Try another search' if screen.query else 'A quiet moment' }}</h2><p>{{ ('Search by name, symbol or contract address.' if screen.market == 'memecoins' else 'Search by name or symbol.') if screen.query else 'New activity will appear here.' }}</p></div>{% endif %}
     </div>

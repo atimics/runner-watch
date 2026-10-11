@@ -97,8 +97,11 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
         sort: str = "volume",
     ) -> HTMLResponse:
         from runner_web.stories import stories_by_subject
+        from runner_web.token_discoveries import valid_mint
 
         dependencies.enforce_rate(request, "memecoins", limit=120, seconds=60)
+        if valid_mint(q.strip()):
+            return RedirectResponse("/memecoins/coin/" + q.strip(), status_code=303)
         market = dependencies.memecoin_market(query=q, sort=sort, view="radar")
         coins = [str(item.get("id") or "") for item in market["rows"] if item.get("id")]
         # Hydrate a small snapshot now; the worker gathers history and evidence.
@@ -169,6 +172,57 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
         requested = bool(not market["rows"] and request_memecoin(q))
         token_lookup = lookup_memecoin(q, fetch=requested) if not market["rows"] else None
         return {**market, "requested": requested, "token_lookup": token_lookup}
+
+    @router.post("/api/memecoin-discoveries/{mint}")
+    def submit_memecoin(
+        mint: str,
+        request: Request,
+        runner_session: str | None = Cookie(default=None),
+    ) -> JSONResponse:
+        from runner_web.token_discoveries import submit, valid_mint
+
+        dependencies.require_origin(request)
+        user = dependencies.require_user(runner_session)
+        dependencies.enforce_rate(
+            request, "token-submission", limit=10, seconds=3600, subject=user["id"]
+        )
+        if not valid_mint(mint):
+            raise HTTPException(422, "Enter a Solana token mint")
+        basics = lookup_memecoin(mint)
+        if not basics or basics.get("status") != "ready":
+            raise HTTPException(409, "The mint check is still pending. Refresh the Sigil to retry.")
+        if not request_memecoin(mint):
+            raise HTTPException(429, "The check queue is busy. Try again shortly.")
+        return JSONResponse(
+            submit(mint, user["id"], at=dependencies.now()),
+            headers={"Cache-Control": "private, no-store"},
+        )
+
+    @router.get("/api/memecoin-rejections/root")
+    def rejection_root(request: Request, size: int | None = None) -> dict[str, Any]:
+        from runner_web.db import connection
+        from runner_web.token_rejections import checkpoint
+
+        dependencies.enforce_rate(request, "token-receipts", limit=60, seconds=60)
+        try:
+            with connection() as database:
+                return checkpoint(database, size)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @router.get("/api/memecoin-rejections/{leaf_index}")
+    def rejection_proof(
+        leaf_index: int, request: Request, size: int | None = None
+    ) -> dict[str, Any]:
+        from runner_web.db import connection
+        from runner_web.token_rejections import proof
+
+        dependencies.enforce_rate(request, "token-receipts", limit=60, seconds=60)
+        try:
+            with connection() as database:
+                return proof(database, leaf_index, size)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @router.get("/memecoins/alpha", response_class=HTMLResponse)
     def memecoin_alpha_redirect(
@@ -268,6 +322,7 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
     ) -> HTMLResponse:
         dependencies.enforce_rate(request, "memecoins", limit=120, seconds=60)
         detail = dependencies.memecoin_detail_payload(coin_id)
+        coin_id = detail["coin"]["id"]
         view = "radar" if view == "radar" else "pulse"
         list_path = "/memecoins"
         sort = sort if sort in {"volume", "market_cap", "gainers", "losers"} else "volume"
@@ -312,6 +367,10 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
             else None
         )
         user_id = str(context["user"]["id"]) if context["user"] else None
+        if user_id and detail.get("discovery"):
+            from runner_web.token_discoveries import discovery
+
+            detail["discovery"] = discovery(detail["coin"]["token_address"], user_id=user_id)
         context["flash_report"] = dependencies.flash_report_action(
             user_id=user_id,
             latest_report=dependencies.daily_report_for_ticker(coin_id, user_id),

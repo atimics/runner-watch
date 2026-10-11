@@ -34,6 +34,7 @@ PORTABLE_CONTENT_GROUPS = {
         "case_outcomes",
     ),
     "Research": (
+        "token_submissions",
         "research",
         "research_stages",
         "flash_forecasts",
@@ -153,6 +154,9 @@ def export_user_data(user_id: str) -> dict[str, Any]:
 
         return {
             "exported_at": _iso(),
+            "token_submissions": _rows(
+                database, tables, "token_discoveries", "submitter_id=?", (user_id,)
+            ),
             "account": public_account,
             "passkeys": _public_passkeys(passkeys),
             "sessions": [
@@ -407,6 +411,12 @@ def _delete_user_content_rows(
     user_id: str,
 ) -> int:
     deleted = 0
+
+    if "token_discoveries" in tables:
+        deleted += database.execute(
+            "UPDATE token_discoveries SET submitter_id=NULL,reward_eligible=0 WHERE submitter_id=?",
+            (user_id,),
+        ).rowcount
 
     def delete(table: str, where: str, parameters: tuple[Any, ...]) -> None:
         nonlocal deleted

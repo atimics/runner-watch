@@ -687,7 +687,7 @@ def test_a_searched_address_we_do_not_track_is_queued(market_db, monkeypatch):
     api = client.get("/api/memecoins", params={"q": "no such name"})
 
     assert page.status_code == 200
-    assert "Token snapshot" in page.text and P_DOOM in page.text
+    assert "Token Sigil" in page.text and P_DOOM in page.text
     assert "Pending" in page.text
     # A name that matches nothing is not an address, so nothing is queued.
     assert api.json()["requested"] is False

@@ -668,6 +668,9 @@ def _ratify(
             },
             at=at,
         )
+        from runner_web.token_discoveries import settle
+
+        settle(rows, inputs, at=at)
     except Exception:
         LOG.warning("Ratification reads failed", exc_info=True)
         for row in rows:
@@ -999,7 +1002,10 @@ def _collect_helius(
         bursts, original_cache, download=download, at=at, pause=0, max_searches=0
     )
     stages.mark("originals")
-    tracked = {item["token_address"] for item in selected + curves}
+    from runner_web.token_discoveries import tracked_receipts
+
+    admitted = tracked_receipts(limit=SEARCHED_SLOTS)
+    tracked = {item["token_address"] for item in selected + curves + admitted}
     searched, looked_up = _searched_pools(tracked, download=download, at=at)
     stages.mark("searched")
     tracked |= {item["token_address"] for item in searched}
@@ -1018,8 +1024,10 @@ def _collect_helius(
     ]
     # Graduated pools first, then the few originals, then curves, busiest first:
     # a rate limit cuts the end of the list.
-    allowed = {item["pool_address"]: item for item in selected + found + searched + curves}
-    extra = {item["pool_address"] for item in curves + found + searched}
+    allowed = {
+        item["pool_address"]: item for item in admitted + selected + found + searched + curves
+    }
+    extra = {item["pool_address"] for item in curves + found + searched + admitted}
     source = price_source()
     chain = None
     if source in ("chain", "shadow"):

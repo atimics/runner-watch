@@ -328,7 +328,9 @@ def test_page_and_api_hydrate_on_first_search_and_keep_worker_queue(lookup_db, m
     api = client.get("/api/memecoins", params={"q": MINT})
     assert page.status_code == api.status_code == 200
     assert "Sample token" in page.text and "18446744073.709551615" in page.text
-    assert "data-token-lookup" in page.text and "Search again then" not in page.text
+    assert "Token Sigil" in page.text and "data-token-lookup" not in page.text
+    assert page.url.path == "/memecoins/coin/" + MINT
+    assert 'href="/wallets"' not in page.text
     assert api.json()["requested"] is True
     assert api.json()["token_lookup"]["name"] == "Sample token"
     assert len(reads) == 1
