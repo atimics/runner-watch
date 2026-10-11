@@ -47,6 +47,12 @@ def request(query):
 
 @pytest.mark.parametrize("query", ["dogwifhat", "WIF", ADDRESS, ADDRESS.lower()])
 def test_memecoin_route_keeps_matches_through_both_filters(board_context, monkeypatch, query):
+    from runner_web import memecoin_routes
+
+    def unused(*_args, **_kwargs):
+        pytest.fail("Saved rows should use the existing fast search")
+
+    monkeypatch.setattr(memecoin_routes, "lookup_memecoin", unused)
     now = datetime.now(UTC).isoformat()
     coin = {
         "id": "wif-token",

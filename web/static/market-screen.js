@@ -502,6 +502,9 @@
     clearTimeout(timer); controller?.abort(); const current = ++version;
     const query = input.value.trim();
     if (!query) { render(recent, 'Recently viewed', recent.length ? '' : 'Items you view will appear here.'); return; }
+    if (market === 'memecoins' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(query)) {
+      render([], 'Token lookup', 'Press Enter to open token details.'); return;
+    }
     render([], 'Matches', 'Searching…');
     timer = setTimeout(async () => {
       controller = new AbortController();

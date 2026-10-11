@@ -19,6 +19,7 @@ from runner_web.memecoin_calls import (
     memecoin_calls,
     pending_memecoin_order,
 )
+from runner_web.memecoin_lookup import lookup_memecoin
 from runner_web.memecoins import request_memecoin
 from runner_web.share_cards import memecoin_share
 
@@ -100,8 +101,9 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
         dependencies.enforce_rate(request, "memecoins", limit=120, seconds=60)
         market = dependencies.memecoin_market(query=q, sort=sort, view="radar")
         coins = [str(item.get("id") or "") for item in market["rows"] if item.get("id")]
-        # An address we do not track yet is queued; the next quote cycle adds it.
+        # Hydrate a small snapshot now; the worker gathers history and evidence.
         requested = not market["rows"] and request_memecoin(q)
+        token_lookup = lookup_memecoin(q, fetch=bool(requested)) if not market["rows"] else None
         return dependencies.simple_board(
             request,
             runner_session,
@@ -112,6 +114,7 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
             updated_at=str(market.get("collected_at") or ""),
             stories=stories_by_subject("memecoins", coins),
             requested=q.strip() if requested else "",
+            token_lookup=token_lookup,
         )
 
     @router.get("/memecoins/radar", response_class=HTMLResponse)
@@ -163,7 +166,9 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
     def memecoins_api(request: Request, q: str = "", sort: str = "volume", view: str = "radar"):
         dependencies.enforce_rate(request, "memecoins", limit=120, seconds=60)
         market = dependencies.memecoin_market(query=q, sort=sort, view=view)
-        return {**market, "requested": bool(not market["rows"] and request_memecoin(q))}
+        requested = bool(not market["rows"] and request_memecoin(q))
+        token_lookup = lookup_memecoin(q, fetch=requested) if not market["rows"] else None
+        return {**market, "requested": requested, "token_lookup": token_lookup}
 
     @router.get("/memecoins/alpha", response_class=HTMLResponse)
     def memecoin_alpha_redirect(
