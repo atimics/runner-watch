@@ -10,7 +10,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || 'Please try again shortly.');
       status.textContent = 'Submission saved.';
-      reward.textContent = result.reward_status === 'reserved' ? `You earn ${result.reward_amount} Flash when all ratification checks pass.` : 'The discovery reward is reserved for the first submitter.';
+      if (result.reward_status === 'reserved') reward.textContent = `You earn ${result.reward_amount} Flash when all ratification checks pass.`;
       button.hidden = true;
     } catch (error) {
       status.textContent = error.message;
@@ -18,10 +18,14 @@
     }
   });
   const screen = document.querySelector('#screenData');
+  let previousState;
+  try { previousState = JSON.parse(screen?.textContent || '{}').discovery?.status; } catch (_) { /* The page still supports submission. */ }
   screen?.addEventListener('rati:screen-detail', event => {
     if (document.querySelector('.token-sigil-pending') && !event.detail.lookup_pending) location.reload();
     const result = event.detail.discovery;
     if (!result) return;
+    if (previousState && result.status !== previousState) location.reload();
+    previousState = result.status;
     const state = document.querySelector('[data-discovery-state]');
     const checks = document.querySelector('[data-discovery-checks]');
     if (state) state.textContent = {review:'Under review', tracked:'Tracked pool', rejected:'Rejected pool'}[result.status];

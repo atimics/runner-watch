@@ -698,6 +698,19 @@ def test_a_searched_address_we_do_not_track_is_queued(market_db, monkeypatch):
     assert list(json.loads(saved["value"])) == [P_DOOM]
 
 
+def test_a_new_search_rechecks_an_address_after_its_queue_window_expires(market_db):
+    assert memecoins.request_memecoin(P_DOOM, at=AT)
+    later = AT + timedelta(days=8)
+    assert memecoins.request_memecoin(P_DOOM, at=later)
+    with connection() as database:
+        queue = json.loads(
+            database.execute(
+                "SELECT value FROM worker_state WHERE key='memecoin_searched'"
+            ).fetchone()[0]
+        )
+    assert queue[P_DOOM] == later.isoformat()
+
+
 def test_the_search_queue_keeps_the_newest_addresses(market_db):
     start = datetime(2026, 9, 26, 12, tzinfo=UTC)
     addresses = [

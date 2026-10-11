@@ -23,12 +23,15 @@ def pending_detail(mint: str, basics: dict[str, Any]) -> dict[str, Any]:
         claimed_name=basics.get("name"),
         claimed_symbol=basics.get("symbol"),
         ratification=standards({"venue": "pool"}, basics.get("controls"), None, False, now),
+        observed_at=basics.get("checked_at"),
+        source_url="https://solscan.io/token/" + mint,
     )
     return {
         "coin": coin,
         "status": "pending",
         "can_call": False,
         "lookup_pending": True,
+        "lookup_invalid": basics.get("status") == "invalid",
         "collected_at": basics.get("checked_at"),
         "history": [],
         "states": [],

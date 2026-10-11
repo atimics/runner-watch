@@ -135,13 +135,14 @@ def settle(rows: list[dict[str, Any]], facts: dict[str, Any], *, at: datetime) -
             checks = result.get("standards") or []
             # Admission uses the full current rule set. Pending readings stay under review.
             passed = (
-                len(checks) == len(LABELS)
+                result.get("ratified") is True
+                and len(checks) == len(LABELS)
                 and {s.get("key") for s in checks} == set(LABELS)
                 and all(s.get("met") is True and s.get("applies") is True for s in checks)
             )
             failed = [s["key"] for s in checks if s.get("met") is False]
             status = "tracked" if passed else "rejected" if failed else "review"
-            mark = fingerprint(result)
+            mark = hashlib.sha256((fingerprint(result) + rules_digest()).encode()).hexdigest()
             rejection = saved["rejection_index"]
             if status == "rejected" and mark != saved["fingerprint"]:
                 evidence = json.loads(
@@ -160,7 +161,8 @@ def settle(rows: list[dict[str, Any]], facts: dict[str, Any], *, at: datetime) -
                 rejection = append(database, mint, leaf, evidence, at=stamp)
             database.execute(
                 "UPDATE token_discoveries SET status=?,checked_at=?,result_json=?,receipt_json=?,"
-                "fingerprint=?,rejection_index=?,reward_eligible=CASE "
+                "fingerprint=?,rejection_index=?,admitted_at=CASE WHEN ?='tracked' "
+                "THEN COALESCE(admitted_at,?) ELSE admitted_at END,reward_eligible=CASE "
                 "WHEN ?='tracked' AND claimed_at IS NULL THEN 0 ELSE reward_eligible END "
                 "WHERE mint=?",
                 (
@@ -170,6 +172,8 @@ def settle(rows: list[dict[str, Any]], facts: dict[str, Any], *, at: datetime) -
                     canonical(row.get("discovery") or {}),
                     mark,
                     rejection,
+                    status,
+                    stamp,
                     status,
                     mint,
                 ),
@@ -194,13 +198,20 @@ def settle(rows: list[dict[str, Any]], facts: dict[str, Any], *, at: datetime) -
                 )
 
 
-def tracked_receipts(*, limit: int = 20) -> list[dict[str, Any]]:
+def tracked_receipts(*, limit: int = 20, at: datetime | None = None) -> list[dict[str, Any]]:
     with connection() as database:
+        _lock(database)
         rows = database.execute(
-            "SELECT receipt_json FROM token_discoveries WHERE status='tracked' "
-            "AND receipt_json IS NOT NULL ORDER BY checked_at,mint LIMIT ?",
+            "SELECT mint,receipt_json FROM token_discoveries "
+            "WHERE status IN ('tracked','review') AND admitted_at IS NOT NULL "
+            "AND receipt_json IS NOT NULL "
+            "ORDER BY COALESCE(watch_read_at,first_seen_at),mint LIMIT ?",
             (limit,),
         ).fetchall()
+        database.executemany(
+            "UPDATE token_discoveries SET watch_read_at=? WHERE mint=?",
+            [((at or datetime.now(UTC)).isoformat(), row["mint"]) for row in rows],
+        )
     return [
         receipt for row in rows if (receipt := json.loads(row["receipt_json"])).get("pool_address")
     ]

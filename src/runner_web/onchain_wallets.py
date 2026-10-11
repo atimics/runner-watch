@@ -82,8 +82,8 @@ def token_positions(mint: str) -> list[dict[str, Any]]:
     with connection() as database:
         rows = database.execute(
             "SELECT address,payload_json FROM onchain_wallet_snapshots "
-            "WHERE address IN (" + ",".join("?" for _ in labels) + ") AND payload_json IS NOT NULL",
-            tuple(labels),
+            "WHERE address IN (" + ",".join("?" for _ in labels) + ") AND payload_json LIKE ?",
+            (*labels, "%" + mint + "%"),
         ).fetchall()
     positions = []
     for row in rows:

@@ -8078,21 +8078,36 @@ def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
     from runner_web.token_sigil import pending_detail
 
     mint_query = coin_id if valid_mint(coin_id) else None
-    detail = _cached_memecoin_detail(mint_coin_id(mint_query) if mint_query else coin_id)
+    identifier = coin_id
+    if mint_query:
+        matches = memecoin_market(query=mint_query, view="radar")["rows"]
+        identifier = next(
+            (row["id"] for row in matches if row.get("token_address") == mint_query),
+            mint_coin_id(mint_query),
+        )
+    detail = _cached_memecoin_detail(identifier)
     basics = None
     if detail is None and mint_query:
-        queued = request_memecoin(mint_query)
-        basics = lookup_memecoin(mint_query, fetch=queued)
-        if basics is not None:
-            detail = pending_detail(mint_query, basics)
+        request_memecoin(mint_query)
+        basics = lookup_memecoin(mint_query) or {
+            "address": mint_query,
+            "status": "pending",
+            "facts": [],
+            "checked_at": None,
+        }
+        detail = pending_detail(mint_query, basics)
     if detail is None:
         raise HTTPException(404, "Coin not found")
     from runner_web.ratification_records import page_history
 
     mint = str(detail["coin"].get("token_address") or "")
     if valid_mint(mint):
-        remember(mint)
         basics = basics or lookup_memecoin(mint)
+        if (basics or {}).get("status") != "invalid":
+            remember(mint)
+    submission = discovery(mint) if valid_mint(mint) else None
+    if valid_mint(mint) and (mint_query or submission and not submission["checked_at"]):
+        request_memecoin(mint)
     if mint and detail["coin"].get("ratification"):
         detail = {
             **detail,
@@ -8101,9 +8116,16 @@ def _memecoin_detail_payload(coin_id: str) -> dict[str, Any]:
     return {
         **detail,
         "token_lookup": basics,
-        "discovery": discovery(mint) if valid_mint(mint) else None,
-        "token_positions": token_positions(mint) if valid_mint(mint) else [],
-        "calls": memecoin_calls(coin_id=coin_id),
+        "discovery": submission if (basics or {}).get("status") != "invalid" else None,
+        "token_positions": _public_screen_data(
+            "memecoin-wallets",
+            mint,
+            lambda: {"positions": token_positions(mint)},
+            ttl_seconds=60,
+        ).get("positions", [])
+        if valid_mint(mint)
+        else [],
+        "calls": memecoin_calls(coin_id=detail["coin"]["id"]),
         "pool_state": memecoin_pool_state(detail["coin"]),
         "can_call": detail["status"] == "ok" and not detail["coin"]["stale"],
     }
@@ -8348,7 +8370,6 @@ def _simple_board(
     updated_at: str = "",
     stories: dict[str, dict[str, Any]] | None = None,
     requested: str = "",
-    token_lookup: dict[str, Any] | None = None,
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
@@ -8362,7 +8383,6 @@ def _simple_board(
         stock_calls=flash_open_calls(limit=500)["calls"] if market == "stocks" else None,
     )
     screen["requested"] = requested
-    screen["token_lookup"] = token_lookup
     return _simple_board_response(request, session, market, screen)
 
 

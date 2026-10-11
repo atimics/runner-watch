@@ -1102,12 +1102,13 @@ def detail(
         if market == "memecoins" and item.get("contract_address"):
             result["facts"].append({"label": "Contract", "value": item["contract_address"]})
             claimed = display_claim(source)
-            result["facts"].append(
-                {
-                    "label": "Creator-set name (unverified)",
-                    "value": claimed or "None recorded",
-                }
-            )
+            if not (data.get("token_lookup") or {}).get("name"):
+                result["facts"].append(
+                    {
+                        "label": "Creator-set name (unverified)",
+                        "value": claimed or "None recorded",
+                    }
+                )
         volume = source.get("volume_label") if market == "memecoins" else None
         if volume:
             result["facts"].append({"label": "24h volume", "value": volume})

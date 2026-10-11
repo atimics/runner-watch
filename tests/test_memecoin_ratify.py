@@ -189,9 +189,9 @@ def mint_account(*, authority=None, freeze=None, extensions=("metadataPointer", 
                     "supply": str(10**15),
                     "decimals": 6,
                     "extensions": [{"extension": name} for name in extensions],
-                }
+                },
             }
-        }
+        },
     }
 
 
@@ -210,6 +210,24 @@ def test_a_risky_extension_is_named():
     rpc = FakeRpc(mints={MINT: mint_account(extensions=("transferFeeConfig", "tokenMetadata"))})
 
     assert mint_controls([MINT], {}, rpc=rpc)[MINT]["risky_extensions"] == ["transferFeeConfig"]
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["mintAuthority", "freezeAuthority", "supply", "decimals", "isInitialized", "extensions"],
+)
+def test_incomplete_mint_reads_keep_the_control_checks_pending(field):
+    account = mint_account()
+    del account["data"]["parsed"]["info"][field]
+    rpc = FakeRpc(mints={MINT: account})
+    assert mint_controls([MINT], {}, rpc=rpc) == {}
+
+
+def test_older_clean_mint_cache_is_verified_before_admission():
+    old = {key: value for key, value in CLEAN.items() if key != "read_version"}
+    rpc = FakeRpc(mints={MINT: mint_account()})
+    current = mint_controls([MINT], {MINT: old}, rpc=rpc)
+    assert rpc.calls == ["getMultipleAccounts"] and current[MINT]["read_version"] == 2
 
 
 WALLET = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"

@@ -95,18 +95,21 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
         view: str,
         q: str = "",
         sort: str = "volume",
-    ) -> HTMLResponse:
+    ) -> Response:
         from runner_web.stories import stories_by_subject
         from runner_web.token_discoveries import valid_mint
 
         dependencies.enforce_rate(request, "memecoins", limit=120, seconds=60)
-        if valid_mint(q.strip()):
-            return RedirectResponse("/memecoins/coin/" + q.strip(), status_code=303)
         market = dependencies.memecoin_market(query=q, sort=sort, view="radar")
+        if valid_mint(q.strip()):
+            exact = next(
+                (row for row in market["rows"] if row.get("token_address") == q.strip()), None
+            )
+            return RedirectResponse(
+                "/memecoins/coin/" + (exact["id"] if exact else q.strip()), status_code=303
+            )
         coins = [str(item.get("id") or "") for item in market["rows"] if item.get("id")]
-        # Hydrate a small snapshot now; the worker gathers history and evidence.
         requested = not market["rows"] and request_memecoin(q)
-        token_lookup = lookup_memecoin(q, fetch=bool(requested)) if not market["rows"] else None
         return dependencies.simple_board(
             request,
             runner_session,
@@ -117,7 +120,6 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
             updated_at=str(market.get("collected_at") or ""),
             stories=stories_by_subject("memecoins", coins),
             requested=q.strip() if requested else "",
-            token_lookup=token_lookup,
         )
 
     @router.get("/memecoins/radar", response_class=HTMLResponse)

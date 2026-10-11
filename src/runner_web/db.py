@@ -3995,6 +3995,8 @@ def _migration_102_token_discoveries(db: DatabaseConnection) -> None:
             mint TEXT PRIMARY KEY,
             status TEXT NOT NULL CHECK(status IN ('review','tracked','rejected')),
             first_seen_at TEXT NOT NULL,
+            admitted_at TEXT,
+            watch_read_at TEXT,
             checked_at TEXT,
             result_json TEXT,
             receipt_json TEXT,

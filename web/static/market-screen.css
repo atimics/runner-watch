@@ -498,6 +498,7 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 
 @media(max-width:360px){.markets{gap:2px}.markets a{padding:7px 6px;min-width:0}}
 .facts>div{min-width:0;max-width:100%}.facts dd{overflow-wrap:anywhere}
+.theme-memecoins .detail>[data-facts]{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:20px 28px}
 .token-lookup-address{display:block;max-width:100%;font-size:12px;line-height:1.6;overflow-wrap:anywhere;white-space:normal}
-.token-sigil-pending{text-align:center;padding:24px;max-width:100%}.token-sigil-glyph .ticker-score{width:200px;height:200px;margin:auto}.token-sigil-pending>p{color:var(--muted);font-size:13px}
+.token-sigil-pending{text-align:center;padding:24px;max-width:100%}.token-sigil-glyph .ticker-score{width:200px;height:auto;margin:auto}.token-sigil-glyph .ticker-score .well-glyph{width:200px;height:200px}.token-sigil-pending>p{color:var(--muted);font-size:13px}
 .token-discovery,.token-positions{border-top:1px solid var(--line);padding:20px 0;margin-top:20px;max-width:100%}.token-discovery h2,.token-positions h2{font-size:17px;margin:0 0 8px}.token-discovery p,.token-positions p{color:var(--muted);font-size:13px;overflow-wrap:anywhere}.token-discovery button{border:0;border-radius:24px;padding:11px 20px;background:var(--accent);color:var(--accent-ink)}.token-discovery a{color:var(--accent);text-decoration:underline;text-underline-offset:3px}.token-discovery details,.token-positions details{padding:12px 0;border-top:1px solid var(--line)}.token-discovery summary,.token-positions summary{cursor:pointer;font-size:14px;overflow-wrap:anywhere}.token-discovery li{font-size:13px;overflow-wrap:anywhere}.token-positions .facts{flex-wrap:wrap}

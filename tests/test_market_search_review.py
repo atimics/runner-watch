@@ -45,7 +45,7 @@ def request(query):
     return result
 
 
-@pytest.mark.parametrize("query", ["dogwifhat", "WIF", ADDRESS, ADDRESS.lower()])
+@pytest.mark.parametrize("query", ["dogwifhat", "WIF"])
 def test_memecoin_route_keeps_matches_through_both_filters(board_context, monkeypatch, query):
     from runner_web import memecoin_routes
 
@@ -84,6 +84,20 @@ def test_memecoin_route_keeps_matches_through_both_filters(board_context, monkey
     # The address is the identity: no creator-set name under it, full address on hover.
     assert rows[0].select_one(".ticker-name small") is None
     assert rows[0].select_one(".ticker-name strong")["title"] == ADDRESS
+
+
+@pytest.mark.parametrize("query", [ADDRESS, ADDRESS.lower()])
+def test_contract_search_opens_the_sigil_for_the_exact_address(board_context, monkeypatch, query):
+    monkeypatch.setattr(
+        main,
+        "memecoin_market",
+        lambda **_: {"rows": [{"id": "saved-token", "token_address": ADDRESS}]},
+    )
+    response = main.memecoins_board_response(request(query), None, "list", query)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/memecoins/coin/" + (
+        "saved-token" if query == ADDRESS else query
+    )
 
 
 def game(selection="home", **changes):
