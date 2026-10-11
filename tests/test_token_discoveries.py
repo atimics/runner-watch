@@ -316,3 +316,18 @@ def test_schema_setup_recovers_after_an_interrupted_migration(database):
     settle(reading(state=False))
     with db.connection() as connection:
         assert verify(proof(connection, 0))
+
+
+def test_initial_sigil_counts_only_the_mint_permissions_it_has_read():
+    from runner_web.token_sigil import pending_detail
+
+    controls = {
+        "mint_authority": None,
+        "freeze_authority": None,
+        "risky_extensions": [],
+        "supply": 1000,
+    }
+    result = pending_detail(MINT, {"controls": controls})["coin"]["ratification"]
+    assert result["met"] == 3 and result["unchecked"] == 6
+    assert next(check for check in result["standards"] if check["key"] == "record")["met"] is None
+    assert result["ratified"] is False
