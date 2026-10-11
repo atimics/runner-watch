@@ -1,0 +1,19 @@
+{% set submission = detail.discovery %}
+{% if submission %}
+<section class="token-discovery" aria-label="Token pool and discovery reward" data-token-discovery>
+  <h2 data-discovery-state>{{ {'review':'Under review','tracked':'Tracked pool','rejected':'Rejected pool'}[submission.status] }}</h2>
+  <p data-discovery-checks>{{ submission.met }} of {{ submission.total }} ratification checks passed.{% if submission.checked_at %} Checked {{ submission.checked_at[:19]|replace('T', ' ') }} UTC.{% endif %}</p>
+  <p data-discovery-reward>{% if submission.reward_status == 'paid' %}{{ submission.reward_amount }} Flash added to your balance.{% elif submission.reward_status == 'reserved' %}Your submission is saved. You earn {{ submission.reward_amount }} Flash when all ratification checks pass.{% elif submission.reward_status == 'available' %}The first signed-in submitter earns {{ submission.reward_amount }} Flash when all ratification checks pass.{% elif submission.reward_status == 'claimed' %}The discovery reward is reserved for the first submitter.{% else %}This coin has an existing tracking record.{% endif %}</p>
+  {% if submission.reward_status == 'available' %}{% if user %}<button type="button" data-submit-token="{{ submission.mint }}">Submit for ratification</button>{% else %}<a href="/login?next={{ request.url.path|urlencode }}">Log in to submit this coin</a>{% endif %}{% endif %}
+  {% if user and submission.status == 'rejected' and submission.reward_status != 'available' %}<button type="button" data-submit-token="{{ submission.mint }}">Recheck token</button>{% endif %}
+  <p role="status" data-submission-status></p>
+  {% if submission.failed_checks %}<details><summary>Checks to resolve</summary><ul>{% for check in submission.failed_checks %}<li>{{ check.label }} · {{ check.detail }}</li>{% endfor %}</ul></details>{% endif %}
+  {% if submission.proof_url %}<details class="token-receipt"><summary>Saved rejection receipt</summary><p>The Merkle receipt proves this decision is included in the saved root. Keep a copy of the root to compare future receipts.</p><a href="{{ submission.proof_url }}" data-rejection-proof download="token-rejection.json">Download receipt</a><p>{{ submission.rejection_tree.tree_size }} recorded decisions</p><code class="token-lookup-address">{{ submission.rejection_tree.root_hash }}</code></details>{% endif %}
+</section>
+{% endif %}
+{% if detail.token_positions %}
+<section class="token-positions" aria-label="KOL positions in this token">
+  <h2>KOL positions</h2><p>Saved holdings and open position PnL. Each reading uses that wallet's saved history.</p>
+  {% for position in detail.token_positions %}<details><summary>{{ position.name }} · {{ '%.4g'|format(position.quantity) }} tokens</summary><code class="token-lookup-address">{{ position.address }}</code><dl class="facts"><div><dt>Position value</dt><dd>{{ '$%.2f'|format(position.value_usd) if position.value_usd is not none else 'Pending price' }}</dd></div><div><dt>Open position PnL</dt><dd>{{ '%+.4f'|format(position.unrealized) ~ ' ' ~ position.unit if position.unrealized is not none else 'Pending cost history' }}</dd></div><div><dt>Updated</dt><dd>{{ position.updated_at or 'Pending' }}</dd></div></dl></details>{% endfor %}
+</section>
+{% endif %}

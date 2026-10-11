@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, localcontext
 from typing import Any
 
+from ratitrust.memecoin import classify_mint
 from runner_web.db import connection
 from runner_web.helius_discovery import _decode, _encode, rpc_request
 from runner_web.memecoin_chain_parser import clean_claim
@@ -149,6 +150,28 @@ def _chain_basics(mint: str, payload: dict[str, Any]) -> dict[str, Any]:
         _authority("Mint authority", info, "mintAuthority"),
         _authority("Freeze authority", info, "freezeAuthority"),
     ]
+    controls = None
+    extensions = info.get("extensions")
+    if extensions is not None and (
+        not isinstance(extensions, list)
+        or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("extension"), str)
+            or not isinstance(item.get("state") or {}, dict)
+            for item in extensions
+        )
+    ):
+        raise ValueError("Token extensions are incomplete")
+    if (
+        facts[-2]["value"] != "Pending"
+        and facts[-1]["value"] != "Pending"
+        and (program == TOKEN_PROGRAM or isinstance(extensions, list))
+        and all(
+            isinstance(item, dict) and isinstance(item.get("extension"), str)
+            for item in extensions or []
+        )
+    ):
+        controls = {**classify_mint(info), "read_version": 2}
     metadata = _metadata(accounts[1], mint)
     for extension in info.get("extensions") or []:
         state = extension.get("state") or {}
@@ -191,6 +214,7 @@ def _chain_basics(mint: str, payload: dict[str, Any]) -> dict[str, Any]:
         facts.append(_fact("Token extensions", ", ".join(extensions)))
     return {
         "status": "ready",
+        "controls": controls,
         "facts": facts,
         "metadata": metadata,
         "slot": (result.get("context") or {}).get("slot"),
@@ -218,6 +242,7 @@ def _market_basics(mint: str, body: bytes) -> dict[str, Any]:
         "facts": facts,
         "name": _claim(attrs.get("name"), 160),
         "symbol": _claim(attrs.get("symbol"), 32),
+        "price": price,
     }
 
 
@@ -314,7 +339,7 @@ def lookup_memecoin(
                 ),
             )
             value["facts"].extend(market["facts"])
-            value.update(name=market["name"], symbol=market["symbol"])
+            value.update(name=market["name"], symbol=market["symbol"], price=market["price"])
         except Exception:
             pass
     metadata = value.pop("metadata", None) or {}

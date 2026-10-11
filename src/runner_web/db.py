@@ -3988,6 +3988,52 @@ def _migration_101_wallet_backfills(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_102_token_discoveries(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS token_discoveries (
+            mint TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK(status IN ('review','tracked','rejected')),
+            first_seen_at TEXT NOT NULL,
+            admitted_at TEXT,
+            watch_read_at TEXT,
+            checked_at TEXT,
+            result_json TEXT,
+            receipt_json TEXT,
+            fingerprint TEXT,
+            submitter_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+            claimed_at TEXT,
+            reward_eligible INTEGER NOT NULL DEFAULT 0,
+            reward_amount INTEGER NOT NULL DEFAULT 0 CHECK(reward_amount>=0),
+            rewarded_at TEXT,
+            rejection_index INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS token_discoveries_watch ON token_discoveries(status,checked_at);
+        CREATE INDEX IF NOT EXISTS token_discoveries_submitter
+            ON token_discoveries(submitter_id,claimed_at);
+        CREATE TABLE IF NOT EXISTS token_rejections (
+            leaf_index INTEGER PRIMARY KEY,
+            mint TEXT NOT NULL,
+            leaf_json TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS token_rejections_mint ON token_rejections(mint,leaf_index);
+        CREATE TABLE IF NOT EXISTS token_rejection_nodes (
+            height INTEGER NOT NULL,
+            node_index INTEGER NOT NULL,
+            hash TEXT NOT NULL,
+            PRIMARY KEY(height,node_index)
+        );
+        CREATE TABLE IF NOT EXISTS token_rejection_roots (
+            tree_size INTEGER PRIMARY KEY,
+            root_hash TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+        );
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4096,6 +4142,7 @@ MIGRATIONS = (
     Migration(99, "transition_alerts", _migration_099_transition_alerts),
     Migration(100, "onchain_wallet_snapshots", _migration_100_onchain_wallet_snapshots),
     Migration(101, "wallet_backfills", _migration_101_wallet_backfills),
+    Migration(102, "token_discoveries", _migration_102_token_discoveries),
 )
 
 

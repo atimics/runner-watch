@@ -84,6 +84,24 @@ def sample_pnl():
     return wallets.calculate_pnl(ADDRESS, list(reversed(entries)), {MINT: Decimal(150)}, QUOTES)
 
 
+def test_token_sigil_shows_only_saved_positions_for_the_exact_mint(database, monkeypatch):
+    monkeypatch.setattr(
+        wallets, "seed_wallets", lambda: [{"address": ADDRESS, "name": "Sample KOL"}]
+    )
+    snapshot = {**sample_pnl(), "updated_at": AT.isoformat(), "has_more": False}
+    with db.connection() as connection:
+        connection.execute(
+            "INSERT INTO onchain_wallet_snapshots(address,payload_json,updated_at,refresh_after) "
+            "VALUES(?,?,?,?)",
+            (ADDRESS, json.dumps(snapshot), AT.isoformat(), AT.isoformat()),
+        )
+    positions = wallets.token_positions(MINT)
+    assert len(positions) == 1
+    assert positions[0]["name"] == "Sample KOL" and positions[0]["unrealized"] == 1.5
+    assert positions[0]["updated_at"] == AT.isoformat()
+    assert wallets.token_positions(SOL) == []
+
+
 def test_weighted_cost_partial_sell_and_current_mark():
     result = sample_pnl()
     assert result["pnl"][0]["realized"] == 0.5

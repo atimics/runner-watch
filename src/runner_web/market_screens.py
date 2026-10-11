@@ -1102,18 +1102,31 @@ def detail(
         if market == "memecoins" and item.get("contract_address"):
             result["facts"].append({"label": "Contract", "value": item["contract_address"]})
             claimed = display_claim(source)
-            result["facts"].append(
-                {
-                    "label": "Creator-set name (unverified)",
-                    "value": claimed or "None recorded",
-                }
-            )
+            if not (data.get("token_lookup") or {}).get("name"):
+                result["facts"].append(
+                    {
+                        "label": "Creator-set name (unverified)",
+                        "value": claimed or "None recorded",
+                    }
+                )
         volume = source.get("volume_label") if market == "memecoins" else None
         if volume:
             result["facts"].append({"label": "24h volume", "value": volume})
         if market == "memecoins":
             result["facts"].extend(_pool_facts(source))
             result["pool_state"] = data.get("pool_state")
+            basics = data.get("token_lookup") or {}
+            if basics.get("name"):
+                result["facts"].append({"label": "Creator-set token name", "value": basics["name"]})
+            if basics.get("symbol"):
+                result["facts"].append({"label": "Creator-set symbol", "value": basics["symbol"]})
+            result["facts"].extend(basics.get("facts") or [])
+            if basics.get("checked_at"):
+                result["facts"].append({"label": "Basics checked", "value": basics["checked_at"]})
+            result["discovery"] = data.get("discovery")
+            result["lookup_pending"] = bool(data.get("lookup_pending"))
+            if result["lookup_pending"]:
+                result["refresh_url"] = f"/api/screens/memecoins/{source['token_address']}/detail"
         can_call = (
             bool(data.get("can_call"))
             if "can_call" in data or market == "memecoins"

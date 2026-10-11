@@ -359,7 +359,8 @@ def request_memecoin(address: str, *, at: datetime | None = None, source: str = 
         if _is_dead(checked.get(address), current):
             return False
         queue = _search_queue(database)
-        if address in queue:
+        requested = _time(queue.get(address))
+        if requested and 0 <= (current - requested).total_seconds() <= SEARCHED_DAYS * 86400:
             return True
         adds = _state_dict(database, "memecoin_search_adds")
         recent = [
@@ -649,6 +650,14 @@ def _ratify(
     }
     inputs: dict[str, dict[str, Any]] = {}
     try:
+        from runner_web.token_discoveries import remember, settle, valid_mint
+
+        for row in rows:
+            mint = str(row.get("token_address") or "")
+            if (row.get("discovery") or {}).get("found_by") == "address_search" and valid_mint(
+                mint
+            ):
+                remember(mint, at=at)
         state = ratify_rows(
             rows,
             saved.get("memecoin_ratification") or {},
@@ -668,6 +677,7 @@ def _ratify(
             },
             at=at,
         )
+        settle(rows, inputs, at=at)
     except Exception:
         LOG.warning("Ratification reads failed", exc_info=True)
         for row in rows:
@@ -999,7 +1009,10 @@ def _collect_helius(
         bursts, original_cache, download=download, at=at, pause=0, max_searches=0
     )
     stages.mark("originals")
-    tracked = {item["token_address"] for item in selected + curves}
+    from runner_web.token_discoveries import tracked_receipts
+
+    admitted = tracked_receipts(limit=SEARCHED_SLOTS, at=at)
+    tracked = {item["token_address"] for item in selected + curves + admitted}
     searched, looked_up = _searched_pools(tracked, download=download, at=at)
     stages.mark("searched")
     tracked |= {item["token_address"] for item in searched}
@@ -1018,8 +1031,10 @@ def _collect_helius(
     ]
     # Graduated pools first, then the few originals, then curves, busiest first:
     # a rate limit cuts the end of the list.
-    allowed = {item["pool_address"]: item for item in selected + found + searched + curves}
-    extra = {item["pool_address"] for item in curves + found + searched}
+    allowed = {
+        item["pool_address"]: item for item in admitted + selected + found + searched + curves
+    }
+    extra = {item["pool_address"] for item in curves + found + searched + admitted}
     source = price_source()
     chain = None
     if source in ("chain", "shadow"):

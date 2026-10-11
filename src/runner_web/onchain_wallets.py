@@ -76,6 +76,32 @@ def wallet_catalog(query: str = "") -> dict[str, Any]:
     return {"wallets": rows, "query": query, "label_date": "2025-01-26"}
 
 
+def token_positions(mint: str) -> list[dict[str, Any]]:
+    """Saved KOL positions for the token Sigil, with each position's own cost coverage."""
+    labels = {row["address"]: row["name"] for row in seed_wallets()}
+    with connection() as database:
+        rows = database.execute(
+            "SELECT address,payload_json FROM onchain_wallet_snapshots "
+            "WHERE address IN (" + ",".join("?" for _ in labels) + ") AND payload_json LIKE ?",
+            (*labels, "%" + mint + "%"),
+        ).fetchall()
+    positions = []
+    for row in rows:
+        snapshot = json.loads(row["payload_json"])
+        for holding in snapshot.get("holdings", []):
+            if holding.get("mint") == mint:
+                positions.append(
+                    {
+                        **holding,
+                        "address": row["address"],
+                        "name": labels[row["address"]],
+                        "updated_at": snapshot.get("updated_at"),
+                        "history_complete": not snapshot.get("has_more", True),
+                    }
+                )
+    return positions
+
+
 def saved_wallet(address: str, *, at: datetime | None = None) -> dict[str, Any]:
     address = _address(address)
     current = at or datetime.now(UTC)
