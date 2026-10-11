@@ -513,7 +513,8 @@
         if (current !== version) return;
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const rows = [...doc.querySelectorAll('.ticker-list a.ticker')].map(link => safe({href:link.getAttribute('href'),name:link.querySelector('.ticker-name strong')?.textContent,subtitle:link.querySelector('.ticker-name small')?.textContent})).filter(Boolean);
-        render(rows.slice(0,8), 'Matches', rows.length ? '' : 'Try another name or symbol.');
+        const token = doc.querySelector('[data-token-lookup]');
+        render(rows.slice(0,8), 'Matches', rows.length ? '' : token ? 'Press Enter to open token details.' : 'Try another name or symbol.');
       } catch (error) {
         if (current === version && error.name !== 'AbortError') render([], 'Matches', 'Press Enter to search.');
       }

@@ -1,0 +1,24 @@
+{% set token = screen.token_lookup %}
+<section class="token-lookup" aria-labelledby="tokenLookupTitle" data-token-lookup>
+  <header class="token-lookup-head">
+    <p class="eyebrow">{{ 'Address check' if token.status == 'invalid' else 'Token snapshot' }}</p>
+    <h2 id="tokenLookupTitle">{{ token.name or token.symbol or 'Token details' }}</h2>
+    {% if token.symbol and token.symbol != token.name %}<p>{{ token.symbol }}</p>{% endif %}
+    <code class="token-lookup-address">{{ token.address }}</code>
+  </header>
+  {% if token.status == 'invalid' %}
+  <p role="status">This address needs a token mint. Check the address and search again.</p>
+  {% else %}
+  {% if token.facts %}
+  <dl class="token-lookup-facts">
+    {% for fact in token.facts %}<div><dt>{{ fact.label }}</dt><dd{% if fact.address %} class="token-lookup-address"{% endif %}>{{ fact.value }}</dd></div>{% endfor %}
+  </dl>
+  {% else %}<p role="status">Token details are loading. The page checks for updates automatically.</p>{% endif %}
+  <p class="token-lookup-note">Trading history, holders and pool checks continue in the background.</p>
+  {% endif %}
+  <footer class="token-lookup-footer">
+    <a href="{{ request.url }}">Refresh details</a>
+    <a href="https://solscan.io/token/{{ token.address }}" target="_blank" rel="noopener noreferrer">View on Solscan ↗</a>
+    {% if token.checked_at %}<small>Checked {{ token.checked_at[:19]|replace('T', ' ') }} UTC{% if token.slot %} · Slot {{ token.slot }}{% endif %}</small>{% endif %}
+  </footer>
+</section>

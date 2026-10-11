@@ -53,6 +53,7 @@ def rpc_request(
     credits: int | None = None,
     lane: str = "other",
     at: datetime | None = None,
+    timeout: float = 20,
 ) -> dict[str, Any]:
     """One Helius call. `credits` is its cost when known; transaction pages
     default to 10 credits per 100 transactions. `lane` "price" may spend the
@@ -75,7 +76,7 @@ def rpc_request(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(read_limited(response, max_bytes=MAX_BYTES))
     except Exception:
         # Provider errors and HTTP exception URLs can contain the API key.

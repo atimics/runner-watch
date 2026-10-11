@@ -8328,6 +8328,7 @@ def _simple_board(
     updated_at: str = "",
     stories: dict[str, dict[str, Any]] | None = None,
     requested: str = "",
+    token_lookup: dict[str, Any] | None = None,
 ) -> HTMLResponse:
     from runner_web.market_screens import listing
 
@@ -8341,6 +8342,7 @@ def _simple_board(
         stock_calls=flash_open_calls(limit=500)["calls"] if market == "stocks" else None,
     )
     screen["requested"] = requested
+    screen["token_lookup"] = token_lookup
     return _simple_board_response(request, session, market, screen)
 
 

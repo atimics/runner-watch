@@ -673,19 +673,22 @@ P_DOOM = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
 
 
 def test_a_searched_address_we_do_not_track_is_queued(market_db, monkeypatch):
-    from runner_web import main
+    from runner_web import main, memecoin_lookup
 
     current = datetime.now(UTC)
     seed([coin(last_updated=current.isoformat())], at=current)
     monkeypatch.setattr(main, "enforce_rate", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "current_user", lambda *_: None)
+    monkeypatch.setattr(memecoin_lookup, "rpc_request", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(memecoin_lookup, "_download", lambda *_args: b"{}")
     client = TestClient(main.app)
 
     page = client.get("/memecoins", params={"q": P_DOOM})
     api = client.get("/api/memecoins", params={"q": "no such name"})
 
     assert page.status_code == 200
-    assert "Added to the watch" in page.text and P_DOOM in page.text
+    assert "Token snapshot" in page.text and P_DOOM in page.text
+    assert "Pending" in page.text
     # A name that matches nothing is not an address, so nothing is queued.
     assert api.json()["requested"] is False
     with connection() as database:
