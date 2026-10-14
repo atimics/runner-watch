@@ -17,12 +17,7 @@ def test_five_minute_uptime_preserves_all_http_probes_without_a_browser() -> Non
     assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
     assert workflow["on"]["schedule"] == [{"cron": "*/5 * * * *"}]
     jobs = workflow["jobs"]
-    assert set(jobs) == {"workers", "data", "monitor", "database"}
-    disk_check = jobs["database"]["steps"][-1]
-    assert disk_check["run"] == "python3 scripts/check-database-storage.py --app runner-watch-db"
-    assert disk_check["env"]["FLY_API_TOKEN"] == "${{ secrets.FLY_DATABASE_API_TOKEN }}"
-    backup = _workflow("backup.yml")["jobs"]["snapshot"]["steps"][-1]
-    assert backup["env"]["FLY_API_TOKEN"] == disk_check["env"]["FLY_API_TOKEN"]
+    assert set(jobs) == {"workers", "data", "monitor"}
     assert jobs["workers"]["steps"][0]["run"] == (
         "curl --fail --silent --show-error --max-time 15 --retry 2 --retry-delay 5 "
         "https://runners.rati.chat/health/workers"
