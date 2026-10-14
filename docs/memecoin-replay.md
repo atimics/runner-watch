@@ -46,6 +46,9 @@ reach the budget. Saved revisions and their evidence remain available. The
 worker checks the budget before rendering and again under a shared database
 lock before saving. Production uptime checks also flag database disks at 80%
 use or less than 5 GiB of free space.
+The uptime disk check and volume backup jobs use the GitHub Actions secret
+`FLY_DATABASE_API_TOKEN`, scoped to the `runner-watch-db` app. Renew this token
+before its expiry so both checks keep their database access.
 
 ## Quality contract
 

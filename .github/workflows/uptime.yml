@@ -22,7 +22,7 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - run: python3 scripts/check-database-storage.py --app runner-watch-db
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_API_TOKEN: ${{ secrets.FLY_DATABASE_API_TOKEN }}
 
   workers:
     name: Check worker and trainer health
