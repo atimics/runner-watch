@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -17,6 +18,11 @@ from runner_web.memecoin_replay_gif import render_gif_isolated
 
 LOG = logging.getLogger(__name__)
 MAX_REVISIONS_PER_COIN = 16
+# Keep the immutable archive within its share of the production database disk.
+MAX_ARCHIVE_BYTES = max(
+    16 * 1024 * 1024, int(os.getenv("MEMECOIN_REPLAY_ARCHIVE_MAX_BYTES", str(30 * 1024**3)))
+)
+ARCHIVE_WRITE_LOCK = 731940128
 # Two replays at a five-minute lease each, plus the GIF child's own limit.
 JOB_TIMEOUT_SECONDS = 600
 
@@ -202,6 +208,18 @@ def _indicator(coin: dict, at: datetime) -> dict | None:
         return None
 
 
+def _check_archive_capacity(database, additional_bytes: int = 0) -> None:
+    if database.backend == "postgres":
+        used = database.execute("SELECT pg_total_relation_size('memecoin_replays')").fetchone()[0]
+    else:
+        used = database.execute(
+            "SELECT COALESCE(SUM(length(CAST(payload_json AS BLOB))+length(gif_bytes)),0) "
+            "FROM memecoin_replays"
+        ).fetchone()[0]
+    if used + additional_bytes >= MAX_ARCHIVE_BYTES:
+        raise ValueError("archive_capacity")
+
+
 def render_pending_replays(
     *, at: datetime | None = None, limit: int = 2, renderer=render_gif_isolated
 ) -> dict:
@@ -250,10 +268,21 @@ def render_pending_replays(
             # verifies: then it cannot be served, and one rebuilt revision replaces it.
             if not same and count >= MAX_REVISIONS_PER_COIN and previous_id is not None:
                 raise ValueError("archive_capacity")
+            if not same:
+                with connection() as database:
+                    _check_archive_capacity(database)
             gif = None if same else renderer(payload, indicator=_indicator(coin, current))
             if not verify_replay(payload):
                 raise ValueError("quality_failed")
             with connection() as database:
+                payload_json = canonical(payload)
+                if not same:
+                    # Serialize the final budget check and insert across worker instances.
+                    if database.backend == "postgres":
+                        database.execute("SELECT pg_advisory_xact_lock(?)", (ARCHIVE_WRITE_LOCK,))
+                    _check_archive_capacity(
+                        database, len(payload_json.encode()) + len(gif) + 64 * 1024
+                    )
                 owned = database.execute(
                     "UPDATE memecoin_replay_cases SET latest_id=?,processed_at=?,lease_token=NULL,"
                     "lease_until=NULL,last_error=NULL WHERE coin_id=? AND lease_token=? "
@@ -269,7 +298,7 @@ def render_pending_replays(
                         (
                             payload["id"],
                             coin_id,
-                            canonical(payload),
+                            payload_json,
                             gif,
                             hashlib.sha256(gif).hexdigest(),
                             stamp,

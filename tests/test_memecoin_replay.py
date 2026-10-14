@@ -414,6 +414,53 @@ def test_archive_capacity_retains_the_saved_version_and_new_source_evidence(monk
     assert evidence.transaction_receipt(transaction("buy", 3)["transaction"]["signatures"][0])
 
 
+def test_global_archive_budget_keeps_saved_evidence_and_skips_new_render(monkeypatch):
+    collect()
+    store.render_pending_replays(at=AT, renderer=lambda *args, **kwargs: b"saved gif")
+    original = store.saved_replay(COIN["id"], with_gif=True)
+    monkeypatch.setattr(store, "MAX_ARCHIVE_BYTES", 1)
+    later = AT + timedelta(minutes=5)
+    collect(at=later, txs=[transaction("buy", 3)])
+
+    def render(*args, **kwargs):
+        pytest.fail("A full archive should defer before rendering")
+
+    assert store.render_pending_replays(at=later, renderer=render)["deferred"] == 1
+    assert store.saved_replay(COIN["id"], with_gif=True) == original
+    assert store.replay_status(COIN["id"])["collection_status"] == "archive_capacity"
+    assert evidence.transaction_receipt(transaction("buy", 3)["transaction"]["signatures"][0])
+
+
+def test_archive_budget_is_checked_again_after_render(monkeypatch):
+    collect()
+
+    def render(*args, **kwargs):
+        monkeypatch.setattr(store, "MAX_ARCHIVE_BYTES", 1)
+        return b"new gif"
+
+    assert store.render_pending_replays(at=AT, renderer=render)["deferred"] == 1
+    assert store.saved_replay(COIN["id"]) is None
+    with db.connection() as database:
+        case = database.execute("SELECT * FROM memecoin_replay_cases").fetchone()
+    assert case["last_error"] == "archive_capacity"
+    assert case["lease_token"] is None
+    assert case["latest_id"] is None
+
+
+def test_full_archive_can_reuse_an_unchanged_revision(monkeypatch):
+    collect()
+    store.render_pending_replays(at=AT, renderer=lambda *args, **kwargs: b"saved gif")
+    original = store.saved_replay(COIN["id"], with_gif=True)
+    monkeypatch.setattr(store, "MAX_ARCHIVE_BYTES", 1)
+    with db.connection() as database:
+        database.execute("UPDATE memecoin_replay_cases SET processed_at=NULL")
+    result = store.render_pending_replays(
+        at=AT, renderer=lambda *args, **kwargs: pytest.fail("Unchanged replay should be reused")
+    )
+    assert result == {"ready": 1, "deferred": 0}
+    assert store.saved_replay(COIN["id"], with_gif=True) == original
+
+
 def test_details_routes_return_the_same_saved_gif_and_package(monkeypatch):
     from fastapi.testclient import TestClient
 

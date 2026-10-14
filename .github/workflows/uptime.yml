@@ -13,6 +13,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  database:
+    name: Check database free space
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - run: python3 scripts/check-database-storage.py --app runner-watch-db
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
   workers:
     name: Check worker and trainer health
     runs-on: ubuntu-latest

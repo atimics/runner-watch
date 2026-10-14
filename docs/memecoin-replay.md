@@ -39,6 +39,14 @@ records `archive_capacity` for review. The next monitoring policy can set a
 larger archive budget. Receipt and package hashes identify the saved content;
 the RPC source supplies chain observations.
 
+The whole replay archive also has a 30 GiB storage budget, configured with
+`MEMECOIN_REPLAY_ARCHIVE_MAX_BYTES`. PostgreSQL counts the table, indexes, and
+stored large values. New revisions pause with `archive_capacity` when they
+reach the budget. Saved revisions and their evidence remain available. The
+worker checks the budget before rendering and again under a shared database
+lock before saving. Production uptime checks also flag database disks at 80%
+use or less than 5 GiB of free space.
+
 ## Quality contract
 
 The policy is `repository-qc1000/memecoin-replay/1`, owned by this repository.
