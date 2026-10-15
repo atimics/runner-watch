@@ -16,5 +16,7 @@ PostgreSQL recovery. Once database checks pass, start any stopped worker and
 verify worker health, feed timestamps, and the production browser sweep.
 
 Use `python3 scripts/check-database-storage.py --app runner-watch-db` for a
-manual capacity check. The backup script discovers attached `pg_data` volumes
-and waits for a new completed snapshot for each volume.
+manual capacity check. The backup script discovers `pg_data` volumes attached
+to running database machines and waits for a new completed snapshot for each
+volume. It requires at least one running database volume. This keeps scheduled
+backups focused on the current database, including any running replicas.

@@ -1,4 +1,4 @@
-"""Snapshot the attached database volumes and verify new recovery points."""
+"""Snapshot the running database volumes and verify new recovery points."""
 
 from __future__ import annotations
 
@@ -23,15 +23,22 @@ def records(*args: str) -> list[dict[str, Any]]:
 
 
 def backup_database(app: str, volume_name: str = "pg_data", wait_seconds: int = 600) -> list[str]:
+    running = {
+        machine["id"]
+        for machine in records("machine", "list", "--app", app)
+        if machine.get("state") == "started"
+    }
     volumes = [
         volume
         for volume in records("volumes", "list", "--app", app)
         if volume.get("name") == volume_name
         and volume.get("state") == "created"
-        and volume.get("attached_machine_id")
+        and volume.get("attached_machine_id") in running
     ]
     if not volumes:
-        raise RuntimeError(f"An attached {volume_name} volume is required for {app}")
+        raise RuntimeError(
+            f"A running database with an attached {volume_name} volume is required for {app}"
+        )
     snapshots = []
     for volume in volumes:
         volume_id = volume["id"]
