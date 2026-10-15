@@ -168,7 +168,7 @@ class FintelShortDataClient:
                 url,
                 {
                     "Accept": "application/json",
-                    "User-Agent": "RunnerWatch/0.3 https://stonks.rati.foundation",
+                    "User-Agent": "RunnerWatch/0.3 https://runners.rati.chat",
                     "X-API-KEY": self.api_key,
                 },
                 self.timeout,

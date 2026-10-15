@@ -62,7 +62,6 @@ class AuthRouteDependencies:
     take_challenge: Callable[[str, str], dict[str, Any]]
     rp_id_for_request: Callable[[Request], str]
     origin_for_request: Callable[[Request], str]
-    legacy_passkey_migration_available: Callable[[Request], bool]
     enum_value: Callable[[Any], str]
     token_hash: Callable[[str], str]
     iso: Callable[..., str]
@@ -70,7 +69,6 @@ class AuthRouteDependencies:
     connection: Callable[[], Any]
     runners_origin: Callable[[], str]
     sports_origin: Callable[[], str]
-    legacy_rp_id: Callable[[], str]
     registration_mode: Callable[[], str]
     registration_invite_codes: Callable[[], tuple[str, ...]]
     session_cookie: str
@@ -89,8 +87,6 @@ class AuthRoutes:
     register_verify: Callable[..., Any]
     login_options: Callable[..., Any]
     login_verify: Callable[..., Any]
-    legacy_login_options: Callable[..., Any]
-    legacy_login_verify: Callable[..., Any]
     add_passkey_page: Callable[..., Any]
     reauth_options: Callable[..., Any]
     reauth_verify: Callable[..., Any]
@@ -329,61 +325,6 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
         dependencies.create_session(passkey["user_id"], response)
         return response
 
-    @router.post("/api/auth/login/legacy/options")
-    def legacy_login_options(request: Request) -> JSONResponse:
-
-        dependencies.require_origin(request)
-        if not dependencies.legacy_passkey_migration_available(request):
-            raise HTTPException(404, "Legacy passkey migration is not available here.")
-        dependencies.enforce_rate(request, "legacy-login-options", limit=10, seconds=600)
-        options = generate_authentication_options(
-            rp_id=dependencies.legacy_rp_id(),
-            timeout=60_000,
-            user_verification=UserVerificationRequirement.REQUIRED,
-        )
-        flow_token = dependencies.save_challenge("login_legacy", options.challenge)
-        return JSONResponse(
-            {"flow_token": flow_token, "options": json.loads(options_to_json(options))}
-        )
-
-    @router.post("/api/auth/login/legacy/verify")
-    def legacy_login_verify(payload: PasskeyFinish, request: Request) -> JSONResponse:
-
-        dependencies.require_origin(request)
-        if not dependencies.legacy_passkey_migration_available(request):
-            raise HTTPException(404, "Legacy passkey migration is not available here.")
-        dependencies.enforce_rate(request, "legacy-login-verify", limit=12, seconds=600)
-        flow = dependencies.take_challenge(payload.flow_token, "login_legacy")
-        credential_id = base64url_to_bytes(payload.credential.get("id", ""))
-        with dependencies.connection() as db:
-            passkey = db.execute(
-                "SELECT * FROM passkeys WHERE credential_id=?", (credential_id,)
-            ).fetchone()
-        if not passkey:
-            raise HTTPException(404, "This passkey is not registered on the old site.")
-        try:
-            verification = verify_authentication_response(
-                credential=payload.credential,
-                expected_challenge=flow["challenge"],
-                expected_rp_id=dependencies.legacy_rp_id(),
-                expected_origin=dependencies.origin_for_request(request),
-                credential_public_key=passkey["public_key"],
-                credential_current_sign_count=passkey["sign_count"],
-                require_user_verification=True,
-            )
-        except Exception as exc:
-            LOG.warning("Legacy passkey login failed", exc_info=True)
-            raise HTTPException(400, "Legacy passkey login failed.") from exc
-        with dependencies.connection() as db:
-            db.execute(
-                "UPDATE passkeys SET sign_count=?,last_used_at=? WHERE credential_id=?",
-                (verification.new_sign_count, dependencies.iso(), credential_id),
-            )
-        require_active_account(passkey["user_id"])
-        response = JSONResponse({"ok": True, "redirect": "/settings/passkey?migrate=1"})
-        dependencies.create_session(passkey["user_id"], response)
-        return response
-
     @router.get("/settings/passkey", response_class=HTMLResponse)
     def add_passkey_page(
         request: Request,
@@ -399,7 +340,6 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
                 request,
                 runner_session,
                 resolved_user=user,
-                migrating_legacy_passkey=request.query_params.get("migrate") == "1",
             ),
         )
 
@@ -588,8 +528,6 @@ def create_auth_routes(dependencies: AuthRouteDependencies) -> AuthRoutes:
         register_verify=register_verify,
         login_options=login_options,
         login_verify=login_verify,
-        legacy_login_options=legacy_login_options,
-        legacy_login_verify=legacy_login_verify,
         add_passkey_page=add_passkey_page,
         reauth_options=reauth_options,
         reauth_verify=reauth_verify,

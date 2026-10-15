@@ -34,7 +34,7 @@ EASTERN = ZoneInfo("America/New_York")
 MASSIVE_API_ROOT = "https://api.massive.com"
 GROUPED_DAILY_PATH = "/v2/aggs/grouped/locale/us/market/stocks/{date}"
 DEFAULT_CACHE_PATH = "data/massive_daily.sqlite3"
-USER_AGENT = "RunnerWatch/0.3 https://stonks.rati.foundation"
+USER_AGENT = "RunnerWatch/0.3 https://runners.rati.chat"
 MAX_WAIT_PER_CALL_SECONDS = 30.0
 
 _PERIOD_DAYS = {

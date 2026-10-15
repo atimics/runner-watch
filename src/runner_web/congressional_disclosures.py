@@ -27,7 +27,7 @@ from runner_web.ingestion import (
 HOUSE_INDEX_URL = "https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{year}FD.ZIP"
 HOUSE_PTR_URL = "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{year}/{document_id}.pdf"
 HOUSE_DISCLOSURE_PAGE = "https://disclosures-clerk.house.gov/FinancialDisclosure/ViewSearch"
-USER_AGENT = "RunnerWatch/0.2 congressional-disclosure ingestion https://stonks.rati.foundation"
+USER_AGENT = "RunnerWatch/0.2 congressional-disclosure ingestion https://runners.rati.chat"
 EASTERN = ZoneInfo("America/New_York")
 PARSER_VERSION = "house-ptr.v1"
 MAX_INDEX_BYTES = 10 * 1024 * 1024

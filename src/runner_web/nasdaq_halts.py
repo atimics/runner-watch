@@ -14,7 +14,7 @@ from runner_web.ingestion import record_source_batch, record_source_fetch
 
 TRADE_HALT_URL = "https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts"
 TRADE_HALT_PAGE = "https://www.nasdaqtrader.com/Trader.aspx?id=TradeHaltRSS"
-USER_AGENT = "RunnerWatch/0.2 https://stonks.rati.foundation"
+USER_AGENT = "RunnerWatch/0.2 https://runners.rati.chat"
 EASTERN = ZoneInfo("America/New_York")
 MAX_TRADE_HALT_RESPONSE_BYTES = 2 * 1024 * 1024
 Download = Callable[[str, float], tuple[bytes, str | None]]

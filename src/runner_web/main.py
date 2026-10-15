@@ -479,10 +479,8 @@ LOG = logging.getLogger(__name__)
 APP_ORIGIN = os.getenv("APP_ORIGIN", "http://localhost:8080").rstrip("/")
 RUNNERS_ORIGIN = os.getenv("RUNNERS_ORIGIN", APP_ORIGIN).rstrip("/")
 SPORTS_ORIGIN = os.getenv("SPORTS_ORIGIN", "https://sports.rati.chat").rstrip("/")
-LEGACY_ORIGIN = os.getenv("LEGACY_ORIGIN", "https://stonks.rati.foundation").rstrip("/")
 TRUST_ORIGIN = os.getenv("TRUST_ORIGIN", "https://trust.rati.chat").rstrip("/")
 RP_ID = os.getenv("RP_ID", "localhost")
-LEGACY_RP_ID = os.getenv("LEGACY_RP_ID", "stonks.rati.foundation")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
 TRUST_FLY_CLIENT_IP = os.getenv("TRUST_FLY_CLIENT_IP", "0") == "1"
@@ -1439,7 +1437,6 @@ def _request_host(request: Request) -> str:
     known_hosts = {
         _origin_host(RUNNERS_ORIGIN),
         _origin_host(SPORTS_ORIGIN),
-        _origin_host(LEGACY_ORIGIN),
         _origin_host(TRUST_ORIGIN),
     }
     return forwarded_host if forwarded_host in known_hosts else direct_host
@@ -1455,25 +1452,13 @@ def origin_for_request(request: Request) -> str:
     known = {
         _origin_host(RUNNERS_ORIGIN): RUNNERS_ORIGIN,
         _origin_host(SPORTS_ORIGIN): SPORTS_ORIGIN,
-        _origin_host(LEGACY_ORIGIN): LEGACY_ORIGIN,
         _origin_host(TRUST_ORIGIN): TRUST_ORIGIN,
     }
     return known.get(host, APP_ORIGIN)
 
 
 def rp_id_for_request(request: Request) -> str:
-    host = _request_host(request)
-    return LEGACY_RP_ID if host == _origin_host(LEGACY_ORIGIN) else RP_ID
-
-
-def legacy_passkey_migration_available(request: Request) -> bool:
-    host = _request_host(request)
-    new_hosts = {
-        _origin_host(origin)
-        for origin in (RUNNERS_ORIGIN, SPORTS_ORIGIN)
-        if origin.startswith("https://")
-    }
-    return LEGACY_RP_ID != RP_ID and host in new_hosts
+    return RP_ID
 
 
 def require_origin(request: Request) -> None:
@@ -1700,7 +1685,6 @@ def page_context(
         "runners_origin": RUNNERS_ORIGIN,
         "sports_origin": SPORTS_ORIGIN,
         "registration_invite_required": REGISTRATION_MODE == "invite",
-        "legacy_passkey_migration_available": legacy_passkey_migration_available(request),
         "sports_path_prefix": sports_path_prefix,
         "board_base": _board_base_path(nav_product, sports_path_prefix),
         "board_links": _board_view_links(nav_product, sports_path_prefix),
@@ -3114,13 +3098,10 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     nonce = secrets.token_urlsafe(16)
     request.state.csp_nonce = nonce
     request.state.product = product_for_request(request)
-    direct_host = (request.url.hostname or "").lower()
     public_health_path = request.url.path in {"/live", "/health", "/ready"}
-    legacy_direct_request = direct_host == _origin_host(LEGACY_ORIGIN)
     if (
         REQUIRE_EDGE_PROXY_SECRET
         and not public_health_path
-        and not legacy_direct_request
         and not _edge_proxy_authenticated(request)
     ):
         response = JSONResponse({"detail": "Not found"}, status_code=404)
@@ -11615,9 +11596,6 @@ auth_routes = create_auth_routes(
         take_challenge=lambda token, kind: take_challenge(token, kind),
         rp_id_for_request=lambda request: rp_id_for_request(request),
         origin_for_request=lambda request: origin_for_request(request),
-        legacy_passkey_migration_available=lambda request: legacy_passkey_migration_available(
-            request
-        ),
         enum_value=lambda value: enum_value(value),
         token_hash=lambda token: token_hash(token),
         iso=lambda *args, **kwargs: iso(*args, **kwargs),
@@ -11625,7 +11603,6 @@ auth_routes = create_auth_routes(
         connection=lambda: connection(),
         runners_origin=lambda: RUNNERS_ORIGIN,
         sports_origin=lambda: SPORTS_ORIGIN,
-        legacy_rp_id=lambda: LEGACY_RP_ID,
         registration_mode=lambda: REGISTRATION_MODE,
         registration_invite_codes=lambda: REGISTRATION_INVITE_CODES,
         session_cookie=SESSION_COOKIE,
@@ -11642,8 +11619,6 @@ register_options = auth_routes.register_options
 register_verify = auth_routes.register_verify
 login_options = auth_routes.login_options
 login_verify = auth_routes.login_verify
-legacy_login_options = auth_routes.legacy_login_options
-legacy_login_verify = auth_routes.legacy_login_verify
 add_passkey_page = auth_routes.add_passkey_page
 reauth_options = auth_routes.reauth_options
 reauth_verify = auth_routes.reauth_verify

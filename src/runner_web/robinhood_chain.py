@@ -31,7 +31,7 @@ PRICES_URL = f"{API_ROOT}/prices"
 CORPORATE_ACTIONS_URL = f"{API_ROOT}/corporate-actions"
 DOCS_URL = "https://docs.robinhood.com/chain/stock-tokens"
 CHAIN_ID = 4663
-USER_AGENT = "RunnerWatch/0.3 https://stonks.rati.foundation"
+USER_AGENT = "RunnerWatch/0.3 https://runners.rati.chat"
 
 Transport = Callable[[str, dict[str, str], float], Any]
 
