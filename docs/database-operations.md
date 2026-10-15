@@ -20,3 +20,7 @@ manual capacity check. The backup script discovers `pg_data` volumes attached
 to running database machines and waits for a new completed snapshot for each
 volume. It requires at least one running database volume. This keeps scheduled
 backups focused on the current database, including any running replicas.
+The job schedules all selected volumes before waiting and allows 30 minutes
+for their snapshots to finish. A retry resumes any snapshot that is already
+running and still verifies its completed state. The workflow has a 35-minute
+limit to allow time for setup and the snapshot requests.
