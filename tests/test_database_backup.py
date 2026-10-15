@@ -143,3 +143,57 @@ def test_backup_requires_a_running_database(monkeypatch, machines):
     with pytest.raises(RuntimeError, match="running database"):
         backup.backup_database("test-db")
     assert all("create" not in args for args in calls)
+
+
+@pytest.mark.parametrize("state", ["waiting", "running", "pending"])
+def test_backup_resumes_a_snapshot_started_by_a_previous_attempt(monkeypatch, state):
+    calls = []
+    polls = 0
+
+    def fly(*args):
+        nonlocal polls
+        calls.append(args)
+        if args[:2] == ("machine", "list"):
+            return json.dumps([{"id": "machine", "state": "started"}])
+        if args[:2] == ("volumes", "list"):
+            return json.dumps([volume()])
+        assert "create" not in args
+        polls += 1
+        return json.dumps(
+            [
+                {"id": "old", "status": "created"},
+                {"id": "current", "status": state if polls == 1 else "created"},
+            ]
+        )
+
+    monkeypatch.setattr(backup, "fly", fly)
+    assert backup.backup_database("test-db") == ["current"]
+
+
+def test_backup_schedules_all_volumes_before_waiting_with_one_time_budget(monkeypatch):
+    created = []
+    polls = {}
+
+    def fly(*args):
+        if args[:2] == ("machine", "list"):
+            return json.dumps([{"id": "machine", "state": "started"}])
+        if args[:2] == ("volumes", "list"):
+            return json.dumps([volume("primary"), volume("replica")])
+        identifier = args[3]
+        if "create" in args:
+            created.append(identifier)
+            return "Scheduled"
+        polls[identifier] = polls.get(identifier, 0) + 1
+        if polls[identifier] == 1:
+            return "[]"
+        assert created == ["primary", "replica"]
+        return json.dumps([{"id": f"new-{identifier}", "status": "running"}])
+
+    ticks = iter([0, 5, 10])
+    pauses = []
+    monkeypatch.setattr(backup, "fly", fly)
+    monkeypatch.setattr(backup.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(backup.time, "sleep", pauses.append)
+    with pytest.raises(TimeoutError, match="primary, replica"):
+        backup.backup_database("test-db", wait_seconds=10)
+    assert pauses == [5]
