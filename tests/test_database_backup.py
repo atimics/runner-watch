@@ -31,6 +31,8 @@ def test_backup_discovers_attached_volumes_and_waits_for_new_snapshot(monkeypatc
     def fly(*args):
         nonlocal polls
         calls.append(args)
+        if args[:2] == ("machine", "list"):
+            return json.dumps([{"id": "machine", "state": "started"}])
         if args[:2] == ("volumes", "list"):
             return json.dumps(
                 [
@@ -62,7 +64,13 @@ def test_backup_discovers_attached_volumes_and_waits_for_new_snapshot(monkeypatc
     "volumes", [[], [volume(attached_machine_id=None)], [volume(state="destroyed")]]
 )
 def test_backup_requires_an_attached_database_volume(monkeypatch, volumes):
-    monkeypatch.setattr(backup, "fly", lambda *args: json.dumps(volumes))
+    monkeypatch.setattr(
+        backup,
+        "fly",
+        lambda *args: json.dumps(
+            [{"id": "machine", "state": "started"}] if args[:2] == ("machine", "list") else volumes
+        ),
+    )
     with pytest.raises(RuntimeError, match="attached pg_data volume"):
         backup.backup_database("test-db")
 
@@ -73,6 +81,8 @@ def test_backup_requires_snapshot_completion(monkeypatch, status, error):
 
     def fly(*args):
         nonlocal polls
+        if args[:2] == ("machine", "list"):
+            return json.dumps([{"id": "machine", "state": "started"}])
         if args[:2] == ("volumes", "list"):
             return json.dumps([volume()])
         if "create" in args:
@@ -83,3 +93,53 @@ def test_backup_requires_snapshot_completion(monkeypatch, status, error):
     monkeypatch.setattr(backup, "fly", fly)
     with pytest.raises(error):
         backup.backup_database("test-db", wait_seconds=0)
+
+
+def test_backup_selects_running_database_among_stopped_copies(monkeypatch):
+    calls = []
+    polls = {}
+
+    def fly(*args):
+        calls.append(args)
+        if args[:2] == ("machine", "list"):
+            return json.dumps(
+                [
+                    {"id": "old-copy", "state": "stopped"},
+                    {"id": "primary", "state": "started"},
+                    {"id": "replica", "state": "started"},
+                ]
+            )
+        if args[:2] == ("volumes", "list"):
+            return json.dumps(
+                [
+                    volume("old", attached_machine_id="old-copy"),
+                    volume("live", attached_machine_id="primary"),
+                    volume("replica", attached_machine_id="replica"),
+                    volume("unknown", attached_machine_id="missing-machine"),
+                ]
+            )
+        identifier = args[3]
+        if "create" in args:
+            return "Scheduled"
+        polls[identifier] = polls.get(identifier, 0) + 1
+        return json.dumps(
+            [] if polls[identifier] == 1 else [{"id": f"new-{identifier}", "status": "created"}]
+        )
+
+    monkeypatch.setattr(backup, "fly", fly)
+    assert backup.backup_database("test-db") == ["new-live", "new-replica"]
+    assert [args[3] for args in calls if "create" in args] == ["live", "replica"]
+
+
+@pytest.mark.parametrize("machines", [[], [{"id": "machine", "state": "stopped"}]])
+def test_backup_requires_a_running_database(monkeypatch, machines):
+    calls = []
+
+    def fly(*args):
+        calls.append(args)
+        return json.dumps(machines if args[:2] == ("machine", "list") else [volume()])
+
+    monkeypatch.setattr(backup, "fly", fly)
+    with pytest.raises(RuntimeError, match="running database"):
+        backup.backup_database("test-db")
+    assert all("create" not in args for args in calls)
