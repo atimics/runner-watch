@@ -85,7 +85,7 @@ def test_new_passkey_is_created_on_the_current_device(
     assert selection["userVerification"] == "required"
 
 
-def test_legacy_passkey_migration_publishes_related_origins(
+def test_webauthn_publishes_related_origins(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(web_main, "RUNNERS_ORIGIN", "https://runners.rati.chat")
@@ -98,41 +98,15 @@ def test_legacy_passkey_migration_publishes_related_origins(
     }
 
 
-def test_new_host_can_start_a_legacy_rp_login(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "legacy-login.db")
-    monkeypatch.setattr(web_main, "RUNNERS_ORIGIN", "https://runners.rati.chat")
-    monkeypatch.setattr(web_main, "SPORTS_ORIGIN", "https://sports.rati.chat")
-    monkeypatch.setattr(web_main, "LEGACY_RP_ID", "stonks.rati.foundation")
-    monkeypatch.setattr(web_main, "RP_ID", "rati.chat")
-    monkeypatch.setattr(web_main, "enforce_rate", lambda *_args, **_kwargs: None)
-    init_db()
-
-    response = web_main.legacy_login_options(
-        hosted_request(
-            "POST",
-            "/api/auth/login/legacy/options",
-            "https://runners.rati.chat",
-        )
-    )
-    payload = json.loads(response.body)
-
-    assert payload["options"]["rpId"] == "stonks.rati.foundation"
-    with connection() as database:
-        challenge = database.execute(
-            "SELECT kind FROM auth_challenges WHERE token=?",
-            (payload["flow_token"],),
-        ).fetchone()
-    assert challenge["kind"] == "login_legacy"
-
-
-def test_login_and_passkey_pages_expose_the_account_migration() -> None:
+def test_old_site_passkey_login_is_gone() -> None:
     auth = (Path(__file__).parents[1] / "web/templates/auth.html").read_text()
     passkey = (Path(__file__).parents[1] / "web/templates/passkey_add.html").read_text()
 
-    assert "Use a passkey from the old site" in auth
-    assert "/api/auth/login/legacy" in auth
-    assert "if (!migratingLegacyPasskey)" in passkey
-    assert "keeps your account and history" in passkey
+    assert "/api/auth/login/legacy" not in auth
+    assert "migratingLegacyPasskey" not in passkey
+    # Adding a passkey always confirms an existing one first.
+    assert "/api/auth/reauth/options" in passkey
+    assert not hasattr(web_main, "legacy_login_options")
 
 
 def test_passkey_challenge_can_only_be_consumed_once(

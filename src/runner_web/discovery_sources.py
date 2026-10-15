@@ -14,7 +14,7 @@ from runner_watch.ingestion import MarketEvent, SourceBatch, SourceFetch
 from runner_web.db import connection
 from runner_web.ingestion import record_source_batch
 
-USER_AGENT = "RunnerWatch/0.2 https://stonks.rati.foundation"
+USER_AGENT = "RunnerWatch/0.2 https://runners.rati.chat"
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 BLUESKY_BASE = os.getenv("BLUESKY_APPVIEW_BASE", "https://public.api.bsky.app").rstrip("/")
 BLUESKY_SEARCH_URL = f"{BLUESKY_BASE}/xrpc/app.bsky.feed.searchPosts"

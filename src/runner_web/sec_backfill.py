@@ -753,7 +753,7 @@ def main() -> None:
     if not user_agent:
         import os
 
-        user_agent = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://stonks.rati.foundation")
+        user_agent = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://runners.rati.chat")
     end_date = arguments.end_date
     start_date = arguments.start_date or end_date - timedelta(days=arguments.years * 366)
     result = backfill_sec_corpus(

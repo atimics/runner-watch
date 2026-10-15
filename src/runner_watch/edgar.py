@@ -26,7 +26,7 @@ COMPANY_MAP_URL = f"{SEC_BASE}/files/company_tickers_exchange.json"
 LATEST_FILINGS_URL = (
     f"{SEC_BASE}/cgi-bin/browse-edgar?action=getcurrent&count=100&output=atom&owner=include"
 )
-SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://stonks.rati.foundation")
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://runners.rati.chat")
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 # "Item 3.01: Notice of Delisting ..." lines in an 8-K's feed summary.
 ITEM_RE = re.compile(r"\bItem (\d{1,2}\.\d{2})\b")

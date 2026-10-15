@@ -13,7 +13,7 @@ from typing import Any
 from runner_watch.ingestion import IssuerFact, SourceBatch, SourceFetch
 from runner_web.ingestion import record_source_batch
 
-SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://stonks.rati.foundation")
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "RunnerWatch/0.2 https://runners.rati.chat")
 COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
 Download = Callable[[str, float], tuple[bytes, str | None]]
 

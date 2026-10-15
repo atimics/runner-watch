@@ -25,7 +25,7 @@ from runner_web.legal_risk import (
     record_legal_search,
 )
 
-USER_AGENT = "RunnerWatch/0.2 legal-risk ingestion https://stonks.rati.foundation"
+USER_AGENT = "RunnerWatch/0.2 legal-risk ingestion https://runners.rati.chat"
 OFAC_SDN_URL = "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.XML"
 OFAC_PUBLIC_URL = "https://ofac.treasury.gov/sanctions-list-service"
 HHS_LEIE_URL = "https://oig.hhs.gov/exclusions/downloadables/UPDATED.csv"
