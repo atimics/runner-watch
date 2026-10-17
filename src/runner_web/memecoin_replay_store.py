@@ -11,6 +11,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from runner_web import replay_objects
 from runner_web.db import connection
 from runner_web.helius_discovery import _address
 from runner_web.memecoin_replay import build_replay, canonical, verify_replay
@@ -114,7 +115,7 @@ def saved_replay(
     with connection() as database:
         row = database.execute(
             "SELECT r.id,r.payload_json,r.gif_sha256,r.created_at"
-            + (",r.gif_bytes" if with_gif else "")
+            + (",r.gif_bytes,r.gif_object_key" if with_gif else "")
             + " FROM memecoin_replays r "
             + (
                 "WHERE r.coin_id=? AND r.id=?"
@@ -130,7 +131,11 @@ def saved_replay(
         raise ValueError("Stored replay quality checks failed")
     result = {"payload": payload, "gif_sha256": row["gif_sha256"], "created_at": row["created_at"]}
     if with_gif:
-        gif = bytes(row["gif_bytes"])
+        gif = (
+            replay_objects.read_gif(row["gif_object_key"], row["gif_sha256"])
+            if row["gif_object_key"]
+            else bytes(row["gif_bytes"])
+        )
         if hashlib.sha256(gif).hexdigest() != row["gif_sha256"]:
             raise ValueError("Stored GIF hash check failed")
         result["gif"] = gif
@@ -274,6 +279,11 @@ def render_pending_replays(
             gif = None if same else renderer(payload, indicator=_indicator(coin, current))
             if not verify_replay(payload):
                 raise ValueError("quality_failed")
+            gif_digest = hashlib.sha256(gif).hexdigest() if gif is not None else None
+            gif_object_key = None
+            if gif is not None and replay_objects.bucket():
+                gif_object_key = replay_objects.save_gif(gif, gif_digest)
+            stored_gif = b"" if gif_object_key else gif
             with connection() as database:
                 payload_json = canonical(payload)
                 if not same:
@@ -281,7 +291,7 @@ def render_pending_replays(
                     if database.backend == "postgres":
                         database.execute("SELECT pg_advisory_xact_lock(?)", (ARCHIVE_WRITE_LOCK,))
                     _check_archive_capacity(
-                        database, len(payload_json.encode()) + len(gif) + 64 * 1024
+                        database, len(payload_json.encode()) + len(stored_gif) + 64 * 1024
                     )
                 owned = database.execute(
                     "UPDATE memecoin_replay_cases SET latest_id=?,processed_at=?,lease_token=NULL,"
@@ -294,14 +304,16 @@ def render_pending_replays(
                 if not same:
                     database.execute(
                         "INSERT INTO memecoin_replays(id,coin_id,payload_json,gif_bytes,gif_sha256,"
-                        "created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                        "created_at,gif_object_key) VALUES(?,?,?,?,?,?,?) "
+                        "ON CONFLICT(id) DO NOTHING",
                         (
                             payload["id"],
                             coin_id,
                             payload_json,
-                            gif,
-                            hashlib.sha256(gif).hexdigest(),
+                            stored_gif,
+                            gif_digest,
                             stamp,
+                            gif_object_key,
                         ),
                     )
             result["ready"] += 1

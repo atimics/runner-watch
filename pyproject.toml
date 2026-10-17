@@ -5,6 +5,7 @@ description = "A free-data stock momentum scanner for finding possible market ru
 license = "AGPL-3.0-only"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+  "boto3>=1.40,<2",
   "cryptography>=44",
   "defusedxml>=0.7.1",
   "fastapi>=0.116",

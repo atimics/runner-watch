@@ -461,6 +461,54 @@ def test_full_archive_can_reuse_an_unchanged_revision(monkeypatch):
     assert store.saved_replay(COIN["id"], with_gif=True) == original
 
 
+def test_gif_migration_preserves_pinned_bytes_and_resumes(monkeypatch):
+    from runner_web import replay_objects, storage_maintenance
+    from tests.test_replay_objects import FakeStore
+
+    collect()
+    store.render_pending_replays(at=AT, renderer=lambda *args, **kwargs: b"saved gif")
+    original = store.saved_replay(COIN["id"], with_gif=True)
+    backend = FakeStore()
+    monkeypatch.setenv("MEMECOIN_REPLAY_BUCKET", "test-replays")
+    monkeypatch.setattr(replay_objects, "client", lambda: backend)
+    backend.corrupt = True
+    with pytest.raises(ValueError, match="hash check"):
+        storage_maintenance.migrate_gifs()
+    assert store.saved_replay(COIN["id"], with_gif=True) == original
+    backend.corrupt = False
+    assert storage_maintenance.migrate_gifs() == {"migrated": 1, "bytes": 9}
+    assert storage_maintenance.migrate_gifs() == {"migrated": 0, "bytes": 0}
+    with db.connection() as database:
+        assert (
+            bytes(database.execute("SELECT gif_bytes FROM memecoin_replays").fetchone()[0]) == b""
+        )
+    assert store.saved_replay(COIN["id"], original["payload"]["id"], with_gif=True) == original
+
+
+def test_new_gifs_use_objects_and_upload_failure_retries(monkeypatch):
+    from runner_web import replay_objects
+    from tests.test_replay_objects import FakeStore
+
+    backend = FakeStore()
+    monkeypatch.setenv("MEMECOIN_REPLAY_BUCKET", "test-replays")
+    monkeypatch.setattr(replay_objects, "client", lambda: backend)
+    collect()
+    backend.corrupt = True
+    assert store.render_pending_replays(at=AT, renderer=lambda *a, **k: b"gif")["deferred"] == 1
+    assert store.saved_replay(COIN["id"]) is None
+    backend.corrupt = False
+    assert (
+        store.render_pending_replays(at=AT + timedelta(minutes=2), renderer=lambda *a, **k: b"gif")[
+            "ready"
+        ]
+        == 1
+    )
+    assert store.saved_replay(COIN["id"], with_gif=True)["gif"] == b"gif"
+    with db.connection() as database:
+        row = database.execute("SELECT gif_bytes,gif_object_key FROM memecoin_replays").fetchone()
+    assert bytes(row["gif_bytes"]) == b"" and row["gif_object_key"]
+
+
 def test_details_routes_return_the_same_saved_gif_and_package(monkeypatch):
     from fastapi.testclient import TestClient
 

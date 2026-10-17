@@ -1752,6 +1752,8 @@ async def edgar_worker() -> None:
 
 
 async def outcome_worker() -> None:
+    from runner_web.collection_retention import prune_collection_history
+
     await asyncio.sleep(75)
     while True:
         try:
@@ -1771,6 +1773,10 @@ async def outcome_worker() -> None:
                 _invalidate_runners_feeds("pulse")
             await asyncio.wait_for(
                 run_in_threadpool(prune_storage),
+                timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
+            )
+            await asyncio.wait_for(
+                run_in_threadpool(prune_collection_history),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
         except asyncio.CancelledError:

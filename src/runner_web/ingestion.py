@@ -665,9 +665,11 @@ def _normalized_projection(
 
 def record_source_batch(batch: SourceBatch) -> str:
 
+    from runner_web.collection_retention import compact_metadata
+
     fetch = batch.fetch
     run_id = uuid.uuid4().hex
-    metadata_json = _json(fetch.metadata)
+    metadata_json = _json(compact_metadata(fetch.metadata))
     requested_count = _requested_count(fetch)
     received_count = _batch_size(batch) or _received_count(fetch)
     projection_error: Exception | None = None

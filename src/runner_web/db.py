@@ -4034,6 +4034,20 @@ def _migration_102_token_discoveries(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_103_replay_objects(db: DatabaseConnection) -> None:
+    _ensure_column(db, "memecoin_replays", "gif_object_key TEXT")
+    _ensure_column(db, "ingestion_runs", "details_pruned_at TEXT")
+    db.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS replay_gifs_pending ON memecoin_replays(id)
+            WHERE gif_object_key IS NULL;
+        CREATE INDEX IF NOT EXISTS ingestion_runs_started ON ingestion_runs(started_at,id);
+        CREATE INDEX IF NOT EXISTS ingestion_details_pending ON ingestion_runs(started_at,id)
+            WHERE details_pruned_at IS NULL;
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4143,6 +4157,7 @@ MIGRATIONS = (
     Migration(100, "onchain_wallet_snapshots", _migration_100_onchain_wallet_snapshots),
     Migration(101, "wallet_backfills", _migration_101_wallet_backfills),
     Migration(102, "token_discoveries", _migration_102_token_discoveries),
+    Migration(103, "replay_objects", _migration_103_replay_objects),
 )
 
 
