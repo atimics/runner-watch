@@ -73,7 +73,7 @@ def prune_collection_history(*, at: datetime | None = None, limit: int = 500) ->
             if not database.execute("SELECT pg_try_advisory_xact_lock(?)", (LOCK_ID,)).fetchone()[
                 0
             ]:
-                return result
+                return {**result, "busy": True}
         cutoff = _cutoff(database, at=current, days=DETAIL_DAYS, keep=DETAIL_RUNS)
         rows = database.execute(
             "SELECT id FROM ingestion_runs WHERE started_at<? AND details_pruned_at IS NULL "

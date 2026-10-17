@@ -106,6 +106,27 @@ def test_active_collection_keeps_its_details():
     assert retention.prune_collection_history(at=AT)["detail_runs"] == 0
 
 
+def test_bulk_cleanup_waits_for_the_scheduled_worker(monkeypatch, capsys):
+    from runner_web import storage_maintenance
+
+    pending = iter(
+        [
+            {"detail_runs": 0, "items": 0, "summaries": 0, "busy": True},
+            {"detail_runs": 2, "items": 5, "summaries": 0},
+            {"detail_runs": 0, "items": 0, "summaries": 0},
+        ]
+    )
+    waits = []
+    monkeypatch.setattr("sys.argv", ["storage-maintenance", "prune-logs", "--all"])
+    monkeypatch.setattr(storage_maintenance, "prune_collection_history", lambda **kw: next(pending))
+    monkeypatch.setattr(storage_maintenance.time, "sleep", waits.append)
+    storage_maintenance.main()
+    reports = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert waits == [2]
+    assert sum(row["items"] for row in reports) == 5
+    assert reports[-1]["detail_runs"] == 0
+
+
 def test_all_normalized_foreign_keys_are_covered_by_retention():
     with db.connection() as database:
         tables = [
@@ -152,6 +173,9 @@ def test_postgres_migration_retention_and_object_handoff(monkeypatch):
     monkeypatch.setenv("MEMECOIN_REPLAY_BUCKET", "test-replays")
     monkeypatch.setattr(replay_objects, "client", lambda: backend)
     assert storage_maintenance.migrate_gifs() == {"migrated": 1, "bytes": 8}
+    with db.connection() as database:
+        database.execute("SELECT pg_advisory_xact_lock(?)", (retention.LOCK_ID,))
+        assert retention.prune_collection_history(at=AT)["busy"] is True
     assert retention.prune_collection_history(at=AT) == {
         "detail_runs": 2,
         "items": 2,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from runner_web import replay_objects
@@ -42,6 +43,8 @@ def migrate_gifs(*, limit: int = 100, workers: int = 2) -> dict:
                 (max(1, min(limit, 1000)),),
             ).fetchall()
         ]
+    if ids:
+        replay_objects.client()
     with ThreadPoolExecutor(max_workers=max(1, min(workers, 4))) as pool:
         results = list(pool.map(migrate_gif, ids))
     return {key: sum(result[key] for result in results) for key in ("migrated", "bytes")}
@@ -95,10 +98,12 @@ def main() -> None:
             more = result["scanned"]
         else:
             result = prune_collection_history(limit=args.limit)
-            more = result["detail_runs"] + result["summaries"]
+            more = result["detail_runs"] + result["summaries"] or result.get("busy", False)
         print(json.dumps({"action": args.action, **result}), flush=True)
         if not args.all or not more:
             break
+        if result.get("busy"):
+            time.sleep(2)
 
 
 if __name__ == "__main__":
