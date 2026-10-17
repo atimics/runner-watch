@@ -270,6 +270,7 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
 
     def _memecoin_replay_artifact(coin_id: str, replay_id: str, request: Request, *, gif: bool):
         from runner_web.memecoin_replay_store import saved_replay
+        from runner_web.replay_objects import ObjectStoreUnavailable
 
         dependencies.enforce_rate(request, "memecoin_replay", limit=30, seconds=60)
         if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", coin_id) or not re.fullmatch(
@@ -278,6 +279,10 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
             raise HTTPException(404, "Replay not found")
         try:
             record = saved_replay(coin_id, replay_id, with_gif=gif)
+        except ObjectStoreUnavailable:
+            raise HTTPException(
+                503, "Replay file is temporarily unavailable", headers={"Retry-After": "30"}
+            ) from None
         except ValueError:
             raise HTTPException(409, "Saved replay needs an evidence review") from None
         if record is None:

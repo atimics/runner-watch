@@ -53,3 +53,14 @@ def test_large_download_is_bounded_and_closed(storage, monkeypatch):
     with pytest.raises(ValueError, match="hash check"):
         objects.read_gif(objects.object_key("a" * 64), "a" * 64)
     assert body.closed
+
+
+def test_provider_failure_has_a_retryable_error(storage, monkeypatch):
+    from botocore.exceptions import EndpointConnectionError
+
+    def unavailable(**kwargs):
+        raise EndpointConnectionError(endpoint_url="https://storage.test")
+
+    monkeypatch.setattr(storage, "get_object", unavailable)
+    with pytest.raises(objects.ObjectStoreUnavailable):
+        objects.read_gif(objects.object_key("a" * 64), "a" * 64)

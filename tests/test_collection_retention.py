@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -111,3 +112,47 @@ def test_all_normalized_foreign_keys_are_covered_by_retention():
             if row["table"] == "ingestion_runs"
         }
     assert referenced == set(retention.REFERENCE_TABLES) | {"ingestion_items"}
+
+
+@pytest.mark.skipif(
+    not os.getenv("TEST_POSTGRES_URL"), reason="Requires a fresh test Postgres database"
+)
+def test_postgres_migration_retention_and_object_handoff(monkeypatch):
+    import hashlib
+
+    from runner_web import replay_objects, storage_maintenance
+    from tests.test_replay_objects import FakeStore
+
+    monkeypatch.setattr(db, "DATABASE_URL", os.environ["TEST_POSTGRES_URL"])
+    db.init_db()
+    run("old", 100)
+    run("protected", 99)
+    run("new", 1)
+    with db.connection() as database:
+        database.execute(
+            "INSERT INTO memecoin_assets(coin_id,quote_json,collected_at,run_id) "
+            "VALUES('pg-coin','{}',?,'protected')",
+            (AT.isoformat(),),
+        )
+        database.execute(
+            "INSERT INTO memecoin_replays(id,coin_id,payload_json,gif_bytes,gif_sha256,created_at) "
+            "VALUES('pg-replay','pg-coin','{}',?,?,?)",
+            (b"test gif", hashlib.sha256(b"test gif").hexdigest(), AT.isoformat()),
+        )
+    backend = FakeStore()
+    monkeypatch.setenv("MEMECOIN_REPLAY_BUCKET", "test-replays")
+    monkeypatch.setattr(replay_objects, "client", lambda: backend)
+    assert storage_maintenance.migrate_gifs() == {"migrated": 1, "bytes": 8}
+    assert retention.prune_collection_history(at=AT) == {
+        "detail_runs": 2,
+        "items": 2,
+        "summaries": 1,
+    }
+    with db.connection() as database:
+        assert database.execute("SELECT count(*) FROM ingestion_runs").fetchone()[0] == 2
+        row = database.execute(
+            "SELECT gif_bytes,gif_object_key,gif_sha256 FROM memecoin_replays"
+        ).fetchone()
+        assert bytes(row["gif_bytes"]) == b""
+        assert replay_objects.read_gif(row["gif_object_key"], row["gif_sha256"]) == b"test gif"
+    db.close_database_pool()

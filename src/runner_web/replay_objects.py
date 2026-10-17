@@ -10,6 +10,10 @@ from functools import lru_cache
 MAX_GIF_BYTES = 8 * 1024 * 1024
 
 
+class ObjectStoreUnavailable(RuntimeError):
+    pass
+
+
 def bucket() -> str:
     return os.getenv("MEMECOIN_REPLAY_BUCKET", "").strip()
 
@@ -39,14 +43,19 @@ def object_key(digest: str) -> str:
 
 
 def read_gif(key: str, digest: str) -> bytes:
+    from botocore.exceptions import BotoCoreError, ClientError
+
     if not bucket() or key != object_key(digest):
         raise ValueError("Replay object configuration mismatch")
-    response = client().get_object(Bucket=bucket(), Key=key)
-    body = response["Body"]
     try:
-        content = body.read(MAX_GIF_BYTES + 1)
-    finally:
-        body.close()
+        response = client().get_object(Bucket=bucket(), Key=key)
+        body = response["Body"]
+        try:
+            content = body.read(MAX_GIF_BYTES + 1)
+        finally:
+            body.close()
+    except (BotoCoreError, ClientError) as exc:
+        raise ObjectStoreUnavailable("Replay file storage is temporarily unavailable") from exc
     if len(content) > MAX_GIF_BYTES or hashlib.sha256(content).hexdigest() != digest:
         raise ValueError("Stored GIF hash check failed")
     return content
