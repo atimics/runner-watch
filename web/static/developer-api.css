@@ -1,0 +1,25 @@
+.developer-api .plan-card { padding: 22px; }
+.developer-api h2 { margin: 0 0 16px; font-size: 22px; }
+.developer-api p { color: #b9c4be; line-height: 1.55; font-size: 14px; }
+.developer-api strong { color: #eef3ed; }
+.developer-api table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.developer-api th, .developer-api td { padding: 12px 0; border-bottom: 1px solid #29312d; text-align: left; }
+.developer-api th:last-child, .developer-api td:last-child { text-align: right; padding-left: 16px; }
+.developer-api th { color: #9ba6a1; font-weight: 500; }
+.developer-api form { display: grid; gap: 12px; }
+.developer-api label { display: grid; gap: 8px; color: #b9c4be; font-size: 13px; }
+.developer-api input { width: 100%; min-width: 0; min-height: 44px; padding: 12px; border: 1px solid #46554b; border-radius: 5px; background: #090d0b; color: #eef3ed; font: inherit; }
+.developer-api pre { max-width: 100%; padding: 12px; background: #080b09; border: 1px solid #29312d; font-size: 12px; line-height: 1.6; }
+.developer-api pre:empty { display: none; }
+.developer-api code { overflow-wrap: anywhere; font-size: 12px; }
+.developer-api a { color: #d9e781; text-underline-offset: 3px; }
+.developer-api ul { padding: 0; list-style: none; }
+.developer-api li { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 12px; }
+.developer-api li span { overflow-wrap: anywhere; min-width: 0; }
+.developer-api li button { min-height: 44px; padding: 8px 12px; background: #151b17; color: #d6dfd7; border: 1px solid #46554b; border-radius: 5px; }
+.developer-api #apiError { color: #ffb0a8; }
+.developer-api :focus-visible { outline: 2px solid #d9e781; outline-offset: 3px; }
+@media (max-width: 480px) {
+  .developer-api { padding: 20px 12px 32px; }
+  .developer-api .plan-card { padding: 18px 14px; }
+}

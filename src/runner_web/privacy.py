@@ -294,6 +294,7 @@ def export_user_data(user_id: str) -> dict[str, Any]:
             "flash_evaluation_events": related(
                 "flash_evaluation_events", "forecast_id", forecast_ids
             ),
+            "api_usage": _rows(database, tables, "api_requests", "user_id=?", (user_id,)),
             "api_accounts": _rows(database, tables, "api_accounts", "user_id=?", (user_id,)),
             "api_keys": [
                 {key: row.get(key) for key in ("id", "name", "created_at", "revoked_at")}
@@ -538,6 +539,22 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
         exists = database.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone()
         if not exists:
             return {"deleted": False}
+
+        if "api_accounts" in tables:
+            database.execute("UPDATE api_accounts SET user_id=user_id WHERE user_id=?", (user_id,))
+            pending = database.execute(
+                "SELECT id FROM api_topups WHERE user_id=? "
+                "AND status IN ('verifying','settling','pending') LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if pending:
+                from fastapi import HTTPException
+
+                raise HTTPException(
+                    409,
+                    "Your API payment is being confirmed. "
+                    "Finish that order before deleting the account.",
+                )
 
         _delete_user_content_rows(database, tables, user_id)
 

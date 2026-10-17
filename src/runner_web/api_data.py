@@ -148,6 +148,37 @@ def history(coin_id: str, before: str, limit: int) -> dict[str, Any]:
     }
 
 
+def require_capacity(database: Any, operation: str) -> None:
+    from runner_web.memecoin_evidence import lane_limit
+
+    current = datetime.now(UTC)
+    day = current.date().isoformat()
+    database.execute("UPDATE api_job_guard SET id=id WHERE id=1")
+    queued = database.execute(
+        "SELECT COUNT(*) AS n,COALESCE(SUM(CASE WHEN operation='wallet_scan' "
+        "THEN 103 ELSE 1 END),0) AS credits "
+        "FROM api_requests WHERE status IN ('queued','running')"
+    ).fetchone()
+    if queued["n"] >= 20:
+        raise HTTPException(
+            429, "The scan queue is busy. Retry shortly.", headers={"Retry-After": "60"}
+        )
+    api_used = database.execute(
+        "SELECT credits FROM api_provider_budget WHERE day=?", (day,)
+    ).fetchone()
+    shared_used = database.execute(
+        "SELECT reserved_credits FROM memecoin_helius_budget WHERE day=?", (day,)
+    ).fetchone()
+    api_limit = max(0, min(5000, int(os.getenv("API_HELIUS_DAILY_CREDITS", "2000"))))
+    needed = (103 if operation == "wallet_scan" else 1) + queued["credits"]
+    if needed > api_limit - (api_used["credits"] if api_used else 0) or needed > lane_limit(
+        "other"
+    ) - (shared_used["reserved_credits"] if shared_used else 0):
+        raise HTTPException(
+            429, "The scan budget is busy. Saved data is available.", headers={"Retry-After": "60"}
+        )
+
+
 def provider_rpc(body: dict[str, Any], *, credits: int, **kwargs: Any) -> dict[str, Any]:
     # This allowance sits inside the existing shared provider budget and price reserve.
     limit = max(0, min(5000, int(os.getenv("API_HELIUS_DAILY_CREDITS", "2000"))))

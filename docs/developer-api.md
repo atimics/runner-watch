@@ -113,13 +113,16 @@ Solana devnet; production uses Base and Solana mainnet through Coinbase.
 ## Capacity and storage
 
 Redis admits requests atomically across web machines. Its service-wide ceiling is
-300 requests per minute. Each account can start two fresh jobs per minute and has
-one active job. At most two jobs run across workers. Fresh reads reserve provider
-credits inside the existing daily cap and price reserve. Jobs have a 15-minute
+300 requests per minute and eight concurrent requests. Each account can start two
+fresh jobs per minute and has one active job. At most two jobs run across workers.
+The queue holds up to 20 jobs. Admission checks the provider allowance before
+reserving customer credits. Fresh reads reserve provider credits inside the
+existing daily cap and price reserve. Jobs have a 15-minute
 recovery deadline. Expired work returns its customer credits.
 
-Read bodies stay in the short-lived Redis result cache. PostgreSQL stores compact
-charge receipts and bounded job results (512 KiB maximum). Cleanup runs with the
+Read bodies stay in the short-lived Redis result cache, capped at 32 MiB of
+compressed response data. Request bodies are limited to 16 KiB. PostgreSQL stores
+compact charge receipts and bounded job results (512 KiB maximum). Cleanup runs with the
 API worker, in batches of 1,000 expired receipts. The API returns saved token
 analysis and chain-derived PnL. Raw stock-price and sports-odds exports can follow
 a review of their feed terms.

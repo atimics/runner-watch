@@ -1,11 +1,14 @@
 {% extends "mobile_base.html" %}
 {% block app_class %}account-page{% endblock %}
-{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/account-pages.css?v={{ static_version }}">
+<link rel="stylesheet" href="/static/developer-api.css?v={{ static_version }}">{% endblock %}
 {% block title %}Runner Watch API{% endblock %}
 {% block content %}
-<main class="account-page" style="max-width:900px;margin:2rem auto;padding:1rem">
-  <h1>Runner Watch API</h1>
-  <p>Solana scores, wallet PnL, and evidence for your tools.</p>
+<header class="detail-nav account-nav"><a href="/billing" aria-label="Back to wallet">‹</a><strong>Developer API</strong><a class="account-nav-link" href="/api/v1/openapi.json">Docs ↗</a></header>
+<main class="account-wrap developer-api">
+  <header class="account-intro"><span class="eyebrow">TOOLS AND AGENTS</span><h1>Runner Watch API</h1>
+  <p>Solana scores, wallet PnL, and evidence for your tools.</p></header>
+  <section class="plan-card">
   <p><strong>1,000 free credits each month.</strong> Up to 100 a day. Paid credits cost $1 USDC per 1,000 and carry forward.</p>
   <p>Free: 10 requests a minute, one at a time. Paid: 60 a minute, five at a time.</p>
   <table><thead><tr><th>Request</th><th>Credits</th></tr></thead><tbody>
@@ -13,27 +16,27 @@
   <tr><td>Saved wallet PnL or token analysis</td><td>10</td></tr>
   <tr><td>History, up to 1,000 records</td><td>25</td></tr>
   <tr><td>Fresh token controls check</td><td>25</td></tr><tr><td>Wallet scan, up to 1,000 transactions</td><td>100</td></tr>
-  </tbody></table>
-  <h2>Your API keys</h2>
+  </tbody></table></section>
+  <section class="plan-card"><h2>Your API keys</h2>
   {% if user %}
   <p id="apiBalance" role="status">Loading your balance…</p>
   <form id="apiKeyForm"><label>Key name <input id="apiKeyName" maxlength="60" value="My app" required></label>
-  <button type="submit">Create API key</button></form>
+  <button type="submit" class="account-action">Create API key</button></form>
   <p>Save each new key in your password manager.</p>
   <pre id="newApiKey" style="white-space:pre-wrap;overflow-wrap:anywhere" aria-live="polite"></pre>
   <ul id="apiKeys"></ul><p id="apiError" role="alert"></p>
   {% else %}<p><a href="/login?next=/developers">Sign in to create an API key</a></p>{% endif %}
-  <h2>Use the API</h2>
+  </section><section class="plan-card"><h2>Use the API</h2>
   <pre style="overflow:auto">curl https://runners.rati.chat/api/v1/tokens \
   -H 'Authorization: Bearer YOUR_API_KEY'</pre>
   <p><a href="/api/v1/openapi.json">Endpoint reference</a> · <a href="/api/v1/pricing">Live prices and limits</a></p>
-  <h2>Buy credits with x402</h2>
+  </section><section class="plan-card"><h2>Buy credits with x402</h2>
   <p>Choose $1, $5, or $20 USDC. Create an order at <code>POST /api/v1/topups</code> with your API key, an <code>Idempotency-Key</code>, and <code>{"dollars": 5}</code>.</p>
   <p>Send an x402 request to the returned payment URL. Your wallet signs the quoted payment. Confirmed settlement adds credits to your account.</p>
   <p>Payment environment: <strong>{{ api_pricing.payments.environment }}</strong>. {{ 'Top-ups are ready.' if api_pricing.payments.enabled else 'Payment setup is pending. Your free credits are ready.' }}</p>
   <p>{{ 'Fresh scans are ready.' if api_pricing.fresh_jobs_enabled else 'Fresh scans are preparing. Saved data is available.' }}</p>
   <p>Each fresh job reserves its price. A completed job spends the reservation. A failed job returns it. Wallet results show the covered range and a cursor for the next paid page.</p>
-</main>
+</section></main>
 {% endblock %}
 {% block bottom_nav %}{% endblock %}
 {% block scripts %}

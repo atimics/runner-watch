@@ -29,6 +29,48 @@ def user_id(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(
 Actor = Annotated[str, Depends(user_id)]
 
 
+class APIBodyLimit:
+    """Bound API JSON before FastAPI parses it, including chunked requests."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        applies = (
+            scope["type"] == "http"
+            and scope.get("method") in {"POST", "PUT", "PATCH"}
+            and scope.get("path", "").startswith(("/api/v1/", "/api/developer/"))
+        )
+        if not applies:
+            return await self.app(scope, receive, send)
+        chunks = []
+        size = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > 16384:
+                response = JSONResponse(
+                    {"detail": "Use an API request body up to 16 KiB."}, status_code=413
+                )
+                return await response(scope, receive, send)
+            chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        pending = True
+
+        async def limited_receive():
+            nonlocal pending
+            if pending:
+                pending = False
+                return {"type": "http.request", "body": b"".join(chunks), "more_body": False}
+            return await receive()
+
+        return await self.app(scope, limited_receive, send)
+
+
 class KeyInput(BaseModel):
     name: str = Field(default="API key", min_length=1, max_length=60)
 
@@ -54,7 +96,10 @@ def request_key(request: Request, *, required: bool = False) -> str:
 
 
 def pricing() -> dict[str, Any]:
-    config = api_payments.configuration()
+    try:
+        config = api_payments.configuration()
+    except HTTPException:
+        config = {"mode": "setup", "enabled": False}
     return {
         "version": "v1",
         "credits_per_usdc": 1000,
@@ -145,7 +190,11 @@ def create_api_routes(
     page: Callable[..., Any],
     origin: Callable[[], str],
 ) -> APIRouter:
-    router = APIRouter(tags=["Runner Watch API v1"])
+    def edge_limit(request: Request):
+        if request.url.path.startswith("/api/v1/"):
+            enforce_rate(request, "developer-api-ip", limit=120, seconds=60)
+
+    router = APIRouter(tags=["Runner Watch API v1"], dependencies=[Depends(edge_limit)])
 
     @router.get("/developers")
     def developers(request: Request, runner_session: str | None = Cookie(default=None)):
@@ -301,7 +350,7 @@ def create_api_routes(
             "job_id": row["id"],
             "status": row["status"],
             "replayed": not fresh,
-            "reserved_credits": row["paid_cost"],
+            "reserved_credits": row["paid_cost"] if row["status"] in {"queued", "running"} else 0,
             "status_url": "/api/v1/jobs/" + row["id"],
         }
 
@@ -342,6 +391,8 @@ def create_api_routes(
         with api_limits.admission(owner, paid=current["tier"] == "paid"):
             row = api_payments.get_order(identifier, owner)
             if row["status"] != "complete":
+                if not api_payments.configuration()["enabled"]:
+                    raise HTTPException(503, "Payment setup is pending.")
                 signature = request.headers.get("PAYMENT-SIGNATURE")
                 if not signature:
                     challenge = api_payments.challenge(row)

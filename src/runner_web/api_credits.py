@@ -52,7 +52,7 @@ def create_key(user_id: str, name: str) -> dict[str, str]:
 
 
 def authenticate(value: str) -> str:
-    if not value.startswith("Bearer rw_") or len(value) > 200:
+    if not value.lower().startswith("bearer rw_") or len(value) > 200:
         raise HTTPException(401, "Use your API key as a Bearer token.")
     with connection() as db:
         row = db.execute(
@@ -117,6 +117,9 @@ def reserve(
                 raise HTTPException(409, "Use a new Idempotency-Key for different request details.")
             return dict(previous), False
         if paid_only:
+            from runner_web.api_data import require_capacity
+
+            require_capacity(db, operation)
             busy = db.execute(
                 "SELECT id FROM api_requests WHERE user_id=? "
                 "AND status IN ('queued','running') LIMIT 1",
@@ -229,7 +232,18 @@ def prune() -> None:
     with connection() as db:
         db.execute(
             "DELETE FROM api_requests WHERE id IN (SELECT id FROM api_requests "
-            "WHERE status IN ('complete','failed') AND updated_at<? ORDER BY updated_at LIMIT 1000)",
+            "WHERE status IN ('complete','failed') AND updated_at<? "
+            "ORDER BY updated_at LIMIT 1000)",
+            ((now - timedelta(days=7)).isoformat(),),
+        )
+        db.execute(
+            "DELETE FROM api_keys WHERE id IN (SELECT id FROM api_keys "
+            "WHERE revoked_at<? LIMIT 1000)",
+            ((now - timedelta(days=30)).isoformat(),),
+        )
+        db.execute(
+            "DELETE FROM api_topups WHERE id IN (SELECT id FROM api_topups "
+            "WHERE status IN ('open','rejected') AND updated_at<? LIMIT 1000)",
             ((now - timedelta(days=7)).isoformat(),),
         )
         db.execute(

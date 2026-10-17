@@ -55,7 +55,7 @@ from runner_web.account_routes import (
 from runner_web.actor_portraits import generate_actor_portrait, portrait_for_actor
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
 from runner_web.api_data import worker as api_worker
-from runner_web.api_routes import create_api_routes
+from runner_web.api_routes import APIBodyLimit, create_api_routes
 from runner_web.auth_routes import (
     AuthRouteDependencies,
     RegisterOptionsPayload,  # noqa: F401
@@ -1201,6 +1201,7 @@ def _openrouter_api_key() -> str:
 
 app = FastAPI(title="RATi", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=5)
+app.add_middleware(APIBodyLimit)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(NODE_SERVICE.settings.allowed_origins),
@@ -3265,7 +3266,9 @@ def developer_api_page(request: Request, session: str | None, api_pricing: dict[
     return templates.TemplateResponse(
         request=request,
         name="developers.html",
-        context=page_context(request, session, api_pricing=api_pricing),
+        context=page_context(
+            request, session, api_pricing=api_pricing, suppress_release_notice=True
+        ),
     )
 
 

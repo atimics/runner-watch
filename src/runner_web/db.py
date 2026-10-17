@@ -4059,7 +4059,8 @@ def _migration_104_api_credits(db: DatabaseConnection) -> None:
         );
         CREATE TABLE api_keys (
             id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, revoked_at TEXT
+            name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL, revoked_at TEXT
         );
         CREATE INDEX api_keys_user ON api_keys(user_id);
         CREATE TABLE api_requests (
