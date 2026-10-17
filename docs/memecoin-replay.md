@@ -46,6 +46,13 @@ reach the budget. Saved revisions and their evidence remain available. The
 worker checks the budget before rendering and again under a shared database
 lock before saving.
 
+With `MEMECOIN_REPLAY_BUCKET` configured, GIF bytes live in a private S3-compatible
+bucket. Postgres retains the object key, SHA-256 hash, and original evidence.
+The existing GIF routes fetch and verify the object before returning it. The
+database budget then covers evidence, keys, and indexes. Each upload is read
+back and hash-checked before its database copy is cleared. See
+`docs/database-operations.md` for the resumable migration and space recovery.
+
 ## Quality contract
 
 The policy is `repository-qc1000/memecoin-replay/1`, owned by this repository.
