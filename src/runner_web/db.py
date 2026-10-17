@@ -4048,6 +4048,48 @@ def _migration_103_replay_objects(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_104_api_credits(db: DatabaseConnection) -> None:
+    db.executescript("""
+        CREATE TABLE api_accounts (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            paid_credits INTEGER NOT NULL DEFAULT 0 CHECK(paid_credits>=0),
+            month TEXT NOT NULL, day TEXT NOT NULL,
+            free_month_used INTEGER NOT NULL DEFAULT 0 CHECK(free_month_used BETWEEN 0 AND 1000),
+            free_day_used INTEGER NOT NULL DEFAULT 0 CHECK(free_day_used BETWEEN 0 AND 100)
+        );
+        CREATE TABLE api_keys (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, revoked_at TEXT
+        );
+        CREATE INDEX api_keys_user ON api_keys(user_id);
+        CREATE TABLE api_requests (
+            id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            fingerprint TEXT NOT NULL, operation TEXT NOT NULL, parameters TEXT NOT NULL,
+            status TEXT NOT NULL, free_cost INTEGER NOT NULL, paid_cost INTEGER NOT NULL,
+            month TEXT NOT NULL, day TEXT NOT NULL, result_json TEXT, error TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE INDEX api_requests_user ON api_requests(user_id,status);
+        CREATE INDEX api_requests_queue ON api_requests(status,updated_at);
+        CREATE TABLE api_topups (
+            id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+            request_key TEXT NOT NULL, dollars INTEGER NOT NULL, credits INTEGER NOT NULL,
+            requirements TEXT NOT NULL, resource TEXT NOT NULL, status TEXT NOT NULL,
+            proof_hash TEXT UNIQUE, proof_json TEXT, settlement_json TEXT,
+            network TEXT, transaction_id TEXT, lease_until TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            UNIQUE(user_id,request_key), UNIQUE(network,transaction_id)
+        );
+        CREATE INDEX api_topups_user ON api_topups(user_id,created_at);
+        CREATE TABLE api_payment_claims (
+            id TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES api_topups(id) ON DELETE CASCADE
+        );
+        CREATE TABLE api_job_guard (id INTEGER PRIMARY KEY);
+        INSERT INTO api_job_guard(id) VALUES(1);
+        CREATE TABLE api_provider_budget (day TEXT PRIMARY KEY, credits INTEGER NOT NULL);
+    """)
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4158,6 +4200,7 @@ MIGRATIONS = (
     Migration(101, "wallet_backfills", _migration_101_wallet_backfills),
     Migration(102, "token_discoveries", _migration_102_token_discoveries),
     Migration(103, "replay_objects", _migration_103_replay_objects),
+    Migration(104, "api_credits", _migration_104_api_credits),
 )
 
 

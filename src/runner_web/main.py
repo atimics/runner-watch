@@ -54,6 +54,8 @@ from runner_web.account_routes import (
 )
 from runner_web.actor_portraits import generate_actor_portrait, portrait_for_actor
 from runner_web.ai_kol import FLASH, AIKol, actor_snapshot, flash_version_snapshot
+from runner_web.api_data import worker as api_worker
+from runner_web.api_routes import create_api_routes
 from runner_web.auth_routes import (
     AuthRouteDependencies,
     RegisterOptionsPayload,  # noqa: F401
@@ -978,6 +980,7 @@ def _start_worker_tasks(
         asyncio.create_task(memecoin_fast_price_worker(), name="memecoin-fast-prices"),
         asyncio.create_task(memecoin_replay_worker(), name="memecoin-replays"),
         asyncio.create_task(wallet_backfill_worker(), name="wallet-history"),
+        asyncio.create_task(api_worker(), name="api-jobs"),
         asyncio.create_task(market_actor_worker(), name="market-actors"),
         asyncio.create_task(call_settlement_worker(), name="call-settlement"),
     ]
@@ -3256,6 +3259,25 @@ def api_ticker_kol_calls(request: Request, ticker: str) -> dict[str, Any]:
     enforce_rate(request, "ticker-kol-calls", limit=120, seconds=60)
     normalized = _clean_ticker(ticker)
     return {"ticker": normalized, "calls": kol_calls_for_ticker(normalized)}
+
+
+def developer_api_page(request: Request, session: str | None, api_pricing: dict[str, Any]):
+    return templates.TemplateResponse(
+        request=request,
+        name="developers.html",
+        context=page_context(request, session, api_pricing=api_pricing),
+    )
+
+
+app.include_router(
+    create_api_routes(
+        require_user=require_user,
+        require_origin=require_origin,
+        enforce_rate=enforce_rate,
+        page=developer_api_page,
+        origin=lambda: RUNNERS_ORIGIN,
+    )
+)
 
 
 @app.get("/billing", response_class=HTMLResponse)

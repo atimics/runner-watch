@@ -25,6 +25,7 @@ pull request as the source of truth for current status.
 
 | Document | Status |
 | --- | --- |
+| [developer-api.md](developer-api.md) | Versioned API, free allowance, credits, x402, and deployment setup |
 | [market-list-ux.md](market-list-ux.md) | Redesign: tight tagged list, one composite score, top-bar breadth filters, ticker = chart → map → metrics → comments, Avatar Sentiment ([preview](market-list-preview.html)) |
 | [research/market-attention-study.md](research/market-attention-study.md) | Market attention research: ML papers, frozen candidate, chronological results, and replay receipts |
 | [research/attention-shadow-release.md](research/attention-shadow-release.md) | Live attention trial, durable outcomes, operations, and release gates |
