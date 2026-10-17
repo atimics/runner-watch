@@ -54,6 +54,15 @@ def test_large_metadata_has_a_bounded_summary():
     assert compact["metadata_summary"] is True
 
 
+def test_metadata_preserves_existing_date_serialization():
+    from runner_web.ingestion import _json
+
+    metadata = {"at": AT, "coverage": {"streams": [{"checked_at": AT}]}}
+    compact = retention.compact_metadata(metadata)
+    assert json.loads(_json(compact))["at"] == str(AT)
+    assert compact["coverage"]["stream_count"] == 1
+
+
 def test_old_details_expire_and_summaries_preserve_provenance():
     run("expired", 31)
     run("recent", 1)

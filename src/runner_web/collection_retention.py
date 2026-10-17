@@ -32,11 +32,11 @@ def compact_metadata(metadata: dict) -> dict:
     if isinstance(coverage, dict) and isinstance(coverage.get("streams"), list):
         coverage = dict(coverage)
         streams = coverage.pop("streams")
-        encoded = json.dumps(streams, sort_keys=True, separators=(",", ":")).encode()
+        encoded = json.dumps(streams, sort_keys=True, separators=(",", ":"), default=str).encode()
         coverage["stream_count"] = len(streams)
         coverage["streams_sha256"] = hashlib.sha256(encoded).hexdigest()
         result["coverage"] = coverage
-    encoded = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(result, sort_keys=True, separators=(",", ":"), default=str).encode()
     if len(encoded) > MAX_METADATA_BYTES:
         result = {
             "metadata_summary": True,
@@ -80,12 +80,17 @@ def prune_collection_history(*, at: datetime | None = None, limit: int = 500) ->
             "AND finished_at IS NOT NULL AND status<>'recording' ORDER BY started_at,id LIMIT ?",
             (cutoff, max(1, min(limit, 1000))),
         ).fetchall()
-        for row in rows:
-            deleted = database.execute("DELETE FROM ingestion_items WHERE run_id=?", (row["id"],))
-            result["items"] += max(0, deleted.rowcount)
+        if rows:
+            ids = tuple(row["id"] for row in rows)
+            placeholders = ",".join("?" for _ in ids)
+            deleted = database.execute(
+                f"DELETE FROM ingestion_items WHERE run_id IN ({placeholders})", ids
+            )
+            result["items"] = max(0, deleted.rowcount)
             database.execute(
-                "UPDATE ingestion_runs SET metadata_json='{}',details_pruned_at=? WHERE id=?",
-                (current.isoformat(), row["id"]),
+                "UPDATE ingestion_runs SET metadata_json='{}',details_pruned_at=? "
+                f"WHERE id IN ({placeholders})",
+                (current.isoformat(), *ids),
             )
         result["detail_runs"] = len(rows)
         cutoff = _cutoff(database, at=current, days=SUMMARY_DAYS, keep=SUMMARY_RUNS)

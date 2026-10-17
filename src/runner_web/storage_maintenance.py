@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from runner_web import replay_objects
 from runner_web.collection_retention import compact_metadata, prune_collection_history
-from runner_web.db import connection
+from runner_web.db import close_database_pool, connection
 
 
 def migrate_gif(replay_id: str) -> dict:
@@ -102,4 +102,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        close_database_pool()
