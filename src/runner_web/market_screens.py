@@ -757,6 +757,7 @@ def listing(
         "query": query,
         "total": len(rows),
         "counts": counts,
+        "ratified_count": sum(bool(entry.get("ratified")) for entry in rows),
         "stale_assessments": (
             sum(bool(entry.get("assessment_stale")) for entry in rows) if market == "stocks" else 0
         ),

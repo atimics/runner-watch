@@ -78,6 +78,8 @@
 <body class="theme-{{ theme }}">
 <a class="skip-link" href="#content">Skip to content</a>
 {% set base = '/memecoins' if (screen is defined and screen.market == 'memecoins') else '/' %}
+{% set ratified_available = screen is defined and screen.kind == 'list' and screen.market in ['stocks', 'memecoins'] %}
+{% set ratified_only = ratified_available and request.query_params.get('ratified') == '1' %}
 <div class="market-screen{% if screen is defined and screen.market in ['memecoins', 'sports'] %} anchor-{{ screen.market }}{% endif %}">
   {% block topbar %}
   <header class="topbar">
@@ -89,12 +91,14 @@
     <span class="clock" title="{{ market_clock.label }} · {{ market_clock.data_note }}"><i class="{{ 'live' if market_clock.scanner_active else 'idle' }}"></i><b>{{ {'pre':'PRE','regular':'REG','after':'AH','overnight':'OVN'}.get(market_clock.session, 'CLOSED') }}</b><span>{{ market_clock.eastern_now[11:16] }} ET</span></span>
     {% endif %}
     {% if screen.updated_label %}<span class="fresh">Updated {{ screen.updated_label }}</span>{% endif %}
-    {% if screen.counts %}<div class="tag-filters" data-tag-filters aria-label="Filter by state">
-      {% for tone in ['running','setup','extended','avoid','watch','paused','lean','pass','model-only','above','below','level','model','pending'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i>{{ screen.counts[tone] }} {{ tone|replace('-', ' ') }}</button>{% endif %}{% endfor %}
+    {% if screen.counts or ratified_available %}<div class="tag-filters" data-tag-filters aria-label="Filter results">
+      {% if ratified_available %}<button type="button" class="chip chip-ratified" data-ratified-filter aria-pressed="{{ 'true' if ratified_only else 'false' }}"><span data-ratified-count>{{ screen.ratified_count }}</span> Ratified</button>{% endif %}
+      {% for tone in ['running','setup','extended','avoid','watch','paused','lean','pass','model-only','above','below','level','model','pending'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i><span data-tag-count>{{ screen.counts[tone] }}</span> {{ tone|replace('-', ' ') }}</button>{% endif %}{% endfor %}
       <button type="button" class="chip chip-all" data-tag="" aria-pressed="true" hidden>All</button>
     </div>{% endif %}
     <form class="search" method="get" action="{{ base }}" role="search" data-market="{{ screen.market }}">
       <input type="hidden" name="view" value="list">
+      {% if ratified_available %}<input type="hidden" name="ratified" value="1"{% if not ratified_only %} disabled{% endif %}>{% endif %}
       {% set search_label = 'Find a token' if screen.market == 'memecoins' else 'Find a team or event' if screen.market == 'sports' else 'Find a ticker' %}
       <label for="marketSearch" class="sr-only">{{ search_label }}</label>
       <input id="marketSearch" name="q" type="search" maxlength="80" value="{{ screen.query }}" placeholder="{{ search_label }}" autocomplete="off">
@@ -111,7 +115,7 @@
     {% if screen.market == 'stocks' and screen.stale_assessments %}<p class="stock-freshness-note" role="status">{{ screen.stale_assessments }} stock assessment{{ '' if screen.stale_assessments == 1 else 's' }} {{ 'uses an older price' if screen.stale_assessments == 1 else 'use older prices' }}. The prices shown may be newer than those checks.</p>{% endif %}
     {% if screen.rows %}
       {% if screen.market == 'memecoins' %}<p class="board-scope">Tags compare recent trading with earlier windows. SETUP means volume or buyer activity is speeding up before the price has run. WATCH marks copycat activity while trading pace is quiet. AVOID marks a thin pool, collapsing price, staged buying, or creator selling.</p>{% endif %}
-      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if screen.market == 'sports' %} sports-matchup{% endif %}{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}"{% if screen.market in ['stocks', 'memecoins'] %} data-chart-offset="{{ item.chart_offset }}"{% endif %}{% if item.eligibility_note %} title="{{ item.eligibility_note }}"{% endif %}>
+      <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if screen.market == 'sports' %} sports-matchup{% endif %}{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}"{% if screen.market in ['stocks', 'memecoins'] %} data-ratified="{{ 'true' if item.ratified else 'false' }}" data-chart-offset="{{ item.chart_offset }}"{% endif %}{% if ratified_only and not item.ratified %} hidden{% endif %}{% if item.eligibility_note %} title="{{ item.eligibility_note }}"{% endif %}>
         {% if screen.market == 'sports' and item.ticker is defined and item.matchup is not defined %}
         {% include '_sports_golf_row.html' %}
         {% elif item.matchup is defined %}

@@ -8,16 +8,35 @@
   const chart = document.querySelector('.price-chart');
   const status = document.querySelector('[data-chart-status]');
   let activeTag = null;
+  let ratifiedOnly = Boolean(document.querySelector('[data-ratified-filter]'))
+    && new URLSearchParams(location.search).get('ratified') === '1';
+  function saveRatifiedFilter() {
+    const url = new URL(location.href);
+    if (ratifiedOnly) url.searchParams.set('ratified', '1');
+    else url.searchParams.delete('ratified');
+    history.replaceState(history.state, '', url);
+  }
   function filterControls() {
     const filters = document.querySelector('[data-tag-filters]');
     if (!filters) return;
     filters.querySelectorAll('[data-retained-filter]').forEach(chip => {
       if (chip.dataset.tag !== activeTag) chip.remove();
     });
-    filters.querySelectorAll('.chip').forEach(chip => {
-      chip.setAttribute('aria-pressed', String((chip.dataset.tag || '') === (activeTag || '')));
+    const rows = [...document.querySelectorAll('[data-tag-list] .ticker')];
+    filters.querySelectorAll('.chip[data-tag]').forEach(chip => {
+      const selected = chip.dataset.tag ? chip.dataset.tag === activeTag : !activeTag && !ratifiedOnly;
+      chip.setAttribute('aria-pressed', String(selected));
+      const count = chip.querySelector('[data-tag-count]');
+      if (count) count.textContent = rows.filter(row => row.dataset.tag === chip.dataset.tag
+        && (!ratifiedOnly || row.dataset.ratified === 'true')).length;
     });
-    filters.querySelector('.chip-all')?.toggleAttribute('hidden', !activeTag);
+    filters.querySelector('[data-ratified-filter]')?.setAttribute('aria-pressed', String(ratifiedOnly));
+    const ratifiedCount = filters.querySelector('[data-ratified-count]');
+    if (ratifiedCount) ratifiedCount.textContent = rows.filter(row => row.dataset.ratified === 'true'
+      && (!activeTag || row.dataset.tag === activeTag)).length;
+    const input = document.querySelector('.search input[name="ratified"]');
+    if (input) input.disabled = !ratifiedOnly;
+    filters.querySelector('.chip-all')?.toggleAttribute('hidden', !activeTag && !ratifiedOnly);
     if (!filters.querySelector('.chip:not(.chip-all)')) filters.remove();
   }
   function applyTagFilter() {
@@ -25,33 +44,40 @@
     if (!surface) return;
     const rows = [...surface.querySelectorAll('[data-tag-list] .ticker')];
     rows.forEach(row => {
-      row.hidden = Boolean(activeTag) && (row.dataset.tag || '') !== activeTag;
+      row.hidden = (Boolean(activeTag) && (row.dataset.tag || '') !== activeTag)
+        || (ratifiedOnly && row.dataset.ratified !== 'true');
     });
-    const showEmpty = Boolean(activeTag) && !rows.some(row => !row.hidden);
+    const showEmpty = (Boolean(activeTag) || ratifiedOnly) && !rows.some(row => !row.hidden);
     let empty = surface.querySelector('[data-filter-empty]');
     if (showEmpty && !empty) {
       empty = document.createElement('div');
       empty.className = 'empty'; empty.dataset.filterEmpty = '';
       empty.setAttribute('role', 'status');
       const message = document.createElement('p'), all = document.createElement('button');
-      message.textContent = 'No results in this state.';
       all.type = 'button'; all.className = 'chip'; all.dataset.clearTagFilter = '';
       all.textContent = 'Show all'; empty.append(message, all); surface.append(empty);
     }
-    if (empty) empty.hidden = !showEmpty;
+    if (empty) {
+      empty.hidden = !showEmpty;
+      empty.querySelector('p').textContent = ratifiedOnly
+        ? (activeTag ? 'Ratified results in this state will appear here.' : 'Ratified results will appear here.')
+        : 'No results in this state.';
+    }
     const serverEmpty = surface.querySelector('.empty:not([data-filter-empty])');
     if (serverEmpty) serverEmpty.hidden = showEmpty;
     filterControls();
   }
   function refreshTagFilters(next) {
     const current = document.querySelector('[data-tag-filters]');
-    const focused = current?.contains(document.activeElement) ? document.activeElement.dataset.tag : null;
+    const focused = current?.contains(document.activeElement)
+      ? (document.activeElement.hasAttribute('data-ratified-filter') ? 'ratified' : document.activeElement.dataset.tag)
+      : null;
     let incoming = next.querySelector('[data-tag-filters]');
     if (activeTag && !incoming?.querySelector(`.chip[data-tag="${activeTag}"]`)) {
       if (!incoming) {
         incoming = document.createElement('div');
         incoming.className = 'tag-filters'; incoming.dataset.tagFilters = '';
-        incoming.setAttribute('aria-label', 'Filter by state');
+        incoming.setAttribute('aria-label', 'Filter results');
       }
       const retained = document.createElement('button');
       retained.type = 'button'; retained.className = 'chip chip-' + activeTag;
@@ -74,19 +100,25 @@
     filterControls();
     if (focused !== null) {
       const target = [...document.querySelectorAll('[data-tag-filters] .chip')]
-        .find(chip => chip.dataset.tag === focused && !chip.hidden);
+        .find(chip => !chip.hidden && (focused === 'ratified'
+          ? chip.hasAttribute('data-ratified-filter') : chip.dataset.tag === focused));
       (target || document.querySelector('#marketSearch'))?.focus();
     }
   }
   document.addEventListener('click', event => {
     if (event.target.closest('[data-clear-tag-filter]')) {
-      activeTag = null; applyTagFilter();
+      activeTag = null; ratifiedOnly = false; saveRatifiedFilter(); applyTagFilter();
       (document.querySelector('[data-tag-filters] .chip') || document.querySelector('#marketSearch'))?.focus();
       return;
     }
-    const chip = event.target.closest('[data-tag-filters] .chip');
+    if (event.target.closest('[data-ratified-filter]')) {
+      ratifiedOnly = !ratifiedOnly; saveRatifiedFilter(); applyTagFilter();
+      return;
+    }
+    const chip = event.target.closest('[data-tag-filters] .chip[data-tag]');
     if (!chip) return;
     const tag = chip.dataset.tag || '';
+    if (!tag) { ratifiedOnly = false; saveRatifiedFilter(); }
     activeTag = (!tag || activeTag === tag) ? null : tag;
     applyTagFilter();
     if (!chip.isConnected || chip.hidden) {
@@ -510,12 +542,14 @@
       controller = new AbortController();
       try {
         const url = new URL(form.action); url.searchParams.set('q', query); url.searchParams.set('view', 'list');
+        const ratified = form.querySelector('input[name="ratified"]');
+        if (ratified && !ratified.disabled) url.searchParams.set('ratified', '1');
         const response = await fetch(url, {signal:controller.signal});
         if (!response.ok || response.redirected) throw new Error('Search unavailable');
         const html = await response.text();
         if (current !== version) return;
         const doc = new DOMParser().parseFromString(html, 'text/html');
-        const rows = [...doc.querySelectorAll('.ticker-list a.ticker')].map(link => safe({href:link.getAttribute('href'),name:link.querySelector('.ticker-name strong')?.textContent,subtitle:link.querySelector('.ticker-name small')?.textContent})).filter(Boolean);
+        const rows = [...doc.querySelectorAll('.ticker-list a.ticker:not([hidden])')].map(link => safe({href:link.getAttribute('href'),name:link.querySelector('.ticker-name strong')?.textContent,subtitle:link.querySelector('.ticker-name small')?.textContent})).filter(Boolean);
         render(rows.slice(0,8), 'Matches', rows.length ? '' : 'Try another name or symbol.');
       } catch (error) {
         if (current === version && error.name !== 'AbortError') render([], 'Matches', 'Press Enter to search.');

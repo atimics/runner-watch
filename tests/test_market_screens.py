@@ -137,13 +137,13 @@ def sample(market):
     }
 
 
-def render(screen, user=None):
+def render(screen, user=None, *, query_string=""):
     request = Request(
         {
             "type": "http",
             "method": "GET",
             "path": "/",
-            "query_string": b"",
+            "query_string": query_string.encode(),
             "headers": [(b"host", b"app.test")],
             "scheme": "http",
             "server": ("app.test", 80),
@@ -660,6 +660,48 @@ def test_search_applies_to_map_and_list():
     for view in ["list", "map"]:
         assert len(listing("stocks", [sample("stocks")], query="opko", view=view)["rows"]) == 1
         assert listing("stocks", [sample("stocks")], query="missing", view=view)["rows"] == []
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+def test_ratified_filter_uses_the_current_badge_and_renders_saved_selection(market):
+    from bs4 import BeautifulSoup
+
+    items = [
+        {**sample(market), "ticker": "PASS", "id": "pass", "ratification": {"ratified": True}},
+        {**sample(market), "ticker": "FAIL", "id": "fail", "ratification": {"ratified": False}},
+        {**sample(market), "ticker": "PENDING", "id": "pending"},
+        {
+            **sample(market),
+            "ticker": "STALE",
+            "id": "stale",
+            "ratification": {"ratified": True},
+            "stale": True,
+        },
+    ]
+    board = listing(market, items)
+    assert board["ratified_count"] == 1
+    assert sum(bool(row.get("ratified")) for row in board["rows"]) == 1
+    page = BeautifulSoup(render(board, query_string="ratified=1"), "html.parser")
+    assert page.select_one("[data-ratified-filter]")["aria-pressed"] == "true"
+    visible = page.select(".ticker:not([hidden])")
+    assert len(visible) == 1
+    assert visible[0]["data-ratified"] == "true"
+    assert visible[0].select_one(".ratified-mark")
+    assert len(page.select(".ticker[hidden]")) == 3
+    assert not page.select_one('input[name="ratified"]').has_attr("disabled")
+    # A filtered render leaves the cached board available to every reader.
+    plain = BeautifulSoup(render(board), "html.parser")
+    assert len(plain.select(".ticker:not([hidden])")) == 4
+
+
+def test_ratified_control_is_available_on_empty_supported_boards():
+    from bs4 import BeautifulSoup
+
+    for market in ("stocks", "memecoins"):
+        page = BeautifulSoup(render(listing(market, [])), "html.parser")
+        assert page.select_one("[data-ratified-filter]").get_text(" ", strip=True) == "0 Ratified"
+    assert "data-ratified-filter" not in render(listing("sports", []))
+    assert "data-ratified-filter" not in render(detail("stocks", {"ticker": "ONE"}))
 
 
 @pytest.fixture
