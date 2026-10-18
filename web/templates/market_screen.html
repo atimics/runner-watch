@@ -78,7 +78,7 @@
 <body class="theme-{{ theme }}">
 <a class="skip-link" href="#content">Skip to content</a>
 {% set base = '/memecoins' if (screen is defined and screen.market == 'memecoins') else '/' %}
-{% set ratified_available = screen.kind == 'list' and screen.market in ['stocks', 'memecoins'] %}
+{% set ratified_available = screen is defined and screen.kind == 'list' and screen.market in ['stocks', 'memecoins'] %}
 {% set ratified_only = ratified_available and request.query_params.get('ratified') == '1' %}
 <div class="market-screen{% if screen is defined and screen.market in ['memecoins', 'sports'] %} anchor-{{ screen.market }}{% endif %}">
   {% block topbar %}
