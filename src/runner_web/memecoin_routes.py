@@ -318,6 +318,7 @@ def create_memecoin_routes(dependencies: MemecoinRouteDependencies) -> MemecoinR
             receipt, headers={"Cache-Control": "public, max-age=31536000, immutable"}
         )
 
+    @router.head("/memecoins/coin/{coin_id}", response_class=HTMLResponse, include_in_schema=False)
     @router.get("/memecoins/coin/{coin_id}", response_class=HTMLResponse)
     def memecoin_detail_page(
         coin_id: str,

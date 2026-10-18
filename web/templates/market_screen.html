@@ -55,8 +55,25 @@
   {% if screen is defined and screen.market == 'sports' %}<link rel="stylesheet" href="/static/sports-row.css?v={{ static_version }}"><link rel="stylesheet" href="/static/prediction-ticker.css?v={{ static_version }}">{% endif %}
   {% if screen is defined and screen.market in ["stocks", "memecoins", "sports"] %}<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">{% endif %}
   {% block detail_head %}{% endblock %}
-  <meta name="description" content="{% block screen_description %}{% if share %}{{ screen.item.subtitle }}{% endif %}{% endblock %}">
-  {% if share %}<meta property="og:title" content="{{ share.title }}"><meta property="og:description" content="{{ share.summary }}"><meta property="og:image" content="{{ app_origin }}{{ share.card_path }}"><meta name="twitter:card" content="summary_large_image">{% endif %}
+  <meta name="description" content="{% block screen_description %}{% if share %}{{ share.summary }}{% endif %}{% endblock %}">
+  {% if share %}
+  <link rel="canonical" href="{{ app_origin }}{{ share.path }}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="RATi">
+  <meta property="og:url" content="{{ app_origin }}{{ share.path }}">
+  <meta property="og:title" content="{{ share.title }}">
+  <meta property="og:description" content="{{ share.summary }}">
+  <meta property="og:image" content="{{ app_origin }}{{ share.card_path }}">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="{{ share.title }} · RATi market snapshot">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ share.title }}">
+  <meta name="twitter:description" content="{{ share.summary }}">
+  <meta name="twitter:image" content="{{ app_origin }}{{ share.card_path }}">
+  <meta name="twitter:image:alt" content="{{ share.title }} · RATi market snapshot">
+  {% endif %}
 </head>
 <body class="theme-{{ theme }}">
 <a class="skip-link" href="#content">Skip to content</a>

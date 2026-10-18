@@ -3701,6 +3701,7 @@ def ticker_card(ticker: str, request: Request) -> Response:
     )
 
 
+@app.head("/memecoins/coin/{coin_id}/card.png", include_in_schema=False)
 @app.get("/memecoins/coin/{coin_id}/card.png")
 def memecoin_card(coin_id: str, request: Request) -> Response:
     enforce_rate(request, "ticker-card", limit=60, seconds=60)
