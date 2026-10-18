@@ -64,26 +64,27 @@ def api(tmp_path, monkeypatch):
     redis.close()
 
 
-def fund(owner="alice", amount=1000):
+def fund(owner="alice", amount=1000, *, at=None):
     with db.connection() as conn:
-        credits.account(conn, owner)
+        credits.account(conn, owner, at=at)
         conn.execute("UPDATE api_accounts SET paid_credits=? WHERE user_id=?", (amount, owner))
 
 
-def test_free_month_day_reset_and_paid_overflow(api):
-    at = datetime(2026, 10, 17, tzinfo=UTC)
+@pytest.mark.parametrize(
+    "at", [datetime(2000, 1, 31, tzinfo=UTC), datetime(2099, 12, 31, tzinfo=UTC)]
+)
+def test_free_month_day_reset_and_paid_overflow(api, at):
     for i in range(10):
         credits.reserve("alice", f"job-{i}", "wallet", {}, at=at)
     with pytest.raises(HTTPException) as error:
         credits.reserve("alice", "one-more", "snapshot", {}, at=at)
     assert error.value.status_code == 402
-    fund(amount=5)
+    fund(amount=5, at=at)
     row, _ = credits.reserve("alice", "paid-now", "tokens", {}, at=at)
     assert (row["free_cost"], row["paid_cost"]) == (0, 5)
     assert credits.balance("alice", at + timedelta(days=1))["free_credits_available"] == 100
-    assert (
-        credits.balance("alice", datetime(2026, 11, 1, tzinfo=UTC))["free_month_remaining"] == 1000
-    )
+    next_month = (at.replace(day=1) + timedelta(days=32)).replace(day=1)
+    assert credits.balance("alice", next_month)["free_month_remaining"] == 1000
 
 
 def test_monthly_limit_and_parallel_reservations(api):
