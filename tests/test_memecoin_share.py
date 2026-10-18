@@ -104,7 +104,9 @@ def test_preview_head_requests_match_get_headers(preview_client, suffix):
     head = preview_client.head(url)
     assert head.status_code == page.status_code == 200
     assert head.content == b""
-    for header in ("content-type", "content-length", "cache-control"):
+    # A fresh CSP nonce changes the page's compressed size on each request.
+    assert int(head.headers["content-length"]) > 0
+    for header in ("content-type", "cache-control"):
         assert head.headers.get(header) == page.headers.get(header)
 
 
