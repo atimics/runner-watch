@@ -34,6 +34,7 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .chip-running{color:var(--green)}.chip-setup{color:var(--blue)}.chip-extended{color:var(--orange)}.chip-avoid{color:var(--red)}.chip-watch{color:var(--purple)}.chip-paused{color:var(--muted)}
 .chip[aria-pressed="true"]{color:var(--text);background:var(--panel);border-color:var(--accent-border)}
 .chip-all{color:var(--muted)}
+.chip-ratified{color:var(--accent);border-color:var(--accent-border)}
 .search{margin-left:auto;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:18px;padding:4px 10px;margin-bottom:0;background:var(--panel)}
 .search input{width:130px;padding:4px 0}
 .search{flex:0 1 auto}

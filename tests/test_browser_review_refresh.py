@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -65,6 +67,133 @@ def refresh(page, state, screen):
     state["html"] = screens.render(screen)
     with page.expect_response("https://app.test/"):
         page.clock.fast_forward(60_000)
+
+
+def ratified_board(page, market):
+    base = screens.sample(market)
+    state = {
+        "items": [
+            {
+                **base,
+                "ticker": "FIRST",
+                "symbol": "FIRST",
+                "id": "first",
+                "trade_state": "TRIGGERED",
+                "ratification": {"ratified": True},
+            },
+            {
+                **base,
+                "ticker": "SECOND",
+                "symbol": "SECOND",
+                "id": "second",
+                "trade_state": "ARMED",
+                "ratification": {"ratified": True},
+            },
+            {
+                **base,
+                "ticker": "THIRD",
+                "symbol": "THIRD",
+                "id": "third",
+                "trade_state": "TRIGGERED",
+                "ratification": {"ratified": False},
+            },
+        ],
+        "reads": [],
+    }
+
+    def serve(route):
+        url = urlsplit(route.request.url)
+        state["reads"].append(url)
+        query = parse_qs(url.query).get("q", [""])[0]
+        board = listing(market, state["items"], query=query)
+        route.fulfill(content_type="text/html", body=screens.render(board, query_string=url.query))
+
+    page.clock.install()
+    assets(page)
+    page.route(re.compile(r"https://app\.test/(?:memecoins)?(?:\?.*)?$"), serve)
+    page.route("https://app.test/api/**", lambda route: route.fulfill(json={"charts": {}}))
+    page.goto("https://app.test/" + ("memecoins" if market == "memecoins" else ""))
+    return state
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+@pytest.mark.parametrize("width", [390, 1280])
+def test_ratified_toggle_combines_with_state_and_survives_reload(page, market, width, tmp_path):
+    page.set_viewport_size({"width": width, "height": 844})
+    ratified_board(page, market)
+    control = page.locator("[data-ratified-filter]")
+    expect(control).to_have_text("2 Ratified")
+    control.click()
+    expect(control).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".ticker:visible")).to_have_count(2)
+    expect(page).to_have_url(re.compile(r"[?&]ratified=1"))
+    expect(page.locator('button[data-tag="running"]')).to_have_text("1 running")
+    page.locator('button[data-tag="running"]').click()
+    expect(page.locator(".ticker:visible")).to_have_count(1)
+    expect(control).to_have_text("1 Ratified")
+    expect(page.locator(".ticker:visible .ticker-name strong")).to_have_text("FIRST")
+    page.locator('button[data-tag="running"]').click()
+    expect(page.locator(".ticker:visible")).to_have_count(2)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.screenshot(path=str(tmp_path / f"ratified-{market}-{width}.png"), full_page=True)
+    page.reload()
+    expect(control).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".ticker:visible")).to_have_count(2)
+    page.locator(".chip-all").click()
+    expect(page.locator(".ticker:visible")).to_have_count(3)
+    expect(control).to_have_attribute("aria-pressed", "false")
+    assert "ratified" not in parse_qs(urlsplit(page.url).query)
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+def test_ratified_toggle_tracks_live_changes_and_recovers_from_empty(page, market):
+    state = ratified_board(page, market)
+    control = page.locator("[data-ratified-filter]")
+    control.click()
+    for item in state["items"]:
+        item["ratification"]["ratified"] = False
+    with page.expect_response(page.url):
+        page.clock.fast_forward(60_000)
+    expect(control).to_have_text("0 Ratified")
+    expect(control).to_be_focused()
+    expect(control).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".ticker:visible")).to_have_count(0)
+    expect(page.locator("[data-filter-empty]")).to_have_text(
+        "Ratified results will appear here.Show all"
+    )
+    page.get_by_role("button", name="Show all", exact=True).click()
+    expect(page.locator(".ticker:visible")).to_have_count(3)
+    expect(control).to_have_attribute("aria-pressed", "false")
+    assert "ratified" not in parse_qs(urlsplit(page.url).query)
+    control.click()
+    state["items"][2]["ratification"]["ratified"] = True
+    with page.expect_response(page.url):
+        page.clock.fast_forward(60_000)
+    expect(control).to_have_text("1 Ratified")
+    expect(page.locator(".ticker:visible .ticker-name strong")).to_have_text("THIRD")
+    control.click()
+    expect(page.locator(".ticker:visible")).to_have_count(3)
+
+
+@pytest.mark.parametrize("market", ["stocks", "memecoins"])
+def test_ratified_selection_applies_to_search_suggestions_and_submission(page, market):
+    state = ratified_board(page, market)
+    page.locator("[data-ratified-filter]").click()
+    search = page.get_by_role("combobox")
+    search.fill("THIRD")
+    with page.expect_response(re.compile(r"[?&]q=THIRD")):
+        page.clock.fast_forward(300)
+    expect(page.get_by_role("option")).to_have_count(0)
+    assert parse_qs(state["reads"][-1].query)["ratified"] == ["1"]
+    search.fill("FIRST")
+    with page.expect_response(re.compile(r"[?&]q=FIRST")):
+        page.clock.fast_forward(300)
+    expect(page.get_by_role("option")).to_have_count(1)
+    search.press("Enter")
+    expect(page).to_have_url(re.compile(r"[?&]q=FIRST"))
+    assert parse_qs(urlsplit(page.url).query)["ratified"] == ["1"]
+    expect(page.locator("[data-ratified-filter]")).to_have_attribute("aria-pressed", "true")
+    expect(page.locator(".ticker:visible .ticker-name strong")).to_have_text("FIRST")
 
 
 def test_late_assessment_script_consumes_completed_detail_refresh(page):
