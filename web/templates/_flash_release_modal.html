@@ -6,7 +6,7 @@
   data-balance="{{ flash_wallet.balance }}"
   data-can-claim="{{ 'true' if flash_wallet.can_claim else 'false' }}"
   data-claim-day="{{ flash_wallet.claim_day }}"
-  data-auto-open="{{ 'false' if screen is defined else 'true' }}"
+  data-auto-open="{{ 'false' if screen is defined or suppress_release_notice|default(false) else 'true' }}"
   aria-labelledby="flashReleaseTitle"
   aria-describedby="flashReleaseIntro"
 >

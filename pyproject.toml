@@ -25,10 +25,13 @@ dependencies = [
   "exchange-calendars>=4.13,<5",
   # Training only: serving walks the exported integer trees in the Rust runtime.
   "lightgbm>=4.5",
+  "x402[fastapi,svm]>=2,<3",
+  "cdp-sdk>=1,<2",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "fakeredis[lua]>=2,<3",
   "httpx2>=2.12",
   "pip-audit>=2.9",
   "pytest>=8.0",

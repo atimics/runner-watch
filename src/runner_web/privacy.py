@@ -294,6 +294,27 @@ def export_user_data(user_id: str) -> dict[str, Any]:
             "flash_evaluation_events": related(
                 "flash_evaluation_events", "forecast_id", forecast_ids
             ),
+            "api_usage": _rows(database, tables, "api_requests", "user_id=?", (user_id,)),
+            "api_accounts": _rows(database, tables, "api_accounts", "user_id=?", (user_id,)),
+            "api_keys": [
+                {key: row.get(key) for key in ("id", "name", "created_at", "revoked_at")}
+                for row in _rows(database, tables, "api_keys", "user_id=?", (user_id,))
+            ],
+            "api_topups": [
+                {
+                    key: row.get(key)
+                    for key in (
+                        "id",
+                        "dollars",
+                        "credits",
+                        "status",
+                        "network",
+                        "transaction_id",
+                        "created_at",
+                    )
+                }
+                for row in _rows(database, tables, "api_topups", "user_id=?", (user_id,))
+            ],
             "flash_wallet": _rows(database, tables, "flash_wallets", "user_id=?", (user_id,)),
             "flash_transactions": _rows(
                 database,
@@ -519,6 +540,22 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
         if not exists:
             return {"deleted": False}
 
+        if "api_accounts" in tables:
+            database.execute("UPDATE api_accounts SET user_id=user_id WHERE user_id=?", (user_id,))
+            pending = database.execute(
+                "SELECT id FROM api_topups WHERE user_id=? "
+                "AND status IN ('verifying','settling','pending') LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if pending:
+                from fastapi import HTTPException
+
+                raise HTTPException(
+                    409,
+                    "Your API payment is being confirmed. "
+                    "Finish that order before deleting the account.",
+                )
+
         _delete_user_content_rows(database, tables, user_id)
 
         def delete(table: str, where: str, parameters: tuple[Any, ...]) -> None:
@@ -547,6 +584,14 @@ def delete_user_data(user_id: str) -> dict[str, Any]:
                     (_iso(), caller_id),
                 )
         delete("caller_identity_claims", "user_id=?", (user_id,))
+        delete("api_requests", "user_id=?", (user_id,))
+        delete("api_keys", "user_id=?", (user_id,))
+        delete("api_accounts", "user_id=?", (user_id,))
+        if "api_topups" in tables:
+            database.execute(
+                "UPDATE api_topups SET user_id=NULL,proof_json=NULL,request_key='' WHERE user_id=?",
+                (user_id,),
+            )
         delete("flash_transactions", "user_id=?", (user_id,))
         delete("flash_wallets", "user_id=?", (user_id,))
         delete("sessions", "user_id=?", (user_id,))
