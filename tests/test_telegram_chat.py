@@ -165,6 +165,7 @@ def test_context_stays_with_the_recent_speaker_and_topic(boundary):
         original["message"]["chat"]["id"] = CHAT - 1
     elif boundary == "topic":
         original["message"]["message_thread_id"] = 55
+        original["message"]["is_topic_message"] = True
     elif boundary == "expired":
         original["message"]["date"] -= (chat.ENGAGEMENT_MINUTES + 1) * 60
     else:
@@ -185,6 +186,7 @@ def test_other_speakers_keep_their_own_topic():
 def test_an_explicit_reply_supplies_the_subject():
     payload = _update("Can it bounce?", reply_to_bot=True)
     payload["message"]["message_thread_id"] = 55
+    payload["message"]["is_topic_message"] = True
     payload["message"]["reply_to_message"]["text"] = "$EYPT last 0.53."
     message = _parse(payload)
     assert message.reply_text == "$EYPT last 0.53."
@@ -196,6 +198,7 @@ def test_an_explicit_reply_supplies_the_subject():
 def test_a_reply_to_dash_keeps_the_subject_when_his_reply_omits_the_ticker():
     payload = _update("Short term bounce possible?", update_id=3, reply_to_bot=True)
     payload["message"]["reply_to_message"]["text"] = "Second Phase 3 miss. Last 0.52."
+    payload["message"]["message_thread_id"] = 901
     with connection() as database:
         _save_turn(database, _update("What about $EYPT?"), "$EYPT last 0.53.")
         _save_turn(database, _update("It missed its trial", update_id=2))
@@ -447,6 +450,7 @@ def test_transcript_reads_the_selected_telegram_topic():
         _save_turn(database, _update("Main room"), "Main reply")
         payload = _update("Topic question", update_id=2)
         payload["message"]["message_thread_id"] = 55
+        payload["message"]["is_topic_message"] = True
         _save_turn(database, payload, "Topic reply")
         lines = chat.recent_transcript(database, CHAT, message_thread_id=55)
     assert [line["said"] for line in lines] == ["Topic question", "Topic reply"]

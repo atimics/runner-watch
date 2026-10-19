@@ -312,7 +312,9 @@ def parse_update(
         source=forward_source(message),
         forwarded=bool(message.get("forward_origin") or message.get("forward_date")),
         sender_is_bot=bool(sender.get("is_bot")),
-        message_thread_id=message.get("message_thread_id"),
+        message_thread_id=message.get("message_thread_id")
+        if message.get("is_topic_message")
+        else None,
         reply_text=str(replied.get("text") or replied.get("caption") or "")[:MAX_TEXT_CHARS]
         if isinstance(replied, dict)
         else "",
@@ -1024,7 +1026,8 @@ def recent_transcript(
         except (TypeError, ValueError):
             continue
         message = payload.get("message") or payload.get("edited_message") or {}
-        if message.get("message_thread_id") != message_thread_id:
+        topic_id = message.get("message_thread_id") if message.get("is_topic_message") else None
+        if topic_id != message_thread_id:
             continue
         sender = message.get("from") if isinstance(message.get("from"), dict) else {}
         text = str(message.get("text") or message.get("caption") or "").strip()
