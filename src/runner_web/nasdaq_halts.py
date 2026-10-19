@@ -20,6 +20,30 @@ MAX_TRADE_HALT_RESPONSE_BYTES = 2 * 1024 * 1024
 Download = Callable[[str, float], tuple[bytes, str | None]]
 
 
+def latest_halt_versions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the latest saved state of each halt, alongside other event types."""
+
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("event_at") or ""),
+            str(row.get("last_collected_at") or ""),
+            str(row.get("first_collected_at") or ""),
+        ),
+        reverse=True,
+    )
+    seen: set[tuple[str, str, str]] = set()
+    current = []
+    for row in ordered:
+        if row.get("event_type") == "trading_halt":
+            key = (str(row.get("source") or ""), str(row.get("ticker")), str(row.get("event_at")))
+            if key in seen:
+                continue
+            seen.add(key)
+        current.append(row)
+    return current
+
+
 def _text(value: str | None) -> str:
     return (value or "").strip()
 

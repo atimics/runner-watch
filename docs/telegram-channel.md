@@ -298,6 +298,18 @@ mutations `reply`, `react`, `hold`, `make_call`, `close_call`,
 `comment_on_ticker` and `my_standing`. His recent chat actions come back in the
 world (`dash.recent_actions`) so continuity is stored, not pleaded.
 
+The chat history pairs each message with Dash's saved reply. Telegram topics have
+their own history. A direct reply also carries the text of its parent message.
+For a clear stock follow-up, Dash refreshes the last single ticker named by that
+speaker within the engagement window. An explicit ticker sets the new subject.
+Multiple prior tickers require clarification. Medical phrases such as “wet AMD”
+keep their medical meaning.
+
+Dash treats user-supplied news as the speaker's claim until a source confirms it.
+Earlier replies provide conversation context; current lookups supply market facts.
+Each halt uses its latest saved version, so a resumption updates the same halt.
+An empty model action gets one retry and then a short error reply.
+
 `DASH_MODEL` picks the model for Dash's chat turn and desk note. It defaults to
 the Flash model, so nothing changes until it is set. The requests still send
 `require_parameters` and `zdr`; a router model (for example `typesafe/jev-router`,

@@ -960,6 +960,42 @@ def test_dash_sees_why_a_halt_happened_when_it_reopens_and_what_followed():
     assert tdic["after_reopen"] is None
 
 
+def test_updated_halt_versions_share_one_current_state():
+    from runner_web.main import _external_event_context
+
+    _seed_halts(_halt_item("EYPT", "10:00:00", "T1"))
+    _seed_halts(_halt_item("EYPT", "10:00:00", "T2"))
+    _seed_halts(_halt_item("EYPT", "10:00:00", "T3", "10:40:00"))
+    with connection() as database:
+        rows = [
+            dict(row)
+            for row in database.execute("SELECT * FROM public_market_events WHERE ticker='EYPT'")
+        ]
+    assert len(rows) == 3
+    for versions in (rows, list(reversed(rows))):
+        assert _external_event_context(versions, at=NOW)["active_halt"] is None
+        scheduled = _external_event_context(versions, at=NOW - timedelta(minutes=30))
+        assert scheduled["active_halt"]["status"] == "resume_announced"
+    (entry,) = dash.recent_halts(at=NOW)
+    assert entry["halts_today"] == 1
+    assert entry["halts"][0]["state"] == "reopened"
+    assert entry["halts"][0]["reason_code"] == "T3"
+    assert dash.recent_events(at=NOW) == []
+
+    _seed_halts(_halt_item("EYPT", "10:55:00", "LUDP"))
+    with connection() as database:
+        rows = [
+            dict(row)
+            for row in database.execute("SELECT * FROM public_market_events WHERE ticker='EYPT'")
+        ]
+    active = _external_event_context(rows, at=NOW)["active_halt"]
+    assert active["payload"]["reason_code"] == "LUDP"
+    (entry,) = dash.recent_halts(at=NOW)
+    assert entry["halts_today"] == 2
+    assert entry["halts"][0]["state"] == "halted, no resume time yet"
+    assert len(dash.recent_events(at=NOW)) == 1
+
+
 def test_a_scheduled_resume_is_not_read_as_a_reopen():
     _seed_halts(_halt_item("FGL", "10:55:00", "T12", "11:10:00"))
 

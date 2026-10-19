@@ -584,23 +584,26 @@ WORLD_NODES = (
 def recent_events(limit: int = 6, at: datetime | None = None) -> list[dict[str, Any]]:
     """Halts, coverage and social spikes from the last six hours, newest first."""
 
+    from runner_web.nasdaq_halts import latest_halt_versions
+
     current = at or datetime.now(UTC)
     cutoff = (current - timedelta(hours=6)).isoformat()
     with connection() as database:
         rows = database.execute(
             """
             SELECT source,feed,event_id,version,ticker,event_type,status,event_at,
-                   source_url,payload_json
+                   source_url,payload_json,first_collected_at,last_collected_at
             FROM public_market_events
             WHERE event_at>?
               AND event_type IN ('trading_halt','news_article','social_spike')
-              AND NOT (event_type='trading_halt' AND status='resume_announced')
-            ORDER BY event_at DESC LIMIT ?
+            ORDER BY event_at DESC,last_collected_at DESC LIMIT 200
             """,
-            (cutoff, max(1, min(int(limit), 20))),
+            (cutoff,),
         ).fetchall()
     events = []
-    for row in rows:
+    for row in latest_halt_versions([dict(row) for row in rows]):
+        if row["event_type"] == "trading_halt" and row["status"] == "resume_announced":
+            continue
         payload = _payload(row["payload_json"])
         event_type = str(row["event_type"] or "event")
         ticker = str(row["ticker"] or "").upper()
@@ -626,7 +629,7 @@ def recent_events(limit: int = 6, at: datetime | None = None) -> list[dict[str, 
                 "url": row["source_url"],
             }
         )
-    return events
+    return events[: max(1, min(int(limit), 20))]
 
 
 EASTERN = ZoneInfo("America/New_York")
@@ -741,6 +744,8 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
     halt, so four halts in forty minutes read as four, not as one.
     """
 
+    from runner_web.nasdaq_halts import latest_halt_versions
+
     current = at or datetime.now(UTC)
     day_start = (
         current.astimezone(EASTERN)
@@ -750,15 +755,16 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
     with connection() as database:
         rows = database.execute(
             """
-            SELECT ticker,status,event_at,payload_json
+            SELECT source,ticker,event_type,status,event_at,payload_json,
+                   first_collected_at,last_collected_at
             FROM public_market_events
             WHERE event_type='trading_halt' AND event_at>=? AND event_at<=?
-            ORDER BY event_at DESC LIMIT 200
+            ORDER BY event_at DESC,last_collected_at DESC LIMIT 200
             """,
             (day_start.isoformat(), current.isoformat()),
         ).fetchall()
         by_ticker: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
+        for row in latest_halt_versions([dict(row) for row in rows]):
             ticker = str(row["ticker"] or "").upper()
             halted_at = _when(row["event_at"])
             if not ticker or halted_at is None:

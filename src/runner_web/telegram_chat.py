@@ -106,7 +106,9 @@ def resolve_tickers(database: Any, text: str, *, limit: int | None = None) -> li
         symbol = match.upper()
         if symbol not in found:
             found.append(symbol)
-    for token in BARE_TICKER_PATTERN.findall(text):
+    # In trial discussions AMD also means age-related macular degeneration.
+    bare_text = re.sub(r"\b(?:wet|dry)\s+AMD\b", "", text, flags=re.IGNORECASE)
+    for token in BARE_TICKER_PATTERN.findall(bare_text):
         if len(found) >= budget:
             break
         if token in TICKER_STOPWORDS or token in found:
@@ -241,6 +243,8 @@ class InboundMessage:
     forwarded: bool = False
     sender_is_bot: bool = False
     coin_lookups: tuple[dict[str, Any], ...] = ()
+    message_thread_id: int | None = None
+    reply_text: str = ""
 
 
 def _entity_text(text: str, entity: dict[str, Any]) -> str:
@@ -308,6 +312,10 @@ def parse_update(
         source=forward_source(message),
         forwarded=bool(message.get("forward_origin") or message.get("forward_date")),
         sender_is_bot=bool(sender.get("is_bot")),
+        message_thread_id=message.get("message_thread_id"),
+        reply_text=str(replied.get("text") or replied.get("caption") or "")[:MAX_TEXT_CHARS]
+        if isinstance(replied, dict)
+        else "",
     )
 
 
@@ -466,6 +474,13 @@ CHEETAH_PERSONA = (
     "evidence to mention, not a verdict. A memecoin is its contract address: its "
     "name and symbol are whatever the launcher typed and can copy a famous coin, so "
     "always give the address and never vouch for a coin by its name. "
+    "The room history pairs each person's message with your reply. Use it to follow "
+    "the topic and answer the latest question. conversation_tickers identifies a "
+    "recent subject from this speaker or the message they replied to. "
+    "Use current lookup evidence for prices and trading status. Treat earlier replies "
+    "as conversation history. Attribute user-supplied news to the speaker until a "
+    "source confirms it. Explain scanner eligibility as a rule for your public Calls; "
+    "answer questions about possible price moves with evidence and uncertainty. "
     "That is your memory and your surroundings. When "
     "you need the detail behind one node, expand it rather than guessing; the "
     "world already told you whether anything happened. "
@@ -647,6 +662,48 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
     }
 
 
+def conversation_tickers(message: InboundMessage, database: Any) -> list[str]:
+    """Resolve a stock follow-up within this speaker's recent conversation."""
+
+    if message.addresses or PREFETCH_LIMIT <= 0:
+        return []
+    explicit = resolve_tickers(database, message.text)
+    if explicit:
+        return explicit
+    if message.reply_text:
+        if reply_addresses(message.reply_text):
+            return []
+        symbols = resolve_tickers(database, message.reply_text, limit=8)
+        return symbols if len(symbols) == 1 else []
+    if message.user_id is None or not re.search(
+        r"\b(it|its|they|their|them|that|this|bounce|rebound|still)\b"
+        r"|^\s*(why\b|how so\b|what changed\b|and\b|also\b|dash\s*[?!])",
+        message.text,
+        re.IGNORECASE,
+    ):
+        return []
+    lines = recent_transcript(
+        database,
+        message.chat_id,
+        limit=30,
+        before_update_id=message.update_id,
+        message_thread_id=message.message_thread_id,
+    )
+    cutoff = message.sent_at - timedelta(minutes=ENGAGEMENT_MINUTES)
+    for line in reversed(lines):
+        if line.get("role") != "user" or line.get("user_id") != message.user_id:
+            continue
+        sent_at = datetime.fromisoformat(line["sent_at"])
+        if not cutoff <= sent_at <= message.sent_at:
+            continue
+        if reply_addresses(line["said"]):
+            return []
+        symbols = resolve_tickers(database, line["said"], limit=8)
+        if symbols:
+            return symbols if len(symbols) == 1 else []
+    return []
+
+
 def prefetch_for(message: InboundMessage, database: Any) -> dict[str, Any]:
     """Gather what the message points at before the model is asked anything.
 
@@ -657,9 +714,13 @@ def prefetch_for(message: InboundMessage, database: Any) -> dict[str, Any]:
     name rather than stall.
     """
 
-    symbols = resolve_tickers(database, message.text)
+    symbols = conversation_tickers(message, database)
     looked = [look_up_ticker(symbol) for symbol in symbols]
-    grounded: dict[str, Any] = {"resolved_tickers": symbols, "looked_up": looked}
+    grounded: dict[str, Any] = {
+        "resolved_tickers": symbols,
+        "conversation_tickers": symbols,
+        "looked_up": looked,
+    }
     if message.addresses:
         from runner_web.dash import coin_detail
 
@@ -932,16 +993,26 @@ def room_chat_id() -> int | None:
     return None
 
 
-def recent_transcript(database: Any, chat_id: int, limit: int = 12) -> list[dict[str, Any]]:
-    """The last few things said in the room, oldest first, for context."""
+def recent_transcript(
+    database: Any,
+    chat_id: int,
+    limit: int = 12,
+    *,
+    before_update_id: int | None = None,
+    message_thread_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """Recent messages and their saved replies, grouped in conversation order."""
 
+    before = " AND u.update_id<?" if before_update_id is not None else ""
     rows = database.execute(
-        """
-        SELECT payload_json FROM telegram_updates
-        WHERE chat_id=? AND status IN ('handled','skipped')
-        ORDER BY update_id DESC LIMIT ?
+        f"""
+        SELECT u.payload_json,a.detail AS reply,a.acted_at
+        FROM telegram_updates u
+        LEFT JOIN telegram_chat_actions a ON a.update_id=u.update_id AND a.action='reply'
+        WHERE u.chat_id=? AND u.status IN ('handled','skipped'){before}
+        ORDER BY u.update_id DESC LIMIT ?
         """,
-        (chat_id, max(1, limit)),
+        (chat_id, *((before_update_id,) if before_update_id is not None else ()), max(1, limit)),
     ).fetchall()
     lines: list[dict[str, Any]] = []
     for row in reversed(rows):
@@ -950,6 +1021,8 @@ def recent_transcript(database: Any, chat_id: int, limit: int = 12) -> list[dict
         except (TypeError, ValueError):
             continue
         message = payload.get("message") or payload.get("edited_message") or {}
+        if message.get("message_thread_id") != message_thread_id:
+            continue
         sender = message.get("from") if isinstance(message.get("from"), dict) else {}
         text = str(message.get("text") or message.get("caption") or "").strip()
         if not text:
@@ -958,6 +1031,13 @@ def recent_transcript(database: Any, chat_id: int, limit: int = 12) -> list[dict
             {
                 "who": str(sender.get("first_name") or sender.get("username") or "someone"),
                 "said": text[:400],
+                "role": "user",
+                "user_id": sender.get("id"),
+                "sent_at": datetime.fromtimestamp(
+                    int(message.get("date") or 0), tz=UTC
+                ).isoformat(),
             }
         )
+        if row["reply"]:
+            lines.append({"who": "Dash", "role": "assistant", "said": str(row["reply"])[:800]})
     return lines
