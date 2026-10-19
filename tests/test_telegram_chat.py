@@ -193,6 +193,15 @@ def test_an_explicit_reply_supplies_the_subject():
         assert chat.conversation_tickers(message, database) == ["EYPT"]
 
 
+def test_a_reply_to_dash_keeps_the_subject_when_his_reply_omits_the_ticker():
+    payload = _update("Short term bounce possible?", update_id=3, reply_to_bot=True)
+    payload["message"]["reply_to_message"]["text"] = "Second Phase 3 miss. Last 0.52."
+    with connection() as database:
+        _save_turn(database, _update("What about $EYPT?"), "$EYPT last 0.53.")
+        _save_turn(database, _update("It missed its trial", update_id=2))
+        assert chat.conversation_tickers(_parse(payload), database) == ["EYPT"]
+
+
 def test_a_coin_topic_ends_the_previous_stock_subject():
     with connection() as database:
         _save_turn(database, _update("$EYPT"))

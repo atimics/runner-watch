@@ -674,7 +674,10 @@ def conversation_tickers(message: InboundMessage, database: Any) -> list[str]:
         if reply_addresses(message.reply_text):
             return []
         symbols = resolve_tickers(database, message.reply_text, limit=8)
-        return symbols if len(symbols) == 1 else []
+        if symbols:
+            return symbols if len(symbols) == 1 else []
+        if not message.reply_to_bot:
+            return []
     if message.user_id is None or not re.search(
         r"\b(it|its|they|their|them|that|this|bounce|rebound|still)\b"
         r"|^\s*(why\b|how so\b|what changed\b|and\b|also\b|dash\s*[?!])",
