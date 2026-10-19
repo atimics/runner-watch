@@ -412,6 +412,9 @@ from runner_web.telegram_chat import (
     attention_for as telegram_attention_for,
 )
 from runner_web.telegram_chat import (
+    conversation_tickers as telegram_conversation_tickers,
+)
+from runner_web.telegram_chat import (
     finish_update as telegram_finish_update,
 )
 from runner_web.telegram_chat import (
@@ -2105,7 +2108,12 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
                 continue
             if attention.consider and message.addressed and message.user_id is not None:
                 telegram_open_engagement(database, message.chat_id, message.user_id, now)
-            transcript = telegram_recent_transcript(database, message.chat_id)
+            transcript = telegram_recent_transcript(
+                database,
+                message.chat_id,
+                before_update_id=message.update_id,
+                message_thread_id=message.message_thread_id,
+            )
         if not attention.consider:
             if message.addresses and attention.reason != "muted":
                 from runner_web.dash_intake import ingest_message
@@ -2211,6 +2219,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             "speaker": message.user_name,
             "said": message.text,
             "tickers_mentioned": list(message.tickers),
+            "replying_to": message.reply_text,
             "addressed_you": message.addressed,
             "recent": transcript,
             "your_recent_actions": dash_recent_actions(message.chat_id),
@@ -2227,6 +2236,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
     # checked against it. Numbers are not checked: that stays in the prompt.
     looked_text = [json.dumps(grounded, default=str), json.dumps(world, default=str)]
     corrected = False
+    retried_empty = False
     for _round in range(6):
         body = {
             "model": _dash_model(),
@@ -2243,7 +2253,16 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         choice = (result.get("choices") or [{}])[0].get("message") or {}
         calls = choice.get("tool_calls") or []
         if not calls:
-            return {"action": "hold", "why": "no tool chosen"}
+            if retried_empty:
+                return {"action": "reply", "text": "That check hit a problem. Please try again."}
+            retried_empty = True
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Choose a tool action for this turn: reply, react, hold, or expand.",
+                }
+            )
+            continue
         call = calls[0]
         name = str(((call.get("function") or {}).get("name")) or "")
         try:
@@ -2543,6 +2562,7 @@ def _write_telegram_reply(
         "room": {
             "speaker": message.user_name,
             "said": message.text,
+            "replying_to": message.reply_text,
             "addressed_you": message.addressed,
             "recent": transcript[-6:],
         },
@@ -2573,6 +2593,7 @@ def _decide_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dic
     try:
         with connection() as database:
             tickers = telegram_resolve_tickers(database, message.text)
+            context_tickers = telegram_conversation_tickers(message, database)
         addresses = telegram_reply_addresses(message.text)
         budget = dash_budget(at=now)
         state = dash_turn_state(
@@ -2587,6 +2608,7 @@ def _decide_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dic
             tickers=tickers,
             addresses=addresses,
         )
+        state["conversation_tickers"] = context_tickers
         decision = _dash_decide(state, DASH_TURN_QUESTIONS)
         plan = dash_choose_turn(
             decision.answers,
@@ -4877,12 +4899,15 @@ def _event_timestamp(row: dict[str, Any]) -> datetime | None:
 def _external_event_context(
     rows: list[dict[str, Any]], *, at: datetime | None = None
 ) -> dict[str, Any]:
+    from runner_web.nasdaq_halts import latest_halt_versions
+
     checked_at = at or now()
     news: list[dict[str, Any]] = []
     social_by_source: dict[str, dict[str, Any]] = {}
     news_keys: set[str] = set()
     active_halt: dict[str, Any] | None = None
-    for row in rows:
+    seen_halts: set[str] = set()
+    for row in latest_halt_versions(rows):
         event = {**row, "payload": _event_payload(row)}
         timestamp = _event_timestamp(event)
         if timestamp is None or timestamp > checked_at:
@@ -4909,10 +4934,14 @@ def _external_event_context(
                 ):
                     social_by_source[source] = event
         elif event.get("event_type") == "trading_halt":
+            ticker = str(event.get("ticker") or "")
+            if ticker in seen_halts:
+                continue
+            seen_halts.add(ticker)
             status = str(event.get("status") or "").lower()
             resume_at = _event_timestamp({"event_at": event["payload"].get("trade_resume_at")})
-            if status in {"active", "halted", "pending"} or (
-                resume_at is not None and resume_at > checked_at
+            if (resume_at is not None and resume_at > checked_at) or (
+                resume_at is None and status in {"active", "halted", "pending"}
             ):
                 active_halt = active_halt or event
 
@@ -8846,7 +8875,8 @@ def ticker_detail_data(ticker: str) -> dict[str, Any] | None:
         )
         external_rows = db.execute(
             """
-            SELECT source,ticker,event_type,status,event_at,source_url,payload_json
+            SELECT source,ticker,event_type,status,event_at,source_url,payload_json,
+                   first_collected_at,last_collected_at
             FROM public_market_events WHERE ticker=? AND event_at>?
             ORDER BY event_at DESC,last_collected_at DESC LIMIT 30
             """,
