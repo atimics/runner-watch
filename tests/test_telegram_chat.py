@@ -94,6 +94,128 @@ def test_bare_words_that_are_not_known_symbols_are_left_alone():
         assert chat.resolve_tickers(database, "watching ZZZZ") == []
 
 
+def test_trial_language_keeps_amd_as_a_medical_term():
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sec_companies(cik,ticker,name,exchange,refreshed_at) "
+            "VALUES(?,?,?,'NASDAQ',?)",
+            (1, "AMD", "Advanced Micro Devices", NOW.isoformat()),
+        )
+        assert chat.resolve_tickers(database, "Second Phase 3 wet AMD trial") == []
+        assert chat.resolve_tickers(database, "dry AMD treatment") == []
+        assert chat.resolve_tickers(database, "What about AMD?") == ["AMD"]
+        assert chat.resolve_tickers(database, "Compare $AMD with wet AMD trial stocks") == ["AMD"]
+
+
+def _save_turn(database, payload, reply=""):
+    chat.record_update(database, payload, NOW)
+    chat.finish_update(database, payload["update_id"], "handled", now=NOW)
+    if reply:
+        chat.record_action(database, _parse(payload), "reply", reply, NOW)
+
+
+def test_eypt_followups_refresh_the_same_stock(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        chat,
+        "look_up_ticker",
+        lambda ticker: calls.append(ticker) or {"ticker": ticker, "price": len(calls)},
+    )
+    with connection() as database:
+        _save_turn(database, _update("What do you think about $EYPT?"), "$EYPT last 0.53.")
+        for index, text in enumerate(
+            [
+                "It missed its main goal in a second Phase 3 wet AMD trial",
+                "Short term bounce possible? They are cutting 53% of workforce",
+                "Dash ??",
+            ],
+            start=2,
+        ):
+            payload = _update(text, update_id=index)
+            grounded = chat.prefetch_for(_parse(payload), database)
+            assert grounded["conversation_tickers"] == ["EYPT"]
+            assert grounded["looked_up"] == [{"ticker": "EYPT", "price": index - 1}]
+            _save_turn(database, payload, "Still watching.")
+    assert calls == ["EYPT", "EYPT", "EYPT"]
+
+
+@pytest.mark.parametrize(
+    ("history", "followup", "expected"),
+    [
+        ("$EYPT", "$MSGM instead", ["MSGM"]),
+        ("$EYPT", "What's moving across the market?", []),
+        ("$EYPT and $MSGM", "Can it bounce?", []),
+        ("$EYPT", "Thanks!", []),
+    ],
+)
+def test_context_follows_an_explicit_topic(history, followup, expected):
+    with connection() as database:
+        _save_turn(database, _update(history))
+        message = _parse(_update(followup, update_id=2))
+        assert chat.conversation_tickers(message, database) == expected
+
+
+@pytest.mark.parametrize("boundary", ["speaker", "chat", "topic", "expired", "future"])
+def test_context_stays_with_the_recent_speaker_and_topic(boundary):
+    original = _update("$EYPT")
+    followup = _update("Can it bounce?", update_id=2)
+    if boundary == "speaker":
+        original["message"]["from"]["id"] = ALICE + 1
+    elif boundary == "chat":
+        original["message"]["chat"]["id"] = CHAT - 1
+    elif boundary == "topic":
+        original["message"]["message_thread_id"] = 55
+        original["message"]["is_topic_message"] = True
+    elif boundary == "expired":
+        original["message"]["date"] -= (chat.ENGAGEMENT_MINUTES + 1) * 60
+    else:
+        original["update_id"] = 3
+    with connection() as database:
+        _save_turn(database, original, "$EYPT is moving.")
+        assert chat.conversation_tickers(_parse(followup), database) == []
+
+
+def test_other_speakers_keep_their_own_topic():
+    with connection() as database:
+        _save_turn(database, _update("$EYPT"))
+        _save_turn(database, _update("$MSGM", update_id=2, user_id=ALICE + 1))
+        followup = _parse(_update("Can it bounce?", update_id=3))
+        assert chat.conversation_tickers(followup, database) == ["EYPT"]
+
+
+def test_an_explicit_reply_supplies_the_subject():
+    payload = _update("Can it bounce?", reply_to_bot=True)
+    payload["message"]["message_thread_id"] = 55
+    payload["message"]["is_topic_message"] = True
+    payload["message"]["reply_to_message"]["text"] = "$EYPT last 0.53."
+    message = _parse(payload)
+    assert message.reply_text == "$EYPT last 0.53."
+    assert message.message_thread_id == 55
+    with connection() as database:
+        assert chat.conversation_tickers(message, database) == ["EYPT"]
+
+
+def test_a_reply_to_dash_keeps_the_subject_when_his_reply_omits_the_ticker():
+    payload = _update("Short term bounce possible?", update_id=3, reply_to_bot=True)
+    payload["message"]["reply_to_message"]["text"] = "Second Phase 3 miss. Last 0.52."
+    payload["message"]["message_thread_id"] = 901
+    with connection() as database:
+        _save_turn(database, _update("What about $EYPT?"), "$EYPT last 0.53.")
+        _save_turn(database, _update("It missed its trial", update_id=2))
+        assert chat.conversation_tickers(_parse(payload), database) == ["EYPT"]
+
+
+def test_a_coin_topic_ends_the_previous_stock_subject():
+    with connection() as database:
+        _save_turn(database, _update("$EYPT"))
+        _save_turn(database, _update(CA, update_id=2))
+        assert (
+            chat.conversation_tickers(_parse(_update("Can it bounce?", update_id=3)), database)
+            == []
+        )
+        assert chat.conversation_tickers(_parse(_update(CA, update_id=3)), database) == []
+
+
 def test_prefetch_looks_up_a_named_ticker(monkeypatch):
     from runner_web import telegram_chat
 
@@ -307,6 +429,31 @@ def test_the_transcript_reads_oldest_first_and_skips_empty_messages():
 
     assert [line["said"] for line in lines] == ["first", "second", "third"]
     assert {line["who"] for line in lines} == {"Alice"}
+
+
+def test_transcript_pairs_replies_with_questions_and_stops_at_the_current_turn():
+    with connection() as database:
+        _save_turn(database, _update("What about $EYPT?"), "$EYPT last 0.53.")
+        _save_turn(database, _update("Can it bounce?", update_id=2), "Watching the volume.")
+        _save_turn(database, _update("Later question", update_id=3), "Later answer")
+        lines = chat.recent_transcript(database, CHAT, before_update_id=3)
+    assert [(line["role"], line["said"]) for line in lines] == [
+        ("user", "What about $EYPT?"),
+        ("assistant", "$EYPT last 0.53."),
+        ("user", "Can it bounce?"),
+        ("assistant", "Watching the volume."),
+    ]
+
+
+def test_transcript_reads_the_selected_telegram_topic():
+    with connection() as database:
+        _save_turn(database, _update("Main room"), "Main reply")
+        payload = _update("Topic question", update_id=2)
+        payload["message"]["message_thread_id"] = 55
+        payload["message"]["is_topic_message"] = True
+        _save_turn(database, payload, "Topic reply")
+        lines = chat.recent_transcript(database, CHAT, message_thread_id=55)
+    assert [line["said"] for line in lines] == ["Topic question", "Topic reply"]
 
 
 def _client():
@@ -816,6 +963,59 @@ def test_a_reply_that_names_an_unlooked_address_gets_one_chance_to_correct(monke
 
     assert decision == {"action": "reply", "text": "I have not looked at that coin."}
     assert len(calls) == 2
+
+
+def test_a_missing_tool_action_retries_the_turn(monkeypatch):
+    web_main = _no_prefetch(monkeypatch)
+    scripted = [{"choices": []}, _tool_turn("reply", {"text": "Checking that question."})]
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", lambda body: scripted.pop(0))
+
+    result = web_main._generate_telegram_turn(_parse(_update("$EYPT", mention=True)), [])
+
+    assert result == {"action": "reply", "text": "Checking that question."}
+    assert scripted == []
+
+
+def test_repeated_missing_actions_receive_a_short_error_reply(monkeypatch):
+    web_main = _no_prefetch(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        web_main, "_telegram_chat_completion", lambda body: calls.append(body) or {"choices": []}
+    )
+
+    result = web_main._generate_telegram_turn(_parse(_update("$EYPT", mention=True)), [])
+
+    assert result == {"action": "reply", "text": "That check hit a problem. Please try again."}
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("writer", ["tools", "decision"])
+def test_both_reply_paths_receive_the_followup_lookup(monkeypatch, writer):
+    from runner_web import main as web_main
+    from runner_web.dash_decisions import TurnPlan
+
+    monkeypatch.setattr(chat, "look_up_ticker", lambda ticker: {"ticker": ticker, "price": 0.52})
+    with connection() as database:
+        _save_turn(database, _update("What about $EYPT?"), "$EYPT last 0.53.")
+        transcript = chat.recent_transcript(database, CHAT, before_update_id=2)
+    message = _parse(_update("Short term bounce possible?", update_id=2))
+    contexts = []
+
+    def completion(body):
+        contexts.append(json.loads(body["messages"][1]["content"]))
+        if writer == "tools":
+            return _tool_turn("reply", {"text": "$EYPT last 0.52."})
+        return {"choices": [{"message": {"content": "$EYPT last 0.52."}}]}
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion)
+    if writer == "tools":
+        result = web_main._generate_telegram_turn(message, transcript)
+    else:
+        result = web_main._write_telegram_reply(message, transcript, TurnPlan("reply", "test"), NOW)
+    assert result == {"action": "reply", "text": "$EYPT last 0.52."}
+    assert len(contexts) == 1
+    assert contexts[0]["already_looked_up"]["looked_up"] == [{"ticker": "EYPT", "price": 0.52}]
+    assert contexts[0]["room"]["recent"][1]["role"] == "assistant"
 
 
 def test_an_address_the_model_expanded_is_not_corrected(monkeypatch):
