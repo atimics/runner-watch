@@ -230,6 +230,48 @@ def test_daily_loss_pauses_entries_while_stop_exit_still_fills(trading_db):
     assert ledger.account(trader.identifier)["realized_usdc"] == -15_020_000
 
 
+def test_live_submission_error_keeps_the_saved_signature_and_reservation(trading_db):
+    class Adapter:
+        wallet = "dedicated-wallet"
+        submissions = 0
+
+        def reconcile(self, *args):
+            pass
+
+        def prepare(self, identifier, token, order, quote, at):
+            with ledger.locked(identifier, token, at) as database:
+                database.execute(
+                    "UPDATE trading_orders SET status='prepared',signature='saved' WHERE id=?",
+                    (order["id"],),
+                )
+
+        def recover(self, identifier, token, order, at):
+            assert order["signature"] == "saved"
+            self.submissions += 1
+            raise ProviderError("Confirmation service unavailable")
+
+    clock = {"at": AT}
+    adapter = Adapter()
+    trader = Trader(
+        Policy(),
+        mode="live",
+        clock=lambda: clock["at"],
+        provider=FakeJupiter(lambda: clock["at"]),
+        live=adapter,
+        source=lambda: [candidate()],
+    )
+    trader.cycle()
+    clock["at"] += timedelta(seconds=30)
+    trader.cycle()
+    assert adapter.submissions == 1  # Same cycle as preparation.
+    assert ledger.account(trader.identifier)["reserved_usdc"] == 25_000_000
+    assert ledger.rows("trading_orders", trader.identifier)[0]["status"] == "prepared"
+    clock["at"] += timedelta(seconds=30)
+    trader.cycle()
+    assert adapter.submissions == 2
+    assert ledger.account(trader.identifier)["reserved_usdc"] == 25_000_000
+
+
 def test_restart_after_signal_capture_records_a_skipped_stale_entry(trading_db):
     trader, clock, source, provider = setup_trader()
     token = ledger.acquire(trader.identifier, AT)

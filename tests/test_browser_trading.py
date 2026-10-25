@@ -1,3 +1,5 @@
+import os
+import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -61,7 +63,9 @@ def test_trading_desk_fits_and_exit_dialog_works_with_keyboard(page: Page, clien
     trader = open_desk(page, client, width)
     expect(page.get_by_role("heading", name="Trading desk")).to_be_visible()
     expect(page.get_by_text("Virtual funds", exact=True)).to_be_visible()
-    page.screenshot(path=str(Path("/private/tmp") / f"solana-trading-{width}.png"), full_page=True)
+    evidence = Path(os.getenv("TRADING_SCREENSHOT_DIR", tempfile.gettempdir()))
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(evidence / f"solana-trading-{width}.png"), full_page=True)
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), (
         page.evaluate(
             "[...document.querySelectorAll('body *')].filter(e => "
@@ -84,7 +88,7 @@ def test_trading_desk_fits_and_exit_dialog_works_with_keyboard(page: Page, clien
         ledger.rows("trading_positions", trader.identifier, active=True)[0]["exit_requested"] == 1
     )
     assert errors == []
-    page.screenshot(path=str(Path("/private/tmp") / f"solana-trading-{width}.png"), full_page=True)
+    page.screenshot(path=str(evidence / f"solana-trading-{width}.png"), full_page=True)
 
 
 def test_operator_can_pause_and_resume_the_paper_account(page: Page, client):

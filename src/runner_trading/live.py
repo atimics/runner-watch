@@ -302,9 +302,18 @@ class Live:
             )
 
     def recover(self, identifier: str, token: str, order: dict, at: datetime) -> None:
-        status = self.rpc(
+        # Observe finalized expiry before asking for absence. This closes the
+        # race where an order lands while the expiry check is in flight.
+        finalized_slot = self.rpc("getSlot", [{"commitment": "finalized"}])
+        height = self.rpc(
+            "getBlockHeight", [{"commitment": "finalized", "minContextSlot": finalized_slot}]
+        )
+        statuses = self.rpc(
             "getSignatureStatuses", [[order["signature"]], {"searchTransactionHistory": True}]
-        )["value"][0]
+        )
+        if statuses.get("context", {}).get("slot", -1) < finalized_slot:
+            raise ProviderError("Wait for a consistent finalized chain read")
+        status = statuses["value"][0]
         receipt = self.rpc(
             "getTransaction",
             [
@@ -319,7 +328,6 @@ class Live:
         if receipt:
             self.settle(identifier, token, order, receipt, at)
             return
-        height = self.rpc("getBlockHeight", [{"commitment": "finalized"}])
         if status is None and height > order["last_valid_height"]:
             ledger.fail_order(
                 identifier, token, order["id"], "Transaction expired before landing", at
@@ -365,7 +373,7 @@ class Live:
             "receipt_hash": ledger.key(ledger.encode(receipt)),
         }
         if not 0 <= fees <= self.policy.max_fee_lamports:
-            ledger.pause(identifier, "Review the finalized network cost", at)
+            self.review(identifier, token, order, summary, "Review the finalized network cost", at)
             return
         if meta["err"]:
             ledger.fail_order(
@@ -400,7 +408,19 @@ class Live:
             or credit < int(quote["minimum_raw"])
             or any(changes.values())
         ):
-            ledger.pause(identifier, "Review finalized token balance changes", at)
+            self.review(
+                identifier,
+                token,
+                order,
+                {
+                    **summary,
+                    "debit_raw": str(debit),
+                    "credit_raw": str(credit),
+                    "other_changes": changes,
+                },
+                "Review finalized token balance changes",
+                at,
+            )
             return
         ledger.fill(
             identifier,
@@ -413,6 +433,32 @@ class Live:
             receipt=summary,
             at=at,
         )
+
+    def review(self, identifier, token, order, receipt, reason, at):
+        with ledger.locked(identifier, token, at) as db:
+            acc = db.execute(
+                "SELECT paused,pause_reason FROM trading_accounts WHERE id=?", (identifier,)
+            ).fetchone()
+            db.execute(
+                "UPDATE trading_orders SET status='checking',result_json=?,updated_at=? WHERE id=?",
+                (
+                    ledger.encode({**receipt, "review_required": True, "reason": reason}),
+                    stamp(at),
+                    order["id"],
+                ),
+            )
+            db.execute(
+                "UPDATE trading_accounts SET paused=1,pause_reason=? WHERE id=?",
+                (reason, identifier),
+            )
+            if not acc["paused"] or acc["pause_reason"] != reason:
+                ledger.event(
+                    db,
+                    identifier,
+                    "receipt_review",
+                    {"reason": reason, "order_id": order["id"]},
+                    at,
+                )
 
     def reconcile(self, identifier: str, token: str, at: datetime) -> None:
         if any(

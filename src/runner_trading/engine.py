@@ -321,6 +321,17 @@ class Trader:
                 quote.require_fresh(self.policy, self.clock())
                 if self.live:
                     self.live.prepare(self.identifier, self.token, order, quote, self.clock())
+                    # Submission follows the durable commit in the same cycle.
+                    # Every failure from this point keeps the saved reservation.
+                    prepared = next(
+                        o
+                        for o in ledger.rows("trading_orders", self.identifier, active=True)
+                        if o["id"] == order["id"]
+                    )
+                    try:
+                        self.live.recover(self.identifier, self.token, prepared, self.clock())
+                    except (ProviderError, ValueError) as exc:
+                        self.issues.append(str(exc))
                 else:
                     # Recheck the operator switch after all provider calls.
                     if buying and ledger.account(self.identifier)["paused"]:

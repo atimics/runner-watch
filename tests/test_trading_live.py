@@ -114,7 +114,9 @@ class Chain:
         if method == "getBlockHeight":
             return self.height
         if method == "getSignatureStatuses":
-            return {"value": [self.status]}
+            return {"context": {"slot": 500}, "value": [self.status]}
+        if method == "getSlot":
+            return 500
         if method == "getTransaction":
             return self.receipt
         if method == "getTokenAccountsByOwner":
@@ -263,6 +265,26 @@ def test_seen_signature_past_expiry_still_waits_for_finality(trading_db):
     assert wire.sent == []
 
 
+def test_a_lagging_status_read_keeps_the_expired_order_reserved(trading_db):
+    live, quote, chain, wire = execution()
+    identifier, token, order = reserve(live)
+    live.prepare(identifier, token, order, quote, AT)
+    saved = ledger.rows("trading_orders", identifier)[0]
+    chain.height = 251
+
+    def lagging(method, params):
+        return (
+            {"context": {"slot": 499}, "value": [None]}
+            if method == "getSignatureStatuses"
+            else chain(method, params)
+        )
+
+    live.rpc = lagging
+    with pytest.raises(ProviderError, match="consistent"):
+        live.recover(identifier, token, saved, AT)
+    assert ledger.account(identifier)["reserved_usdc"] == 25_000_000
+
+
 def test_unexpected_finalized_output_pauses_and_preserves_evidence(trading_db):
     live, quote, chain, wire = execution()
     identifier, token, order = reserve(live)
@@ -273,6 +295,10 @@ def test_unexpected_finalized_output_pauses_and_preserves_evidence(trading_db):
     assert ledger.account(identifier)["paused"]
     assert ledger.account(identifier)["reserved_usdc"] == 25_000_000
     assert len(ledger.rows("trading_positions", identifier)) == 0
+    evidence = json.loads(ledger.rows("trading_orders", identifier)[0]["result_json"])
+    assert evidence["review_required"] is True
+    assert evidence["signature"] == saved["signature"]
+    assert evidence["credit_raw"] == "1"
 
 
 @pytest.mark.parametrize("change", ["simulation", "delegate", "controls", "amount", "program"])

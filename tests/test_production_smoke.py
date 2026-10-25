@@ -105,7 +105,7 @@ def test_parallel_deploy_gate_requires_every_job_to_succeed() -> None:
     workflow = yaml.safe_load((Path(__file__).parents[1] / ".github/workflows/fly.yml").read_text())
     jobs = workflow["jobs"]
     gate = jobs["test"]
-    always_required = ["lint", "unit", "browser", "evidence", "container"]
+    always_required = ["lint", "unit", "browser", "trading-postgres", "evidence", "container"]
     assert set(gate["needs"]) == {*always_required, "coverage"}
     assert gate["if"] == "always()"
     assert jobs["deploy"]["needs"] == "test"
@@ -129,7 +129,7 @@ def test_parallel_deploy_gate_requires_every_job_to_succeed() -> None:
         ).returncode
 
     pull_request = {
-        **{f"{name.upper()}_RESULT": "success" for name in always_required},
+        **{f"{name.upper().replace('-', '_')}_RESULT": "success" for name in always_required},
         "COVERAGE_RESULT": "skipped",
         "EVENT_NAME": "pull_request",
     }
@@ -139,7 +139,7 @@ def test_parallel_deploy_gate_requires_every_job_to_succeed() -> None:
     # A skipped coverage job must not satisfy the deploy gate on main.
     assert gate_result({**main, "COVERAGE_RESULT": "skipped"}) != 0
     for name in always_required:
-        failing = {**main, f"{name.upper()}_RESULT": "failure"}
+        failing = {**main, f"{name.upper().replace('-', '_')}_RESULT": "failure"}
         assert gate_result(failing) != 0, name
 
 

@@ -111,7 +111,7 @@ def snapshot(mode: str, *, at: datetime | None = None) -> dict:
         "gas_usdc": account["gas_usdc"],
         "realized_usdc": account["realized_usdc"],
         "valuation_complete": complete,
-        "equity_usdc": account["cash_usdc"] + open_totals["value"] - account["gas_usdc"]
+        "equity_usdc": account["cash_usdc"] + int(open_totals["value"]) - account["gas_usdc"]
         if complete
         else None,
         "open_positions": open_totals["n"],

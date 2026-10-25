@@ -258,6 +258,11 @@ def fail_order(
             "WHERE id=?",
             (reason, stamp(at), encode(receipt or {}), order_id),
         )
+        if order["signal_id"]:
+            db.execute(
+                "UPDATE trading_signals SET state='entry_failed',reason=? WHERE id=?",
+                (reason, order["signal_id"]),
+            )
         db.execute(
             "UPDATE trading_accounts SET reserved_usdc=reserved_usdc-?,"
             "sol_lamports=sol_lamports-?,gas_usdc=gas_usdc+? WHERE id=?",
@@ -331,6 +336,10 @@ def fill(
                     gas_usdc,
                     stamp(at),
                 ),
+            )
+            db.execute(
+                "UPDATE trading_signals SET state='entered',reason='Entry filled' WHERE id=?",
+                (order["signal_id"],),
             )
         else:
             pos = db.execute(
