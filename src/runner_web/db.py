@@ -12,6 +12,7 @@ from hashlib import sha256
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
+from runner_trading.schema import migrate as migrate_trading
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.ai_kol import (
     DEFAULT_FLASH_MODEL,
@@ -4202,6 +4203,7 @@ MIGRATIONS = (
     Migration(102, "token_discoveries", _migration_102_token_discoveries),
     Migration(103, "replay_objects", _migration_103_replay_objects),
     Migration(104, "api_credits", _migration_104_api_credits),
+    Migration(105, "solana_trading", migrate_trading),
 )
 
 

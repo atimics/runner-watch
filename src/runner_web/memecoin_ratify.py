@@ -59,7 +59,7 @@ LP_LAYOUTS = (
 HOLDERS_TTL = timedelta(hours=6)
 LOCKS_TTL = timedelta(hours=1)
 # Bump when the holder rules change, so answers under older rules are redone.
-HOLDER_RULES = 6
+HOLDER_RULES = 7
 MAX_HOLDER_READS = 20
 # The row fields the rules read, kept with each recorded result.
 ROW_FACTS = (
@@ -330,6 +330,14 @@ def ratify_rows(
             "lock": locks.get(row.get("pool_address", "")),
         }
         row["liquidity_lock"] = inputs["lock"]
+        row["trading_checks"] = {
+            "holder_checked_at": (holders.get(mint) or {}).get("checked_at"),
+            "holder_rules": (holders.get(mint) or {}).get("rules"),
+            "lock_checked_at": (kept_locks.get(row.get("pool_address", "")) or {}).get(
+                "checked_at"
+            ),
+            "controls_clean": bool((inputs["controls"] or {}).get("clean")),
+        }
         row["ratification"] = standards(
             row,
             inputs["controls"],
