@@ -83,6 +83,8 @@ def _call(row: Any, mark: dict[str, Any] | None = None) -> dict[str, Any]:
             "exit_at",
             "created_at",
             "updated_at",
+            "resolution_state",
+            "resolution_reason",
         )
     }
     stake = int(saved.get("stake") or 0)
@@ -284,7 +286,8 @@ def _settle(database: Any, call: Any, quote: Any, *, at: str, **evidence: Any) -
     changed = database.execute(
         """
         UPDATE memecoin_calls
-        SET status='closed',exit_price=?,exit_at=?,exit_evidence=?,settled_flash=?,updated_at=?
+        SET status='closed',exit_price=?,exit_at=?,exit_evidence=?,settled_flash=?,updated_at=?,
+            resolution_state='ok',resolution_reason=NULL
         WHERE public_id=? AND status='active'
         """,
         (
@@ -493,8 +496,9 @@ def expire_memecoin_calls(
 ) -> list[str]:
     """Settle memecoin Calls left open past the expiry window at the latest stored quote.
 
-    Returns the caller handles whose public records changed. A Call with no
-    stored quote at or after its entry time stays open until a quote arrives.
+    Returns the caller handles whose public records changed. The saved asset
+    is a fallback for pruned history. A missing post-entry quote gives the Call
+    an explicit awaiting_quote resolution state until evidence arrives.
     """
     current = at or datetime.now(UTC)
     cutoff = (current - timedelta(days=max_age_days)).isoformat()
@@ -518,6 +522,33 @@ def expire_memecoin_calls(
                 """,
                 (str(row["coin_id"]), str(row["entry_at"])),
             ).fetchone()
+            if quote is None:
+                saved = database.execute(
+                    "SELECT quote_json,collected_at,run_id FROM memecoin_assets WHERE coin_id=?",
+                    (row["coin_id"],),
+                ).fetchone()
+                last = json.loads(saved["quote_json"]) if saved else {}
+                price = last.get("price")
+                if (
+                    isinstance(price, (int, float))
+                    and math.isfinite(price)
+                    and price > 0
+                    and last.get("observed_at")
+                    and last["observed_at"] >= row["entry_at"]
+                ):
+                    quote = {
+                        "price": price,
+                        "observed_at": last["observed_at"],
+                        "collected_at": saved["collected_at"],
+                        "run_id": saved["run_id"],
+                    }
+                else:
+                    database.execute(
+                        "UPDATE memecoin_calls SET resolution_state='awaiting_quote',"
+                        "resolution_reason='Expiry needs a saved quote after entry' "
+                        "WHERE public_id=?",
+                        (row["public_id"],),
+                    )
             if quote is None:
                 continue
             if _settle(database, row, quote, at=current.isoformat(), auto_expired=True):

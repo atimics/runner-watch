@@ -154,6 +154,7 @@ class Live:
         source = token_account(self.wallet, quote.input_mint, TOKEN_PROGRAM)
         destination = token_account(self.wallet, quote.output_mint, TOKEN_PROGRAM)
         swap_count = 0
+        compute = {}
         for instruction in msg.instructions:
             program = keys[instruction.program_id_index]
             args = [keys[i] for i in instruction.accounts]
@@ -203,10 +204,17 @@ class Live:
             elif program == COMPUTE:
                 if not data or (data[0], len(data)) not in {(2, 5), (3, 9)} or args:
                     raise ProviderError("Compute instruction needs a reviewed layout")
+                if data[0] in compute:
+                    raise ProviderError("Use one compute instruction of each kind")
+                compute[data[0]] = int.from_bytes(data[1:], "little")
             else:
                 raise ProviderError("Transaction program exceeds the order scope")
         if swap_count != 1:
             raise ProviderError("One checked swap per transaction is required")
+        units = compute.get(2, min(1_400_000, 200_000 * len(msg.instructions)))
+        priority_fee = (units * compute.get(3, 0) + 999_999) // 1_000_000
+        if not 1 <= units <= 1_400_000 or priority_fee + 5000 > self.policy.max_fee_lamports:
+            raise ProviderError("The encoded compute fee exceeds the account limit")
         # Fresh mint controls also ensure transfer fees/hooks cannot change the
         # expected input and output between simulation and landing.
         for mint, account in zip(

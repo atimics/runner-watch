@@ -81,37 +81,34 @@ def top10_share_from(
     exclude: set[str] = frozenset(),  # type: ignore[assignment]
     program_address: Callable[[str], bool] = is_program_address,
 ) -> float | None:
-    """Estimated top-wallet share from the largest token accounts.
+    """Percent of supply held by the ten largest wallets.
 
     `accounts` are the largest token accounts, `owners` each account's owner
     (None when unreadable) and `programs` the program behind each
     program-address owner. An account is left out only when a known pool or
     curve holds it; an unreadable owner counts. When fewer than ten wallets are
     among a full listing, each missing one counts at the smallest listed
-    balance. Holdings outside this sample can increase the actual wallet share.
+    balance, an upper bound on anything further down.
     """
 
     listed = [item for item in accounts if item.get("address") not in exclude]
     if not listed or supply <= 0:
         return None
-    held_by_owner: dict[str, float] = {}
+    held = []
     for item in listed:
         owner = owners.get(item["address"])
         if owner in POOL_AUTHORITIES:
             continue
         if owner and program_address(owner) and programs.get(owner) in POOL_PROGRAMS:
             continue
-        # A wallet may own several token accounts. Count its combined holding.
-        identity = owner or f"unread:{item['address']}"
-        held_by_owner[identity] = held_by_owner.get(identity, 0.0) + account_amount(item)
-    held = list(held_by_owner.values())
+        held.append(account_amount(item))
     if not held and len(listed) < LARGEST_LISTED:
         return None  # every listed account is a pool: no wallet was read, not 0%
     held.sort(reverse=True)
     if len(held) < 10 and len(listed) >= LARGEST_LISTED:
         smallest = min(account_amount(item) for item in listed)
         held += [smallest] * (10 - len(held))
-    return min(100.0, sum(held[:10]) / supply * 100)
+    return sum(held[:10]) / supply * 100
 
 
 def lp_left_pct(outstanding: int, issued: int) -> float | None:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
@@ -21,7 +24,30 @@ def trading_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "trading.db")
     monkeypatch.setattr(db, "DATABASE_URL", "")
     monkeypatch.setattr(db, "REQUIRE_DATABASE_URL", False)
-    db.init_db()
+    admin_url = os.getenv("TRADING_TEST_DATABASE_URL")
+    if not admin_url:
+        db.init_db()
+        yield
+        return
+    import psycopg
+    from psycopg import sql
+
+    from runner_web.database import close_database_pool
+
+    parts = urlsplit(admin_url)
+    if parts.hostname not in {"localhost", "127.0.0.1"}:
+        raise ValueError("The PostgreSQL trading test requires a local test service")
+    name = "trading_test_" + uuid.uuid4().hex
+    with psycopg.connect(admin_url, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        try:
+            monkeypatch.setattr(db, "DATABASE_URL", urlunsplit(parts._replace(path="/" + name)))
+            monkeypatch.setattr(db, "REQUIRE_DATABASE_TLS", False)
+            db.init_db()
+            yield
+        finally:
+            close_database_pool()
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
 
 
 def candidate(at=AT, **changes):
@@ -168,6 +194,71 @@ def test_saved_policy_is_immutable(trading_db):
     ledger.ensure_account("paper", Policy(), AT)
     with pytest.raises(ValueError, match="saved account policy"):
         ledger.ensure_account("paper", Policy(entry_usdc=50_000_000), AT)
+
+
+def test_four_reservations_share_one_cash_and_exposure_limit(trading_db):
+    trader, clock, source, provider = setup_trader()
+    source[:] = [candidate(token_address=f"mint{i}", id=f"coin{i}") for i in range(6)]
+    trader.cycle()
+    assert ledger.account(trader.identifier)["reserved_usdc"] == 100_000_000
+    assert len(ledger.rows("trading_orders", trader.identifier)) == 4
+    clock["at"] += timedelta(seconds=30)
+    trader.cycle()
+    assert len(ledger.rows("trading_positions", trader.identifier, active=True)) == 4
+    assert ledger.account(trader.identifier)["cash_usdc"] == 900_000_000
+    assert ledger.account(trader.identifier)["reserved_usdc"] == 0
+
+
+def test_daily_loss_pauses_entries_while_stop_exit_still_fills(trading_db):
+    clock = {"at": AT}
+    source = [candidate()]
+    provider = FakeJupiter(lambda: clock["at"])
+    trader = Trader(
+        Policy(daily_loss_usdc=1_000_000),
+        clock=lambda: clock["at"],
+        provider=provider,
+        source=lambda: source,
+    )
+    trader.cycle()
+    clock["at"] += timedelta(seconds=30)
+    trader.cycle()
+    provider.output = 10_000_000
+    clock["at"] += timedelta(seconds=30)
+    trader.cycle()
+    assert ledger.account(trader.identifier)["paused"] == 1
+    assert ledger.rows("trading_positions", trader.identifier, active=True) == []
+    assert ledger.account(trader.identifier)["realized_usdc"] == -15_020_000
+
+
+def test_restart_after_signal_capture_records_a_skipped_stale_entry(trading_db):
+    trader, clock, source, provider = setup_trader()
+    token = ledger.acquire(trader.identifier, AT)
+    trader.token = token
+    # Simulate a stop after evidence commit, before the first quote.
+    with db.connection() as database:
+        database.execute(
+            "INSERT INTO trading_signals(id,account_id,mint,coin_id,observed_at,"
+            "state,reason,evidence_json,outcome_due_at) VALUES(?,?,?,?,?,'observed',?,?,?)",
+            (
+                "waiting",
+                trader.identifier,
+                MINT,
+                "example",
+                stamp(AT),
+                "checked",
+                json.dumps(candidate()),
+                stamp(AT + timedelta(hours=6)),
+            ),
+        )
+    ledger.release(trader.identifier, token)
+    source.clear()
+    clock["at"] += timedelta(hours=7)
+    trader.cycle()
+    signal = ledger.rows("trading_signals", trader.identifier)[0]
+    assert signal["state"] == "skipped"
+    assert signal["baseline_units"] is None
+    assert json.loads(signal["outcome_json"])["state"] == "unavailable"
+    assert provider.calls == []
 
 
 @pytest.mark.parametrize(

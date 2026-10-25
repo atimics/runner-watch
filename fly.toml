@@ -16,10 +16,11 @@ kill_timeout = 30
   web = "uvicorn runner_web.main:app --host 0.0.0.0 --port 8080 --no-proxy-headers --timeout-graceful-shutdown 25 --no-access-log"
   worker = "env PROCESS_ROLE=worker MASSIVE_CACHE_PATH=/data/massive_daily.sqlite3 stonks-worker"
   trainer = "env PROCESS_ROLE=trainer stonks-trainer"
+  trader = "env PROCESS_ROLE=trader TRADING_MODE=paper TRADING_LIVE_ENABLED=0 stonks-trader"
 
 [[restart]]
   policy = "always"
-  processes = ["worker", "trainer"]
+  processes = ["worker", "trainer", "trader"]
 
 # The Massive grouped-daily cache is a local SQLite file. Without a volume it
 # is wiped by every deploy, so every scan falls back to slow Yahoo history.
@@ -41,6 +42,7 @@ kill_timeout = 30
   TRUST_FLY_CLIENT_IP = "1"
   WORKER_EXPECTED_INSTANCES = "1"
   PROCESS_ROLE = "web"
+  TRADING_EXPECTED = "1"
   REQUIRE_DATABASE_URL = "1"
   REQUIRE_RATE_LIMIT_HASH_KEY = "1"
   REQUIRE_EDGE_PROXY_SECRET = "1"
@@ -127,3 +129,8 @@ kill_timeout = 30
   processes = ["worker", "trainer"]
   size = "shared-cpu-2x"
   memory = "1gb"
+
+[[vm]]
+  processes = ["trader"]
+  size = "shared-cpu-1x"
+  memory = "512mb"

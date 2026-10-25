@@ -22,6 +22,7 @@ from ratitrust.memecoin import (
     MAX_LP_LEFT_PCT,
     MAX_TOP10_PCT,
     POOL_AUTHORITIES,
+    POOL_PROGRAMS,
     lp_left_pct,
     passes_free_standards,
     standards,
@@ -141,8 +142,27 @@ def top10_share(mint: str, *, supply: float, exclude: set[str], rpc: Rpc) -> flo
         address: (account or {}).get("owner")
         for address, account in (read_accounts(derived, rpc) if derived else {}).items()
     }
+    # Prepare one balance per known wallet before applying the published rules.
+    # Pool accounts and unread owners retain their own evidence and exclusions.
+    grouped: dict[str, dict[str, Any]] = {}
+    normalized = []
+    for item in accounts:
+        owner = owners.get(item["address"])
+        pool = owner in POOL_AUTHORITIES or (
+            owner and is_program_address(owner) and programs.get(owner) in POOL_PROGRAMS
+        )
+        if not owner or pool:
+            normalized.append(item)
+            continue
+        if owner not in grouped:
+            grouped[owner] = dict(item)
+            normalized.append(grouped[owner])
+        else:
+            if item["decimals"] != grouped[owner]["decimals"]:
+                raise ValueError("Holder decimals differ for the same mint")
+            grouped[owner]["amount"] = str(int(grouped[owner]["amount"]) + int(item["amount"]))
     return top10_share_from(
-        accounts, owners, programs, supply=supply, program_address=is_program_address
+        normalized, owners, programs, supply=supply, program_address=is_program_address
     )
 
 

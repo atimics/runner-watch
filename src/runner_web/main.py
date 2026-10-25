@@ -464,6 +464,7 @@ from runner_web.telegram_routes import (
     create_telegram_routes,
 )
 from runner_web.topics import TopicHub, TopicPolicy, TopicSnapshot, TopicUpdate
+from runner_web.trading_routes import TradingDependencies, create_trading_routes
 from runner_web.wallet_backfill import wallet_backfill_worker
 from runner_web.wallet_routes import WalletRouteDependencies, create_wallet_routes
 from runner_web.worker_supervisor import run_supervised
@@ -8235,6 +8236,18 @@ memecoin_routes = create_memecoin_routes(
         run_in_threadpool=lambda *args, **kwargs: run_in_threadpool(*args, **kwargs),
         board_view_tabs=BOARD_VIEW_TABS,
         default_board_view=DEFAULT_BOARD_VIEW,
+    )
+)
+app.include_router(
+    create_trading_routes(
+        TradingDependencies(
+            templates=templates,
+            page_context=lambda *args, **kwargs: page_context(*args, **kwargs),
+            require_origin=lambda request: require_origin(request),
+            require_user=lambda session: require_user(session),
+            require_recent_auth=lambda session: require_recent_auth(session),
+            enforce_rate=lambda *args, **kwargs: enforce_rate(*args, **kwargs),
+        )
     )
 )
 app.include_router(memecoin_routes.router)

@@ -40,23 +40,28 @@ class Trader:
         self.source = source
         self.identifier = ledger.ensure_account(mode, policy, self.clock())["id"]
         self.token = ""
+        self.issues: list[str] = []
 
     def cycle(self) -> dict:
         token = ledger.acquire(self.identifier, self.clock())
         if not token:
             return {"state": "leased"}
         self.token = token
-        errors = []
+        errors = self.issues = []
         try:
             board = self.source()
             by_mint = {r["token_address"]: r for r in board if r.get("token_address")}
             # A pending signature always gets a chain check before a new order.
             self.orders(by_mint, recover_only=True)
             if self.live:
-                self.live.reconcile(self.identifier, self.token, self.clock())
+                try:
+                    self.live.reconcile(self.identifier, self.token, self.clock())
+                except ProviderError as exc:
+                    errors.append(str(exc))
             self.monitor(by_mint)
             self.risk_limits()
             self.orders(by_mint)
+            self.risk_limits()
             self.signals(board)
             self.outcomes()
         except (ProviderError, ValueError, LookupError) as exc:
@@ -72,13 +77,15 @@ class Trader:
                 )
                 pending = ledger.rows("trading_orders", self.identifier, active=True)
                 uncertain = sum(o["status"] != "queued" for o in pending)
+                retrying = sum(o["attempts"] > 0 for o in pending)
                 health = {
-                    "state": "degraded" if errors or unavailable or uncertain else "ok",
-                    "errors": errors,
+                    "state": "degraded" if errors or unavailable or uncertain or retrying else "ok",
+                    "errors": list(dict.fromkeys(errors))[:8],
                     "positions": len(positions),
                     "unavailable_exits": unavailable,
                     "pending_orders": len(pending),
                     "uncertain_orders": uncertain,
+                    "retrying_orders": retrying,
                     "at": stamp(at),
                 }
                 with ledger.locked(self.identifier, self.token, at) as db:
@@ -103,6 +110,7 @@ class Trader:
                 receipt = {**quote.receipt(), "exit_gas_usdc": gas}
                 net = max(0, value - gas)
             except (ProviderError, ValueError) as exc:
+                self.issues.append(str(exc))
                 receipt = {"reason": str(exc)}
                 net = None
             ledger.save_mark(self.identifier, self.token, pos["id"], net, receipt, self.clock())
@@ -151,7 +159,7 @@ class Trader:
                 ledger.event(db, self.identifier, "risk_pause", {"reason": reason}, at)
 
     def entry_health(self) -> list[str]:
-        reasons = []
+        reasons = ["Restore provider health"] if self.issues else []
         acc = ledger.account(self.identifier)
         if acc["paused"]:
             reasons.append(acc["pause_reason"] or "Entries paused")
@@ -230,6 +238,12 @@ class Trader:
             reasons = signal["reasons"] + self.entry_health()
             if index >= self.policy.max_new_signals:
                 reasons.append("Signal quote budget reached")
+            elif (
+                not 0
+                <= age(signal["row"]["observed_at"], self.clock())
+                <= self.policy.entry_timeout_seconds
+            ):
+                reasons.append("Entry quote window ended")
             else:
                 try:
                     buy = self.provider.quote(USDC, signal["mint"], self.policy.entry_usdc)
@@ -244,6 +258,7 @@ class Trader:
                         )
                 except (ProviderError, ValueError) as exc:
                     reasons.append(str(exc))
+                    self.issues.append(str(exc))
             if not reasons and ledger.reserve_buy(
                 self.identifier, self.token, signal, self.policy, self.clock()
             ):
@@ -261,8 +276,11 @@ class Trader:
         orders = ledger.rows("trading_orders", self.identifier, active=True)
         for order in sorted(orders, key=lambda o: (o["side"] == "buy", o["created_at"])):
             if order["status"] != "queued":
-                if self.live:
-                    self.live.recover(self.identifier, self.token, order, self.clock())
+                if self.live and recover_only:
+                    try:
+                        self.live.recover(self.identifier, self.token, order, self.clock())
+                    except ProviderError as exc:
+                        self.issues.append(str(exc))
                 continue
             if recover_only or age(order["ready_at"], self.clock()) < 0:
                 continue
@@ -324,7 +342,18 @@ class Trader:
                         },
                         at=self.clock(),
                     )
+                    if buying:
+                        reverse.require_fresh(self.policy, self.clock())
+                        ledger.save_mark(
+                            self.identifier,
+                            self.token,
+                            order["id"],
+                            max(0, returned - self.provider.gas_cost(reverse.fee_lamports)),
+                            reverse.receipt(),
+                            self.clock(),
+                        )
             except (ProviderError, ValueError) as exc:
+                self.issues.append(str(exc))
                 if order["side"] == "buy":
                     ledger.fail_order(
                         self.identifier, self.token, order["id"], str(exc), self.clock()

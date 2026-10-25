@@ -21,7 +21,7 @@ def positive_int(value: Any) -> int:
     if isinstance(value, bool) or not str(value).isdigit():
         raise ProviderError("Provider amount is invalid")
     result = int(value)
-    if result <= 0 or result > 2**128:
+    if result <= 0 or result > 2**64 - 1:
         raise ProviderError("Provider amount is outside the supported range")
     return result
 

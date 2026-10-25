@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from datetime import UTC, datetime
 from typing import Any
 
 from .operations import health_status
@@ -26,6 +28,13 @@ def _component_healthy(component: dict[str, Any]) -> bool:
 
 
 def background_processes_healthy() -> bool:
+    if os.getenv("TRADING_EXPECTED") == "1":
+        from runner_trading.config import age
+        from runner_trading.dashboard import snapshot
+
+        trader = snapshot("paper")
+        if not 0 <= age(trader.get("heartbeat_at"), datetime.now(UTC)) <= 180:
+            return False
     payload = health_status()
     return _component_healthy(payload.get("worker", {})) and _component_healthy(
         payload.get("trainer", {})
