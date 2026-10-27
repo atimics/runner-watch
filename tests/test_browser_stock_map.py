@@ -1272,3 +1272,44 @@ def test_detected_factor_details_refresh_while_selected(page):
     expect(page.locator(".map-risk-factors")).to_have_text("Thin trading volume")
     expect(risk).to_be_focused()
     expect(risk).to_have_attribute("aria-pressed", "true")
+
+
+def test_a_person_filed_with_and_without_a_cik_is_one_node(page):
+    """An older summary row has no CIK, so its owner arrives under a name identity.
+    It joins the CIK person of the same filed name, and the node is labelled by the
+    sale rather than by the bare update."""
+
+    data = evidence()
+    data["owners"] = [{"cik": 555, "name": "Snowling Harvey Edward", "role": "Director"}]
+    data["transactions"] = [{**data["transactions"][1], "value": 1473000.4, "price": 7.3651}]
+    events = filing_events(
+        filing_row("cik", evidence_json=json.dumps(data), filed_at="2026-09-02T18:00:00+00:00")
+    )
+    for accession, name in [("legacy", "Snowling Harvey Edward"), ("other", "Vaaler Magnus")]:
+        events += filing_events(
+            filing_row(
+                accession,
+                actor=name,
+                actor_cik=None,
+                transaction_codes="",
+                filed_at="2026-09-03T18:00:00+00:00",
+            )
+        )
+    payload = {
+        "ticker": "TEST",
+        "events": events,
+        "loaded_filings": 3,
+        "coverage": {"filings": 3},
+        "next_cursor": None,
+    }
+    open_map(page, map_handler=lambda route: route.fulfill(json=payload))
+
+    expect(page.locator("[data-person]")).to_have_count(2)
+    person = page.locator('[data-person="sec:555"]')
+    expect(person.locator(".map-node-action")).to_have_text("Sold · $1,473,000")
+    expect(person).to_have_class(re.compile(r"\bdown\b"))
+    expect(page.locator(".map-edge")).to_have_count(3)
+    person.locator("circle").first.dispatch_event("click")
+    page.locator('.map-edge[data-edge-event="cik:nonDerivative:2"]').dispatch_event("click")
+    expect(page.locator("[data-map-selection] .map-event-action")).to_have_text("Sold · $1,473,000")
+    expect(page.locator("[data-map-selection]")).to_contain_text("$7.37")

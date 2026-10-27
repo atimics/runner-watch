@@ -14,7 +14,8 @@
     if (text != null) el.textContent = text; return el;
   };
   const number = value => value == null ? 'See filing' : Number(value).toLocaleString('en-US', {maximumFractionDigits:6});
-  const money = value => value == null ? 'See filing' : '$' + number(value);
+  // Whole dollars from $1,000 up; cents below. Filings carry prices to four places.
+  const money = value => value == null ? 'See filing' : '$' + Number(value).toLocaleString('en-US', Math.abs(Number(value)) >= 1000 ? {maximumFractionDigits:0} : {minimumFractionDigits:2, maximumFractionDigits:2});
   const date = value => {
     if (!value) return 'See filing';
     const time = new Date(value);
@@ -191,20 +192,43 @@
     }
     document.dispatchEvent(new CustomEvent('rati:map-time', {detail:{time:event.filed_at,label:`Filed ${date(event.filed_at)}`}}));
   }
+  // Older summary rows lack the owner's CIK, so the same person can arrive under a
+  // name identity and a CIK identity. A name identity joins the CIK person on this
+  // ticker with the same filed name; different CIKs never merge.
+  let aliases = new Map();
+  const nameKey = p => String(p.filed_name || p.name || '').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const canonical = p => aliases.get(p.id) || p.id;
   function peopleFor(rows) {
+    const byName = new Map();
+    rows.forEach(e => e.people.forEach(p => {
+      if (!p.id.startsWith('sec:') || !nameKey(p)) return;
+      const ids = byName.get(nameKey(p)) || new Set(); ids.add(p.id); byName.set(nameKey(p), ids);
+    }));
+    aliases = new Map();
+    rows.forEach(e => e.people.forEach(p => {
+      const ids = byName.get(nameKey(p));
+      if (p.id.startsWith('name:') && ids?.size === 1) aliases.set(p.id, [...ids][0]);
+    }));
     const people = new Map();
     rows.forEach(e => e.people.forEach(p => {
-      if (!people.has(p.id)) people.set(p.id,{...p,events:[]});
-      people.get(p.id).events.push(e);
+      const id = canonical(p);
+      if (!people.has(id)) people.set(id,{...p,id,from:p.id,events:[]});
+      const person = people.get(id);
+      // The CIK record supplies the label and wallet link even if a name row came first.
+      if (p.id === id && person.from !== id) Object.assign(person,{...p,from:id,events:person.events});
+      if (!person.events.includes(e)) person.events.push(e);
     }));
     return [...people.values()];
   }
   function buildScene(event) {
     const people = peopleFor(subset());
     const magnitude = event => event.view === 'ownership' ? event.percent : event.value;
-    const maxAmount = view => Math.max(0, ...people.map(p => p.events[0]).filter(e => e.view === view).map(e => finiteAmount(magnitude(e)) ? magnitude(e) : 0));
+    // A node is labelled and sized by its newest filing that states an amount,
+    // so a bare "Ownership update" does not hide a sale beside it.
+    const lead = person => person.events.find(e => finiteAmount(magnitude(e))) || person.events[0];
+    const maxAmount = view => Math.max(0, ...people.map(lead).filter(e => e.view === view).map(e => finiteAmount(magnitude(e)) ? magnitude(e) : 0));
     const radiusOf = person => {
-      const first = person.events[0], top = maxAmount(first.view);
+      const first = lead(person), top = maxAmount(first.view);
       return finiteAmount(magnitude(first)) ? Math.sqrt(144 + 640 * (top ? magnitude(first) / top : 0)) : 16;
     };
     // The biggest nodes sit nearest the centre, as on the entity map: the size a
@@ -219,9 +243,9 @@
       const angle = window.EntityMapNavigation.spiralAngle(i, shown.length), scale = spiral ? 1 + i / 12 : 1;
       const x = cx + rx * scale * Math.cos(angle);
       const y = cy + ry * scale * Math.sin(angle);
-      const first = person.events[0];
-      const tones = new Set(person.events.map(e => e.tone));
-      return {id:person.id, wallet_id:person.wallet_id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:radiusOf(person), tone:tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => p.id === person.id), x, y};
+      const first = lead(person);
+      const tones = new Set(person.events.map(e => e.tone)), directed = [...tones].filter(tone => tone !== 'neutral');
+      return {id:person.id, wallet_id:person.wallet_id, name:person.name, first, events:person.events, eventCount:person.events.length, radius:radiusOf(person), tone:directed.length === 1 ? directed[0] : tones.size === 1 ? first.tone : 'neutral', active:!!event?.people.some(p => canonical(p) === person.id), x, y};
     });
   }
   function drawScene(nodes) {
@@ -272,7 +296,7 @@
     (interests.get(personId)?.events || [])
       .filter(e => e.ticker !== root.dataset.ticker && (Date.parse(e.filed_at) || 0) <= cutoff)
       .forEach(event => {
-        if (!event.people.some(person => person.id === personId)) return;
+        if (!event.people.some(person => canonical(person) === personId)) return;
         if (!groups.has(event.ticker)) groups.set(event.ticker, new Map());
         groups.get(event.ticker).set(event.id, event);
       });

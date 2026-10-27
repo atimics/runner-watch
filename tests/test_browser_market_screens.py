@@ -1163,3 +1163,28 @@ def test_a_memecoin_chart_is_drawn_in_its_tag_colours(page: Page):
     none = page.locator(".chart-state.state-none")
     assert none.count() == 0 or none.first.evaluate("n => getComputedStyle(n).stroke") == "none"
     expect(page.locator("[data-chart-state-legend] button")).to_have_text(["Running", "Setup"])
+
+
+def test_a_stretch_without_prices_is_a_hole_not_a_line(page: Page):
+    """Weeks with no saved prices break the line and are shaded, so a reader does
+    not take one long straight segment for a steady move. Overnights stay joined."""
+
+    screen = detail("stocks", {"current": fixtures.scored_stock(), "ticker": "AAA"})
+    screen.pop("refresh_url", None)
+    screen.pop("chart_url", None)
+    days = [1, 2, 3, 20, 21, 22]
+    screen["series"] = [
+        {"time": f"2026-09-{day:02}T{hour}:00:00Z", "value": day + hour / 100}
+        for day in days
+        for hour in (14, 15, 16)
+    ]
+    open_screen(page, screen)
+
+    expect(page.locator(".chart-hole-band")).to_have_count(1)
+    expect(page.locator(".chart-hole-line")).to_have_count(1)
+    assert page.locator(".chart-line").get_attribute("d").count("M") == 2
+    assert page.locator(".chart-area").get_attribute("d").count("Z") == 2
+    band = page.locator(".chart-hole-band")
+    expect(band.locator("title")).to_have_text("No saved prices, Sep 3 to Sep 20")
+    label = page.locator(".price-chart").get_attribute("aria-label")
+    assert "One stretch has no saved prices." in label
