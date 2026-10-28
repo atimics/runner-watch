@@ -3,12 +3,14 @@
 The full refresh reads discovery, forensics, GeckoTerminal and ratification, and
 takes minutes. This loop only reads pool and curve accounts for a short list
 (open Calls, then the coins that traded last cycle) and saves their prices apart
-from the snapshot, so a slow cycle cannot leave them stale. It runs only while
-someone has read a memecoin page recently, and spends from the price lane.
+from the snapshot. Open Calls keep this loop active, including their stored
+pool receipts after leaving the board. Page readers also keep it active. All
+reads spend from the price lane.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import UTC, datetime, timedelta
@@ -61,6 +63,18 @@ def watched_rows(snapshot_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Open Calls first, then the coins that traded last cycle, busiest first."""
 
     by_id = {row["id"]: row for row in snapshot_rows if isinstance(row, dict) and row.get("id")}
+    active_ids = _call_coin_ids()
+    missing = [coin_id for coin_id in active_ids if coin_id not in by_id]
+    if missing:
+        with connection() as database:
+            marks = ",".join("?" * len(missing))
+            saved = database.execute(
+                f"SELECT quote_json FROM memecoin_assets WHERE coin_id IN ({marks})",
+                missing,
+            ).fetchall()
+        for item in saved:
+            row = json.loads(item["quote_json"])
+            by_id[row["id"]] = row
     by_pool = {row.get("pool_address"): row for row in by_id.values()}
     states = _market_states(keys=("memecoin_pool_watch", "memecoin_curve_watch"))
     traded = [
@@ -70,8 +84,8 @@ def watched_rows(snapshot_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(item, dict) and item.get("pool_address") in by_pool
     ]
     chosen: dict[str, dict[str, Any]] = {}
-    for row in [*(by_id[i] for i in _call_coin_ids() if i in by_id), *traded]:
-        if len(chosen) >= WATCH_LIMIT:
+    for row in [*(by_id[i] for i in active_ids if i in by_id), *traded]:
+        if len(chosen) >= max(WATCH_LIMIT, len(active_ids)):
             break
         if isinstance(row.get("discovery"), dict):
             chosen.setdefault(row["id"], row)
@@ -87,7 +101,7 @@ def refresh_watched_prices(*, at: datetime | None = None, rpc: Rpc | None = None
     current = at or datetime.now(UTC)
     if not memecoins_enabled() or price_source() not in ("chain", "shadow"):
         return {"status": "disabled"}
-    if not viewed_recently(current):
+    if not viewed_recently(current) and not _call_coin_ids():
         return {"status": "idle"}
     snapshot = _market_states(keys=("memecoins_snapshot",)).get("memecoins_snapshot") or {}
     rows = watched_rows(snapshot.get("rows") or [])

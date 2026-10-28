@@ -84,6 +84,33 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  trading-postgres:
+    name: Trading PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: trading-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: >-
+          uv run pytest -q --no-cov tests/test_trading.py
+          tests/test_trading_live.py tests/test_trading_routes.py
+        env:
+          TRADING_TEST_DATABASE_URL: postgresql://postgres:trading-test@127.0.0.1:5432/postgres
+
   browser:
     name: Browser tests ${{ matrix.shard }}/3
     runs-on: ubuntu-latest
@@ -108,11 +135,15 @@ jobs:
           uv run pytest -q -n auto -o addopts= -m browser --no-cov
           --splits 3 --group ${{ matrix.shard }}
           --junitxml=replay-browser-results-${{ matrix.shard }}.xml
+        env:
+          TRADING_SCREENSHOT_DIR: trading-browser-evidence
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: replay-browser-results-${{ matrix.shard }}
-          path: replay-browser-results-${{ matrix.shard }}.xml
+          path: |
+            replay-browser-results-${{ matrix.shard }}.xml
+            trading-browser-evidence/*.png
           if-no-files-found: error
           retention-days: 3
 
@@ -216,7 +247,7 @@ jobs:
 
   test:
     name: Test and lint
-    needs: [lint, unit, browser, evidence, coverage, container]
+    needs: [lint, unit, browser, trading-postgres, evidence, coverage, container]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -227,6 +258,7 @@ jobs:
           LINT_RESULT: ${{ needs.lint.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           BROWSER_RESULT: ${{ needs.browser.result }}
+          TRADING_POSTGRES_RESULT: ${{ needs.trading-postgres.result }}
           EVIDENCE_RESULT: ${{ needs.evidence.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           CONTAINER_RESULT: ${{ needs.container.result }}
@@ -234,6 +266,7 @@ jobs:
           test "$LINT_RESULT" = "success"
           test "$UNIT_RESULT" = "success"
           test "$BROWSER_RESULT" = "success"
+          test "$TRADING_POSTGRES_RESULT" = "success"
           test "$EVIDENCE_RESULT" = "success"
           test "$CONTAINER_RESULT" = "success"
           # Coverage only runs on main; there it must pass before deploying.
@@ -299,10 +332,10 @@ jobs:
         if: steps.deploy.outcome == 'success' && (steps.edge.outcome == 'success' || steps.edge.outcome == 'skipped')
         continue-on-error: true
         run: |
-          flyctl scale count web=2 worker=1 trainer=1 --yes
+          flyctl scale count web=2 worker=1 trainer=1 trader=1 --yes
 
           machines="$(flyctl machine list --json)"
-          for group in worker trainer; do
+          for group in worker trainer trader; do
             count="$(jq --arg group "$group" \
               '[.[] | select(.config.metadata.fly_process_group == $group)] | length' \
               <<<"$machines")"
@@ -314,7 +347,8 @@ jobs:
 
           jq -r '.[]
             | select(.config.metadata.fly_process_group == "worker"
-              or .config.metadata.fly_process_group == "trainer")
+              or .config.metadata.fly_process_group == "trainer"
+              or .config.metadata.fly_process_group == "trader")
             | select(.state != "started")
             | .id' <<<"$machines" \
             | xargs --no-run-if-empty flyctl machine start
