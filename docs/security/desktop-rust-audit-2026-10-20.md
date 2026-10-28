@@ -21,6 +21,16 @@ Tokio moves from 1.53.1 to 1.53.3. RustSec lists 1.53.3 as a patched release
 for [RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html).
 Cargo generated the updated lockfile from the package manifests.
 
+The native build audit also found
+[CVE-2026-93753](https://github.com/advisories/GHSA-gcqx-w48m-w2h4) in the
+Svelte build plugin's `deepmerge` dependency. The scoped dependency override
+replaces it with `deepmerge-ts` 8.0.2. A small pnpm source patch selects that
+library's API with array replacement and explicit undefined values. The old
+package leaves the lockfile. The production renderer output keeps the same
+asset hashes. Five regression tests cover those merge rules, prototype keys
+and the real plugin's production settings. The frontend audit reports zero
+findings with the new dependency.
+
 ## Findings that require source review
 
 - **GLib 0.18.5:** the local source includes the exact upstream fix for
@@ -43,6 +53,7 @@ keep these two findings visible for review.
 - All 11 source-verifier tests passed.
 - All seven optimized native GLib and URLPattern tests passed on macOS.
 - All 39 frontend tests passed. Svelte reported zero errors and warnings.
+- All five build-option and prototype safety tests passed.
 - The desktop renderer production build and Rust format check passed.
 - Cargo Audit reported zero vulnerabilities and the two reviewed warnings
   listed above. The removed D-Bus packages and old Tokio finding were absent.
