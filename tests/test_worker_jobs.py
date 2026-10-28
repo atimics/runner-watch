@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 
 import pytest
 
@@ -121,3 +122,22 @@ def test_errors_release_the_slot_and_trim_freed_memory(heavy_jobs, monkeypatch):
 
     asyncio.run(exercise())
     assert trimmed == [True, True]
+
+
+def test_jobs_receive_the_callers_context_and_keep_changes_local(heavy_jobs):
+    receipt = ContextVar("receipt", default="outside")
+
+    def job():
+        received = receipt.get()
+        receipt.set("job")
+        return received
+
+    async def exercise():
+        token = receipt.set("collection")
+        try:
+            assert await process_memory.run_memory_heavy_job(job) == "collection"
+            assert receipt.get() == "collection"
+        finally:
+            receipt.reset(token)
+
+    asyncio.run(exercise())

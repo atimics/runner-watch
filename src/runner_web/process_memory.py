@@ -19,6 +19,7 @@ import time
 import tracemalloc
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from functools import partial
 from typing import Any, TypeVar
 
@@ -69,7 +70,7 @@ async def run_memory_heavy_job(func: Callable[..., T], *args: Any, **kwargs: Any
     and heartbeats use their existing pools and can proceed while this queue waits.
     """
     return await asyncio.get_running_loop().run_in_executor(
-        _HEAVY_JOB_EXECUTOR, partial(_run_heavy_job, func, *args, **kwargs)
+        _HEAVY_JOB_EXECUTOR, partial(copy_context().run, _run_heavy_job, func, *args, **kwargs)
     )
 
 
