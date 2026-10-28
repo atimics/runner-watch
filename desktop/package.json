@@ -10,7 +10,7 @@
     "dev": "tauri dev",
     "build": "vite build",
     "check": "svelte-check --tsgo --tsconfig ./tsconfig.json && node node_modules/@typescript/native/bin/tsc --noEmit && cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
-    "test": "vitest run && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test": "node --test test/build-options.test.mjs && vitest run && cargo test --manifest-path src-tauri/Cargo.toml",
     "package": "tauri build --no-bundle",
     "make": "tauri build"
   },
@@ -21,11 +21,20 @@
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tauri-apps/cli": "^2.12.0",
     "@typescript/native": "npm:typescript@7.0.2",
+    "deepmerge-ts": "8.0.2",
     "jsdom": "30.1.1",
     "svelte": "5.57.1",
     "svelte-check": "4.7.6",
     "typescript": "6.0.3",
     "vite": "8.3.3",
     "vitest": "5.0.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@sveltejs/vite-plugin-svelte@7.3.1>deepmerge": "npm:deepmerge-ts@8.0.2"
+    },
+    "patchedDependencies": {
+      "@sveltejs/vite-plugin-svelte@7.3.1": "patches/@sveltejs__vite-plugin-svelte@7.3.1.patch"
+    }
   }
 }
