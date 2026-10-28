@@ -467,7 +467,7 @@ def row(
     )
     policy = item.get("eligibility") if market == "stocks" else None
     assessment_stale = isinstance(policy, dict) and any(
-        isinstance(reason, dict) and reason.get("code") == "stale_quote"
+        isinstance(reason, dict) and reason.get("code") in {"stale_quote", "stale_assessment"}
         for reason in policy.get("reasons") or []
     )
     assessment_quote = stamp(item.get("quote_as_of")) if market == "stocks" else ""

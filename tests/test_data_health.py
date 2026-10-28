@@ -25,8 +25,8 @@ def test_market_health_checks_quotes_from_the_latest_scan(tmp_path: Path, monkey
     assert data_health("runners", at=NOW)["feed"]["status"] == "stale"
     with connection() as database:
         database.execute(
-            "UPDATE scan_snapshots SET quote_time=? WHERE scan_run_id='run-1'",
-            (NOW.isoformat(),),
+            "UPDATE scan_snapshots SET quote_time=?,captured_at=? WHERE scan_run_id='run-1'",
+            (NOW.isoformat(), NOW.isoformat()),
         )
     assert data_health("runners", at=NOW)["status"] == "ok"
 
@@ -38,7 +38,7 @@ def test_stale_quotes_fail_even_when_collection_finished_recently() -> None:
 
 
 def test_fresh_quotes_use_actual_instants_across_timezones() -> None:
-    result = quote_health(["2026-09-04T14:45:00-04:00", "2026-09-04T18:20:00Z"], NOW)
+    result = quote_health(["2026-09-04T14:45:00-04:00", "2026-09-04T18:42:00Z"], NOW)
     assert result["status"] == "ok"
     assert result["age_seconds"] == 11 * 60
 
@@ -63,7 +63,7 @@ def test_closed_sessions_allow_idle_market_data(timestamp: str) -> None:
 
 
 def test_opening_grace_tracks_daylight_saving_time() -> None:
-    assert quote_health([], datetime(2026, 11, 30, 14, 45, tzinfo=UTC))["status"] == "warming"
+    assert quote_health([], datetime(2026, 11, 30, 14, 40, tzinfo=UTC))["status"] == "warming"
     assert quote_health([], datetime(2026, 11, 30, 15, 30, tzinfo=UTC))["status"] == "missing"
 
 
@@ -127,3 +127,51 @@ def test_public_data_health_checks_the_requested_product(monkeypatch) -> None:
         assert response.status_code == 503
         assert json.loads(response.body) == {"status": "degraded"}
     assert seen == ["sports", "runners"]
+
+
+def test_one_recent_quote_leaves_poor_board_coverage_visible():
+    result = quote_health([NOW] + [NOW - timedelta(hours=2)] * 9, NOW)
+    assert result["status"] == "stale"
+    assert result["age_seconds"] == 0
+    assert result["fresh_quote_count"] == result["usable_count"] == 1
+    assert result["quote_count"] == 10
+    assert result["usable_fraction"] == 0.1
+
+
+def test_coverage_includes_missing_and_invalid_quote_clocks():
+    result = quote_health([NOW] * 3 + [None, "broken"], NOW)
+    assert result["status"] == "stale"
+    assert result["invalid_quote_count"] == 2
+    assert result["usable_fraction"] == 0.6
+    assert quote_health([NOW] * 4 + [None], NOW)["status"] == "ok"
+
+
+def test_recent_prices_preserve_the_age_of_the_scan_assessment():
+    result = quote_health([NOW] * 5, NOW, assessment_times=[NOW - timedelta(hours=2)] * 5)
+    assert result["status"] == "stale"
+    assert result["fresh_quote_count"] == 5
+    assert result["fresh_assessment_count"] == result["usable_count"] == 0
+
+
+@pytest.mark.parametrize("collected_offset", [0, 1])
+def test_health_uses_the_same_observed_quote_marks_as_the_board(
+    tmp_path, monkeypatch, collected_offset
+):
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "marks.db")
+    init_db()
+    _seed_ranker_data(group_count=1)
+    with connection() as database:
+        database.execute("UPDATE scan_snapshots SET captured_at=?", (NOW.isoformat(),))
+        database.execute(
+            """INSERT INTO ticker_quotes(
+                ticker,price,change_pct,observed_at,collected_at,status,requested_at,source
+            ) SELECT DISTINCT ticker,1,0,?,?,'ok',?,'yahoo' FROM scan_snapshots""",
+            (
+                NOW.isoformat(),
+                (NOW + timedelta(minutes=collected_offset)).isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+    result = data_health("runners", at=NOW)
+    assert result["status"] == ("ok" if collected_offset == 0 else "degraded")
+    assert result["feed"]["usable_count"] == (4 if collected_offset == 0 else 0)

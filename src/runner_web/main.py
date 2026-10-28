@@ -194,6 +194,7 @@ from runner_web.market_actors import (
 from runner_web.market_clock import market_clock
 from runner_web.market_commentary import generate_report_commentary
 from runner_web.market_forecasts import generate_market_forecasts, settle_market_forecasts
+from runner_web.market_marks import usable_market_mark as _usable_market_mark
 from runner_web.market_reports import (
     REPORT_LABELS,
     REPORT_SLUGS,
@@ -5048,32 +5049,6 @@ def _attach_pulse_entries(rows: list[dict[str, Any]]) -> None:
     for row in rows:
         marker = entries.get(str(row["ticker"]))
         row["entered_at"] = str(marker["time"]) if marker else None
-
-
-def _usable_market_mark(
-    row: dict[str, Any], mark: dict[str, Any] | None, at: datetime
-) -> tuple[float, float, datetime] | None:
-    """Use one observed price and move that were both known by the score time."""
-
-    if not mark or mark.get("status") != "ok":
-        return None
-    price, change = _number(mark.get("price")), _number(mark.get("change_pct"))
-    observed_at = _timestamp(mark.get("observed_at"))
-    collected_at = _timestamp(mark.get("collected_at"))
-    scanned_at = _timestamp(row.get("quote_time"))
-    if (
-        price is None
-        or price <= 0
-        or change is None
-        or observed_at is None
-        or collected_at is None
-        or observed_at > at
-        or collected_at > at
-        or observed_at > collected_at
-        or (scanned_at is not None and observed_at <= scanned_at)
-    ):
-        return None
-    return price, change, observed_at
 
 
 def _apply_market_marks(
