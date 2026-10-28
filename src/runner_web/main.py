@@ -261,6 +261,7 @@ from runner_web.process_memory import (
     peak_rss_mb,
     rss_mb,
     run_in_threadpool,
+    run_memory_heavy_job,
 )
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import BASE_RATES, EVIDENCE_GATE, OPERATIONS
@@ -1765,25 +1766,25 @@ async def outcome_worker() -> None:
     while True:
         try:
             await asyncio.wait_for(
-                run_in_threadpool(refresh_outcomes),
+                run_memory_heavy_job(refresh_outcomes),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             await asyncio.wait_for(
-                run_in_threadpool(refresh_scan_outcomes),
+                run_memory_heavy_job(refresh_scan_outcomes),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             flash_results = await asyncio.wait_for(
-                run_in_threadpool(refresh_flash_forecasts),
+                run_memory_heavy_job(refresh_flash_forecasts),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             if any(flash_results.get(key) for key in ("resolved", "voided", "reviewed")):
                 _invalidate_runners_feeds("pulse")
             await asyncio.wait_for(
-                run_in_threadpool(prune_storage),
+                run_memory_heavy_job(prune_storage),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             await asyncio.wait_for(
-                run_in_threadpool(prune_collection_history),
+                run_memory_heavy_job(prune_collection_history),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
         except asyncio.CancelledError:
@@ -1850,7 +1851,7 @@ async def scan_collection_worker() -> None:
             continue
         started = time.monotonic()
         try:
-            result = await run_in_threadpool(run_scan, "penny")
+            result = await run_memory_heavy_job(run_scan, "penny")
             worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
             worker_state("background_scan_last_error", "")
             if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
@@ -1916,7 +1917,7 @@ async def price_gap_worker() -> None:
     while True:
         delay = PRICE_GAP_INTERVAL_SECONDS
         try:
-            result = await run_in_threadpool(refresh_price_gaps)
+            result = await run_memory_heavy_job(refresh_price_gaps)
             worker_state("price_gap_last_refresh", json.dumps(result, separators=(",", ":")))
             worker_state("price_gap_last_error", "")
         except asyncio.CancelledError:
@@ -3066,7 +3067,7 @@ async def memecoin_replay_worker() -> None:
 
     while True:
         try:
-            await run_in_threadpool(render_pending_replays_isolated)
+            await run_memory_heavy_job(render_pending_replays_isolated)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -3080,7 +3081,7 @@ async def market_actor_worker() -> None:
         try:
             board = await run_in_threadpool(_public_pulse_data, limit=40)
             tickers = [str(row.get("ticker")) for row in board.get("rows", []) if row.get("ticker")]
-            result = await run_in_threadpool(derive_market_actors, tickers=tickers)
+            result = await run_memory_heavy_job(derive_market_actors, tickers=tickers)
             worker_state("market_actor_last_run", json.dumps(result, separators=(",", ":")))
             worker_state("market_actor_last_error", "")
         except asyncio.CancelledError:
@@ -3108,7 +3109,7 @@ async def sports_ingestion_worker() -> None:
     await asyncio.sleep(5)
     while True:
         try:
-            result = await run_in_threadpool(refresh_sports)
+            result = await run_memory_heavy_job(refresh_sports)
             worker_state("sports_last_refresh", json.dumps(result, separators=(",", ":")))
             worker_state("sports_last_error", "")
         except asyncio.CancelledError:
