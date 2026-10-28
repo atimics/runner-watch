@@ -3,12 +3,14 @@
 The full refresh reads discovery, forensics, GeckoTerminal and ratification, and
 takes minutes. This loop only reads pool and curve accounts for a short list
 (open Calls, then the coins that traded last cycle) and saves their prices apart
-from the snapshot, so a slow cycle cannot leave them stale. It runs only while
-someone has read a memecoin page recently, and spends from the price lane.
+from the snapshot, so a slow cycle cannot leave them stale. Without a recent
+page reader it watches only pending and active Calls. All reads use the same
+bounded watch list and spend from the existing price lane.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import UTC, datetime, timedelta
@@ -30,9 +32,9 @@ from runner_web.memecoins import (
 )
 
 LOG = logging.getLogger(__name__)
-# A price read costs two credits, so this sets the daily spend while pages are read.
+# A price read costs two credits, subject to the existing price-lane budget.
 FAST_PRICE_SECONDS = max(15, int(os.getenv("MEMECOIN_FAST_PRICE_SECONDS", "60")))
-# Nobody has read a memecoin page for this long: the loop idles and spends nothing.
+# Without recent page readers, only pending/active Calls keep the loop running.
 FAST_ACTIVE_SECONDS = 300
 WATCH_LIMIT = 40
 KEEP_SECONDS = 3600
@@ -41,8 +43,12 @@ KEEP_SECONDS = 3600
 def _call_coin_ids() -> list[str]:
     with connection() as database:
         rows = database.execute(
-            "SELECT coin_id FROM memecoin_calls WHERE status='active' "
-            "UNION SELECT coin_id FROM memecoin_call_orders WHERE status='pending'"
+            "SELECT coin_id FROM ("
+            "SELECT coin_id,0 AS priority,requested_at AS queued_at "
+            "FROM memecoin_call_orders WHERE status='pending' "
+            "UNION ALL SELECT coin_id,1 AS priority,entry_at AS queued_at "
+            "FROM memecoin_calls WHERE status='active') AS calls "
+            "GROUP BY coin_id ORDER BY MIN(priority),MIN(queued_at),coin_id"
         ).fetchall()
     return [str(row["coin_id"]) for row in rows]
 
@@ -57,20 +63,33 @@ def _waiting_coin_ids() -> set[str]:
     return {str(row["coin_id"]) for row in rows}
 
 
-def watched_rows(snapshot_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Open Calls first, then the coins that traded last cycle, busiest first."""
+def watched_rows(
+    snapshot_rows: list[dict[str, Any]], *, include_traded: bool = True
+) -> list[dict[str, Any]]:
+    """Pending/active Calls first, optionally followed by coins that traded."""
 
     by_id = {row["id"]: row for row in snapshot_rows if isinstance(row, dict) and row.get("id")}
+    call_ids = _call_coin_ids()
+    missing = [coin_id for coin_id in call_ids if coin_id not in by_id]
+    if missing:
+        with connection() as database:
+            marks = ",".join("?" * len(missing))
+            saved = database.execute(
+                f"SELECT quote_json FROM memecoin_assets WHERE coin_id IN ({marks})", missing
+            ).fetchall()
+        for item in saved:
+            row = json.loads(item["quote_json"])
+            by_id[row["id"]] = row
     by_pool = {row.get("pool_address"): row for row in by_id.values()}
     states = _market_states(keys=("memecoin_pool_watch", "memecoin_curve_watch"))
     traded = [
         by_pool[item["pool_address"]]
         for key in ("memecoin_curve_watch", "memecoin_pool_watch")
         for item in states.get(key) or []
-        if isinstance(item, dict) and item.get("pool_address") in by_pool
+        if include_traded and isinstance(item, dict) and item.get("pool_address") in by_pool
     ]
     chosen: dict[str, dict[str, Any]] = {}
-    for row in [*(by_id[i] for i in _call_coin_ids() if i in by_id), *traded]:
+    for row in [*(by_id[i] for i in call_ids if i in by_id), *traded]:
         if len(chosen) >= WATCH_LIMIT:
             break
         if isinstance(row.get("discovery"), dict):
@@ -87,12 +106,11 @@ def refresh_watched_prices(*, at: datetime | None = None, rpc: Rpc | None = None
     current = at or datetime.now(UTC)
     if not memecoins_enabled() or price_source() not in ("chain", "shadow"):
         return {"status": "disabled"}
-    if not viewed_recently(current):
-        return {"status": "idle"}
+    watching = viewed_recently(current)
     snapshot = _market_states(keys=("memecoins_snapshot",)).get("memecoins_snapshot") or {}
-    rows = watched_rows(snapshot.get("rows") or [])
+    rows = watched_rows(snapshot.get("rows") or [], include_traded=watching)
     if not rows:
-        return {"status": "empty"}
+        return {"status": "empty" if watching else "idle"}
     receipts = {row["pool_address"]: row["discovery"] for row in rows}
     curves = [r for r in receipts.values() if r.get("venue") == "bonding_curve"]
     pools = [r for r in receipts.values() if r.get("venue") != "bonding_curve"]
