@@ -3023,7 +3023,10 @@ async def memecoin_fast_price_worker() -> None:
 
     while True:
         try:
-            await run_in_threadpool(refresh_watched_prices)
+            result = await run_in_threadpool(refresh_watched_prices)
+            if result.get("status") == "ok" and result.get("count", 0) > 0:
+                for handle in dict.fromkeys(await run_in_threadpool(fill_memecoin_call_orders)):
+                    _invalidate_public_screen_data("caller", handle)
         except asyncio.CancelledError:
             raise
         except Exception:

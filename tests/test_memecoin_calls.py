@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 from unittest.mock import patch
 
@@ -16,6 +18,7 @@ from runner_web import memecoin_calls as call_service
 from runner_web.calls import caller_summary_for_user, create_call
 from runner_web.db import connection, init_db
 from runner_web.flash_wallet import MEMECOIN_CALL_STAKE, credit_flash
+from runner_web.memecoin_store import save_fast_quotes
 from runner_web.privacy import delete_user_content, delete_user_data, export_user_data
 
 
@@ -236,6 +239,74 @@ def test_an_order_with_no_new_quote_is_cancelled_and_refunded(calls_db):
     assert _rows() == []
     assert _balance("alice") == 100
     assert call_service.pending_memecoin_order("alice", "dogecoin") is None
+
+
+def test_fast_and_slow_fillers_open_and_settle_each_order_once(calls_db):
+    _refresh(calls_db)
+    _fund("alice", 100)
+    call_service.create_memecoin_call("alice", "dogecoin")
+
+    def concurrent_fill():
+        ready = Barrier(2)
+
+        def fill(_):
+            ready.wait(timeout=5)
+            return call_service.fill_memecoin_call_orders(calls_db["now"])
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            return list(pool.map(fill, range(2)))
+
+    calls_db["now"] += timedelta(minutes=1)
+    save_fast_quotes(
+        [{"coin_id": "dogecoin", "price": 0.15}],
+        observed_at=calls_db["now"],
+        every_tick={"dogecoin"},
+    )
+    assert sum(len(handles) for handles in concurrent_fill()) == 1
+    opened = call_service.active_memecoin_call("alice", "dogecoin")
+    assert len(_rows()) == 1
+    assert _balance("alice") == 100 - MEMECOIN_CALL_STAKE
+    assert not [r for r in _flash_rows("alice") if r["kind"] == "memecoin_call_refund"]
+
+    call_service.close_memecoin_call("alice", opened["public_id"])
+    calls_db["now"] += timedelta(minutes=1)
+    save_fast_quotes(
+        [{"coin_id": "dogecoin", "price": 0.18}],
+        observed_at=calls_db["now"],
+        every_tick={"dogecoin"},
+    )
+    assert sum(len(handles) for handles in concurrent_fill()) == 1
+    assert _balance("alice") == 120
+    assert len([r for r in _flash_rows("alice") if r["kind"] == "memecoin_call_settle"]) == 1
+
+
+def test_interrupted_fill_rolls_back_and_releases_lock_for_retry(calls_db, monkeypatch):
+    _refresh(calls_db)
+    _fund("alice", 100)
+    opened = _open(calls_db, "alice")
+    call_service.close_memecoin_call("alice", opened["public_id"])
+    calls_db["now"] += timedelta(minutes=1)
+    save_fast_quotes(
+        [{"coin_id": "dogecoin", "price": 0.15}],
+        observed_at=calls_db["now"],
+        every_tick={"dogecoin"},
+    )
+    real_credit = call_service.credit_flash
+
+    def interrupted(*args, **kwargs):
+        real_credit(*args, **kwargs)
+        raise RuntimeError("interrupted settlement")
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(call_service, "credit_flash", interrupted)
+        with pytest.raises(RuntimeError, match="interrupted settlement"):
+            call_service.fill_memecoin_call_orders(calls_db["now"])
+    assert _balance("alice") == 100 - MEMECOIN_CALL_STAKE
+    assert call_service.active_memecoin_call("alice", "dogecoin") is not None
+    assert call_service.pending_memecoin_order("alice", "dogecoin") is not None
+    assert len(call_service.fill_memecoin_call_orders(calls_db["now"])) == 1
+    assert _balance("alice") == 125
+    assert call_service.fill_memecoin_call_orders(calls_db["now"]) == []
 
 
 def test_calls_opened_before_staking_keep_the_old_reward(calls_db):
