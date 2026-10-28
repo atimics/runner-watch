@@ -303,3 +303,82 @@ def test_historical_replay_is_idempotent_and_respects_dry_run(
     assert first["groups_written"] == 1
     assert second["groups_written"] == 0
     assert second["reason"] == "target_already_met"
+
+
+def _compact_rows(*, resolution="resolved", observed_return=0.0):
+    return [
+        {
+            "ticker": ticker,
+            "score": 50.0,
+            "barrier_label": "timeout",
+            "barrier_resolution": resolution,
+            "outcome_return_pct": observed_return,
+        }
+        for ticker in ("AAA", "BBB")
+    ]
+
+
+def test_backfill_continues_past_the_raw_target_until_usable_groups_are_ready(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "post-purge.db")
+    init_db()
+    replay_at = datetime(2026, 8, 4, 14, 5, tzinfo=UTC)
+    _seed_market_bars(replay_at + timedelta(hours=2))
+    first = replay_at - timedelta(days=3)
+    for index in range(162):
+        ranker_history._write_group(
+            "yahoo", first + timedelta(minutes=15 * index), _compact_rows(), 15
+        )
+    assert ranker_history._usable_group_count(ranker_history._complete_group_times()) == 154
+
+    result = backfill_historical_training(
+        target_groups=160,
+        minimum_usable_groups=160,
+        start_at=replay_at,
+        end_at=replay_at + timedelta(hours=2),
+        near_live_minutes=0,
+    )
+
+    assert result["groups_before"] == 162
+    assert result["groups_written"] > 0
+    assert result["usable_groups_before"] == 154
+    assert result["usable_groups_after"] >= 160
+    assert result["usable_groups_after"] == ranker_history._usable_group_count(
+        ranker_history._complete_group_times()
+    )
+    groups = ranker._load_groups("60m")
+    from runner_web.replay import purged_chronological_split
+
+    split = purged_chronological_split(groups)
+    assert sum(len(split[key]) for key in ("train", "validation", "test")) >= 160
+    second = backfill_historical_training(
+        target_groups=160, minimum_usable_groups=160, start_at=replay_at, end_at=replay_at
+    )
+    assert second["reason"] == "target_already_met"
+
+
+def test_backfill_counts_only_complete_resolved_groups(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "usable-groups.db")
+    init_db()
+    first = datetime(2026, 8, 4, 14, 5, tzinfo=UTC)
+    ranker_history._write_group("yahoo", first, _compact_rows(), 15)
+    ranker_history._write_group(
+        "yahoo", first + timedelta(minutes=15), _compact_rows(resolution="ambiguous"), 15
+    )
+    ranker_history._write_group(
+        "yahoo", first + timedelta(minutes=30), _compact_rows(observed_return=None), 15
+    )
+
+    assert ranker_history._complete_group_times() == [first]
+
+
+def test_usable_group_count_uses_the_latest_training_window():
+    first = datetime(2026, 8, 4, 14, 5, tzinfo=UTC)
+    old = [first - timedelta(days=index + 1) for index in range(160)]
+    recent = [
+        first + timedelta(minutes=index)
+        for index in range(ranker_history.RANKER_TRAINING.maximum_groups)
+    ]
+
+    assert ranker_history._usable_group_count(old + recent) == 0
