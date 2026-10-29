@@ -65,6 +65,14 @@ def test_developer_keys_and_mobile_layout(page: Page, api, monkeypatch, width, h
     page.goto("https://example.test/developers")
     expect(page.get_by_role("heading", name="Runner Watch API", exact=True)).to_be_visible()
     expect(page.locator("#flashReleaseDialog")).not_to_be_visible()
+    expect(page.get_by_role("heading", name="More from each report")).to_be_visible()
+    summary = page.get_by_text("Example report requests", exact=True)
+    assert summary.bounding_box()["height"] >= 44
+    summary.focus()
+    page.keyboard.press("Enter")
+    expect(
+        page.get_by_text("GET /api/v1/tokens/by-mint/SOLANA_MINT/analysis", exact=False)
+    ).to_be_visible()
     expect(page.locator("#apiBalance")).to_contain_text("100 free credits")
     page.get_by_label("Key name").fill("My bot")
     page.get_by_role("button", name="Create API key").click()
