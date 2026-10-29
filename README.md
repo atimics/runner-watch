@@ -287,6 +287,11 @@ Rollback is also manual: `flyctl deploy --image <previous-image>
 
 ### Production monitoring
 
+- Stock feed health requires at least 80% of the latest scan to have a quote
+  within 15 minutes and a scan assessment within 60 minutes. It uses the same
+  observed quote marks as the public board. The private health details include
+  fresh, invalid and usable counts. Fly and local Compose request scans every
+  ten minutes, with a short gap after a scan that takes longer than the interval.
 - **Production Uptime** (`.github/workflows/uptime.yml`) checks worker/trainer
   health, feed freshness on both hosts, and both hosts' HTTP smoke routes every
   five minutes. It does not install or run a browser.
