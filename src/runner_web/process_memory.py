@@ -9,6 +9,7 @@ sticks to one job name is where to look.
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import logging
 import os
@@ -17,6 +18,9 @@ import sys
 import time
 import tracemalloc
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+from functools import partial
 from typing import Any, TypeVar
 
 from fastapi.concurrency import run_in_threadpool as _run_in_threadpool
@@ -35,6 +39,39 @@ TRACE_LINES = 8
 _traced_before: dict[str, int] = {}
 
 T = TypeVar("T")
+HEAVY_JOB_CONCURRENCY = max(1, int(os.getenv("WORKER_HEAVY_JOB_CONCURRENCY", "1")))
+_HEAVY_JOB_EXECUTOR = ThreadPoolExecutor(
+    max_workers=HEAVY_JOB_CONCURRENCY, thread_name_prefix="worker-heavy"
+)
+
+
+def _run_heavy_job(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    before = rss_mb()
+    try:
+        return func(*args, **kwargs)
+    finally:
+        trim_heap()
+        after = rss_mb()
+        if before is not None and after is not None and after - before >= GROWTH_LOG_MB:
+            LOG.warning(
+                "memory_growth job=%s grew_mb=%.0f rss_mb=%.0f peak_mb=%.0f",
+                job_name(func),
+                after - before,
+                after,
+                peak_rss_mb(),
+            )
+
+
+async def run_memory_heavy_job(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    """Share a fixed number of threads across the worker's large jobs.
+
+    Executor slots belong to the actual thread. A caller's timeout cancels queued
+    work, while a running job keeps its slot until it finishes. Price refreshes
+    and heartbeats use their existing pools and can proceed while this queue waits.
+    """
+    return await asyncio.get_running_loop().run_in_executor(
+        _HEAVY_JOB_EXECUTOR, partial(copy_context().run, _run_heavy_job, func, *args, **kwargs)
+    )
 
 
 def rss_mb() -> float | None:
