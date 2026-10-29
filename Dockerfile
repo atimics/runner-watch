@@ -28,7 +28,7 @@ COPY --from=uv /uv /bin/uv
 COPY --from=integer-ranker /ranker/target/release/stonks-integer-ranker \
     /usr/local/bin/stonks-integer-ranker
 
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system runner \
     && useradd --system --gid runner --home-dir /app --no-create-home runner
@@ -52,6 +52,7 @@ USER runner
 # The full test suite and lint run on the host in CI (checks job). This stage
 # only proves that the image assembles and the application imports.
 FROM base AS test
+RUN uv run --no-sync python -c "import lightgbm"
 RUN uv run --no-sync python -c "from runner_web.main import app; assert app.title == 'RATi'"
 RUN uv run --no-sync python -c "from runner_web.attention_model import probability; assert 0 < probability([None] * 20) < 1"
 
