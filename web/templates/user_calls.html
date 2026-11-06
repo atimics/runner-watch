@@ -56,7 +56,7 @@
         <div><dt>Entry</dt><dd>{{ call.entry_label }}</dd></div>
         <div><dt>Result</dt><dd class="{{ call.result_tone }}">{{ call.result_label }}</dd></div>
       </dl>
-      <span class="caller-outcome">{{ call.reward_label or call.status|replace('_', ' ') }} <span aria-hidden="true">↗</span></span>
+      <span class="caller-outcome">{{ call.resolution_reason if call.resolution_state == 'awaiting_quote' else (call.reward_label or call.status|replace('_', ' ')) }} <span aria-hidden="true">↗</span></span>
     </a>
     {% else %}
     <div class="call-empty"><p>First Call coming soon.</p></div>

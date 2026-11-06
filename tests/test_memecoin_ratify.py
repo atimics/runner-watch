@@ -276,7 +276,8 @@ def test_accounts_owned_by_a_program_are_not_counted_among_the_top_holders():
 
     share = top10_share(MINT, supply=1_000_000_000, exclude={VAULT}, rpc=rpc)
 
-    assert share == pytest.approx(20.0)
+    # The twelve accounts belong to one wallet with 24% of supply.
+    assert share == pytest.approx(24.0)
     assert rpc.calls == ["getTokenLargestAccounts", "getMultipleAccounts", "getMultipleAccounts"]
 
 

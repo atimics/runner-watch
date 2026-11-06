@@ -113,7 +113,10 @@ def test_token_search_names_render_as_text_and_typeahead_opens_details(page: Pag
 def test_list_layout_and_navigation_are_shared(page: Page, market, width):
     page.set_viewport_size({"width": width, "height": 844})
     open_screen(page, listing(market, [fixtures.sample(market)]))
-    expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(4)
+    expect(page.get_by_role("navigation", name="Market").get_by_role("link")).to_have_count(5)
+    expect(
+        page.get_by_role("navigation", name="Market").get_by_role("link", name="Trading")
+    ).to_have_attribute("href", re.compile(r"/trading$"))
     expect(
         page.get_by_role("navigation", name="Market").get_by_role("link", name="Reports")
     ).to_be_visible()

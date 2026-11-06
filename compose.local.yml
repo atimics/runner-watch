@@ -121,6 +121,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  trader:
+    build: *app-build
+    command: ["stonks-trader"]
+    environment:
+      <<: *app-environment
+      PROCESS_ROLE: trader
+      TRADING_MODE: paper
+      TRADING_LIVE_ENABLED: "0"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   trainer:
     build: *app-build
     command: ["stonks-trainer"]
