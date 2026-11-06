@@ -32,6 +32,7 @@ from runner_web.attention_study import (
 )
 from runner_web.data_health import _market_window
 from runner_web.db import connection
+from runner_web.process_memory import run_memory_heavy_job
 
 LOG = logging.getLogger(__name__)
 CONTRACT = {
@@ -425,7 +426,7 @@ async def worker() -> None:
     await asyncio.sleep(45)
     while True:
         try:
-            await asyncio.to_thread(refresh_outcomes)
+            await run_memory_heavy_job(refresh_outcomes)
         except Exception:
             LOG.exception("Attention outcome worker failed")
         await asyncio.sleep(120)

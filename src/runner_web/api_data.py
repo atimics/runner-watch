@@ -11,7 +11,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from runner_web import api_credits
+from runner_web import api_credits, api_insights
 from runner_web.db import connection
 from runner_web.helius_discovery import _address, rpc_request
 from runner_web.memecoin_store import stored_memecoin
@@ -30,6 +30,10 @@ def snapshot(coin_id: str) -> dict[str, Any]:
     saved = stored_memecoin(coin_id)
     if not saved:
         raise HTTPException(404, "A saved token snapshot is needed for this read.")
+    return _snapshot(coin_id, saved)
+
+
+def _snapshot(coin_id: str, saved: dict[str, Any]) -> dict[str, Any]:
     row = saved["coin"]
     early = row.get("early") or {}
     return {
@@ -42,6 +46,7 @@ def snapshot(coin_id: str) -> dict[str, Any]:
         "observed_at": row.get("observed_at"),
         "collected_at": saved["collected_at"],
         "source": "Runner Watch",
+        "freshness": api_insights.freshness(row.get("observed_at"), at=datetime.now(UTC)),
     }
 
 
@@ -100,31 +105,74 @@ def analysis(coin_id: str) -> dict[str, Any]:
     basics = lookup_memecoin(mint, fetch=False) if mint else None
     if basics:
         basics = {
-            key: basics.get(key) for key in ("address", "status", "checked_at", "controls", "slot")
+            key: basics.get(key)
+            for key in ("address", "status", "checked_at", "controls", "slot", "facts", "metadata")
         }
     with connection() as db:
+        previous = db.execute(
+            "SELECT observed_at,features_json FROM memecoin_quote_history "
+            "WHERE coin_id=? AND observed_at<? AND features_json IS NOT NULL "
+            "ORDER BY observed_at DESC LIMIT 1",
+            (coin_id, row.get("observed_at") or ""),
+        ).fetchone()
         saved_findings = db.execute(
             "SELECT value FROM worker_state WHERE key='memecoin_forensics'"
         ).fetchone()
     findings = json.loads(saved_findings["value"]).get("findings", []) if saved_findings else []
     return {
-        **snapshot(coin_id),
+        **_snapshot(coin_id, saved),
         "controls": basics,
         "findings": [item for item in findings if item.get("token_address") == mint][:100],
         "ratification": row.get("ratification") or row.get("ratify"),
         "evidence_url": "/api/memecoins/" + coin_id + "/replay",
+        "insights": api_insights.token_insights(
+            row,
+            basics,
+            {
+                "observed_at": previous["observed_at"],
+                "features": json.loads(previous["features_json"]),
+            }
+            if previous
+            else None,
+        ),
     }
 
 
-def wallet(value: str) -> dict[str, Any]:
-    from runner_web.onchain_wallets import holdings_page, saved_wallet
+def analysis_by_mint(value: str) -> dict[str, Any]:
+    mint = address(value)
+    coin_id = "chain-" + api_credits.digest("solana:" + mint)
+    result = analysis(coin_id)
+    if result["mint"] != mint:
+        raise HTTPException(404, "A saved report for this mint is pending.")
+    return result
+
+
+def wallet(value: str, cursor: str = "") -> dict[str, Any]:
+    from runner_web.onchain_wallets import HOLDINGS_PER_PAGE, holdings_page, saved_wallet
 
     data = saved_wallet(address(value))
     if data["status"] == "pending":
-        raise HTTPException(404, "Start a wallet scan to collect its first page.")
+        raise HTTPException(404, "A saved wallet report is pending. Fresh scans use the jobs API.")
     data.pop("error", None)
     data.pop("provider_ready", None)
-    return holdings_page(data, 1)
+    revision = api_credits.digest(
+        json.dumps([value, data.get("updated_at"), data.get("history_hash")])
+    )[:16]
+    page = 1
+    if cursor:
+        try:
+            version, position = cursor.split(":")
+            page = int(position)
+            if version != revision or not 1 <= page <= 200:
+                raise ValueError("Wallet snapshot changed")
+            if (page - 1) * HOLDINGS_PER_PAGE >= len(data.get("holdings") or []):
+                raise ValueError("Page exceeds holdings")
+        except ValueError as exc:
+            raise HTTPException(409, "Start a new wallet page for the current snapshot.") from exc
+    result = holdings_page(data, page)
+    result["insights"] = api_insights.wallet_insights(data)
+    result["next_cursor"] = f"{revision}:{page + 1}" if page < result["holdings_pages"] else None
+    return result
 
 
 def history(coin_id: str, before: str, limit: int) -> dict[str, Any]:
@@ -246,6 +294,7 @@ def run_job(job: dict[str, Any]) -> None:
                 download=lambda *_: b"{}",
             )
             result["next_cursor"] = job["id"] if result.get("has_more") else None
+            result["insights"] = api_insights.wallet_insights(result)
         if len(json.dumps(result).encode()) > 524288:
             raise ValueError("Wallet page exceeds the result limit")
         api_credits.finish(job["id"], result=result)

@@ -338,6 +338,7 @@ def send_reply(
     html: str = "",
     preview_url: str = "",
     opener: Callable[..., Any] | None = None,
+    confirmed: bool = False,
 ) -> Any:
     """Reply in a chat, threaded onto the message being answered when given.
 
@@ -356,6 +357,32 @@ def send_reply(
             "message_id": reply_to_message_id,
             "allow_sending_without_reply": True,
         }
+    if confirmed:
+
+        def send(payload):
+            request = urllib.request.Request(
+                config.endpoint(),
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            return _delivery_receipt(
+                request, opener or urllib.request.urlopen, timeout=SEND_TIMEOUT_SECONDS
+            )
+
+        if html and message_units(html) <= MAX_MESSAGE_CHARS:
+            formatted = {
+                **payload,
+                "text": html,
+                "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True},
+            }
+            try:
+                return send(formatted)
+            except TelegramDeliveryError as exc:
+                if not getattr(exc, "parse_error", False):
+                    raise
+        return send(payload)
     if not html or len(html) > MAX_MESSAGE_CHARS:
         return _api_call(config, "sendMessage", payload, opener=opener)
     formatted = {**payload, "text": html, "parse_mode": "HTML"}

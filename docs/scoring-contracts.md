@@ -120,6 +120,11 @@ repair cannot recover zero-fills whose original observations were already pruned
 
 ## Fixed-membership temporal splits
 
+The scheduled historical backfill checks the retained group count with this same
+split before it stops. Its raw group target and the minimum of 160 retained
+groups must both be met. Its saved result includes the retained counts before and
+after collection. Complete groups require resolved labels and observed returns.
+
 `purged_chronological_split` first fixes the original approximately 80/10/10
 memberships using the Rust count convention. It then removes training intervals
 that reach validation and validation intervals that reach test. Equality at a
