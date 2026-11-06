@@ -7,9 +7,13 @@ from zoneinfo import ZoneInfo
 
 import exchange_calendars
 
+from runner_web.attention import MAX_ASSESSMENT_AGE_MINUTES, MAX_QUOTE_AGE_MINUTES
 from runner_web.db import connection
+from runner_web.market_marks import usable_market_mark
 
-MARKET_MAX_AGE = timedelta(hours=1)
+MARKET_MAX_AGE = timedelta(minutes=MAX_QUOTE_AGE_MINUTES)
+ASSESSMENT_MAX_AGE = timedelta(minutes=MAX_ASSESSMENT_AGE_MINUTES)
+MINIMUM_USABLE_FRACTION = 0.80
 SPORTS_MAX_AGE = timedelta(minutes=30)
 FUTURE_TOLERANCE = timedelta(minutes=5)
 EASTERN = ZoneInfo("America/New_York")
@@ -72,15 +76,33 @@ def stock_settlement_close(at: datetime) -> datetime:
     return fallback
 
 
-def quote_health(quote_times: list[Any], at: datetime) -> dict[str, Any]:
+def quote_health(
+    quote_times: list[Any], at: datetime, *, assessment_times: list[Any] | None = None
+) -> dict[str, Any]:
     window = _market_window(at)
     if window is None or not window[0] <= at < window[1]:
         return {"status": "idle"}
     timestamps = [_timestamp(value) for value in quote_times]
-    valid = [value for value in timestamps if value is not None and value <= at + FUTURE_TOLERANCE]
+    valid = [value for value in timestamps if value is not None and value <= at]
     latest = max(valid) if valid else None
     age = max(0.0, (at - latest).total_seconds()) if latest else None
-    if latest and at - latest <= MARKET_MAX_AGE:
+    assessments = [
+        _timestamp(value)
+        for value in (assessment_times if assessment_times is not None else [at] * len(timestamps))
+    ]
+    fresh_quotes = [
+        value is not None and timedelta(0) <= at - value <= MARKET_MAX_AGE for value in timestamps
+    ]
+    fresh_assessments = [
+        value is not None and timedelta(0) <= at - value <= ASSESSMENT_MAX_AGE
+        for value in assessments
+    ]
+    usable = sum(
+        quote and assessment
+        for quote, assessment in zip(fresh_quotes, fresh_assessments, strict=True)
+    )
+    usable_fraction = usable / len(timestamps) if timestamps else 0.0
+    if timestamps and usable_fraction >= MINIMUM_USABLE_FRACTION:
         status = "ok"
     elif at < window[0] + MARKET_MAX_AGE:
         status = "warming"
@@ -91,6 +113,14 @@ def quote_health(quote_times: list[Any], at: datetime) -> dict[str, Any]:
         "latest_quote_at": latest.isoformat() if latest else None,
         "age_seconds": round(age) if age is not None else None,
         "maximum_age_seconds": int(MARKET_MAX_AGE.total_seconds()),
+        "maximum_assessment_age_seconds": int(ASSESSMENT_MAX_AGE.total_seconds()),
+        "quote_count": len(timestamps),
+        "fresh_quote_count": sum(fresh_quotes),
+        "invalid_quote_count": len(timestamps) - len(valid),
+        "fresh_assessment_count": sum(fresh_assessments),
+        "usable_count": usable,
+        "usable_fraction": round(usable_fraction, 4),
+        "minimum_usable_fraction": MINIMUM_USABLE_FRACTION,
     }
 
 
@@ -132,13 +162,27 @@ def data_health(product: str, *, at: datetime | None = None) -> dict[str, Any]:
             else:
                 rows = database.execute(
                     """
-                    SELECT quote_time FROM scan_snapshots WHERE scan_run_id=(
+                    SELECT s.quote_time,s.captured_at,q.price AS mark_price,
+                           q.change_pct AS mark_change_pct,q.observed_at AS mark_observed_at,
+                           q.collected_at AS mark_collected_at,q.status AS mark_status
+                    FROM scan_snapshots s LEFT JOIN ticker_quotes q ON q.ticker=s.ticker
+                    WHERE s.scan_run_id=(
                         SELECT id FROM scan_runs WHERE candidate_rows>0
                         ORDER BY captured_at DESC LIMIT 1
                     )
                     """
                 ).fetchall()
-                feed = quote_health([row["quote_time"] for row in rows], checked_at)
+                quote_times = []
+                for row in rows:
+                    mark = {
+                        key: row[f"mark_{key}"]
+                        for key in ("price", "change_pct", "observed_at", "collected_at", "status")
+                    }
+                    usable = usable_market_mark(dict(row), mark, checked_at)
+                    quote_times.append(usable[2] if usable else row["quote_time"])
+                feed = quote_health(
+                    quote_times, checked_at, assessment_times=[row["captured_at"] for row in rows]
+                )
     except Exception:
         feed = {"status": "unavailable"}
     return {

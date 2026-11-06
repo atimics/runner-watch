@@ -26,6 +26,7 @@ cache.
 
 ```
 src/runner_web/     Online service: routes, data workers, product logic
+  pulse_scoring.py Saved stock inputs, evidence gates and forecast display
 src/runner_watch/   Market scanner, EDGAR, risk and scoring
 src/runner_node/    Desktop node API and local scan runtime
 src/runner_swarm/   Signed node identity, transport and reputation
@@ -40,6 +41,10 @@ scripts/            Operational and release scripts
 ```
 
 ## Local development
+
+Stock scoring lives in `runner_web.pulse_scoring`. Its calculations receive
+saved inputs and an explicit observation time. `main.py` collects those inputs
+and serves the screens. Existing helper imports remain available through `main`.
 
 Requirements: Python 3.11–3.13, [`uv`](https://docs.astral.sh/uv/), and Node for
 the desktop client.
@@ -290,6 +295,11 @@ Rollback is also manual: `flyctl deploy --image <previous-image>
 
 ### Production monitoring
 
+- Stock feed health requires at least 80% of the latest scan to have a quote
+  within 15 minutes and a scan assessment within 60 minutes. It uses the same
+  observed quote marks as the public board. The private health details include
+  fresh, invalid and usable counts. Fly and local Compose request scans every
+  ten minutes, with a short gap after a scan that takes longer than the interval.
 - **Production Uptime** (`.github/workflows/uptime.yml`) checks worker/trainer
   health, feed freshness on both hosts, and both hosts' HTTP smoke routes every
   five minutes. It does not install or run a browser.
