@@ -289,13 +289,15 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      - name: Save rollback image
+      - name: Save rollback image and configuration
         id: rollback
         run: |
           image="$(flyctl releases --app runner-watch-ratimics --image --json | jq -r '[.[] | select(.Status == "complete" and .ImageRef != null)][0].ImageRef')"
           test -n "$image"
           test "$image" != "null"
           echo "image=$image" >> "$GITHUB_OUTPUT"
+          flyctl config show --app runner-watch-ratimics --toml > "$RUNNER_TEMP/fly-rollback.toml"
+          test -s "$RUNNER_TEMP/fly-rollback.toml"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - id: deploy
@@ -400,7 +402,11 @@ jobs:
           if-no-files-found: ignore
       - name: Roll back failed release
         if: always() && (steps.deploy.outcome == 'failure' || steps.edge.outcome == 'failure' || steps.processes.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.screens.outcome == 'failure')
-        run: flyctl deploy --remote-only --image "${{ steps.rollback.outputs.image }}" --strategy rolling --skip-release-command
+        run: >-
+          flyctl deploy --app runner-watch-ratimics
+          --config "$RUNNER_TEMP/fly-rollback.toml"
+          --remote-only --image "${{ steps.rollback.outputs.image }}"
+          --strategy rolling --skip-release-command
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Report failed release
