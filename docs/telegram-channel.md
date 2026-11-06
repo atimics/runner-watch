@@ -292,10 +292,10 @@ from `dash_world()`: the session, the board summary, new runners, recent events,
 community activity, Dash's own book, and `changes` — what landed since the last
 look. The one read verb is `expand` (`board`, `runners`, `events`, `halts`,
 `community`, `sector:<name>`, `sports`, `sports:<league>`, `memecoins`,
-`coin:<contract address or id>`, `report:pre`, `report:post`, `ticker:<SYM>`);
-the rest are the
-mutations `reply`, `react`, `hold`, `make_call`, `close_call`,
-`comment_on_ticker` and `my_standing`. His recent chat actions come back in the
+`coin:<contract address or id>`, `report:pre`, `report:post`, `ticker:<SYM>`).
+The research loop also offers `remember_thesis`. The other actions are
+`reply`, `react`, `hold`, `make_call`, `close_call`, `comment_on_ticker`, and
+`my_standing`. His recent chat actions come back in the
 world (`dash.recent_actions`) so continuity is stored, not pleaded.
 
 The chat history pairs each message with Dash's saved reply. Telegram topics have
@@ -316,17 +316,52 @@ the Flash model, so nothing changes until it is set. The requests still send
 which lists no supported parameters) may fail these options, so try any new
 `DASH_MODEL` on a test chat first.
 
-`dash_desk_note_worker` is the proactive tick: every `DASH_DESK_NOTE_SECONDS`
-(3600) it builds the world and, only when `changes.any` is true, asks for one
-short desk note and posts it to the room. `TELEGRAM_ROOM_CHAT_ID` names the room
-(falling back to the last room that spoke to us), and
-`DASH_DESK_NOTE_MIN_GAP_SECONDS` (3000) keeps two notes from landing close
-together.
+### Dash's own research and views
+
+Chat replies and proactive desk notes share the research loop in
+`src/runner_web/dash_research.py`. Dash chooses the evidence to inspect with
+`expand`, weighs a competing explanation, and forms his own view. His prompt asks
+for a take, confidence, the strongest reason, the main doubt, and the fact that
+would change his mind. He can disagree with the scanner or the room and explain
+why. Short questions can get short answers. Analysis has room for 100 to 220 words.
+
+`remember_thesis` saves a view against an evidence node. It records the thesis,
+confidence, counter-evidence, what would change his mind, the next check, and a
+review time from 30 minutes to one day. Code requires a lookup before a thesis or
+public action. A revised note keeps the previous view. Fresh lookups provide
+current facts; saved notes provide the history of his judgment.
+
+Notes live in `worker_state` under `dash_thesis:` keys. Each chat and Telegram topic
+has its own notebook, capped at 12 notes. Notes expire from context after 14 days;
+the next save removes expired rows. The full reply, up to 3,500 characters, remains
+in the conversation history for follow-up questions.
+
+`dash_desk_note_worker` runs every `DASH_DESK_NOTE_SECONDS` (3600) when
+`TELEGRAM_DESK_NOTES=1`. A market change or a due thesis starts research. The main
+room's notebook supplies up to three due ideas per tick. Dash refreshes the evidence
+and updates or closes each due thesis. He shares material findings and changes of
+mind. An unchanged view can finish with `hold`. Other chats and topics use their
+notes in later replies. A review time means the first eligible worker tick after
+that time.
+
+`TELEGRAM_ROOM_CHAT_ID` names the room, with the last active group as its fallback.
+`DASH_DESK_NOTE_MIN_GAP_SECONDS` (3000) spaces posts. The previous desk note supplies
+context, and an identical note is held.
+
+Each turn has up to eight model calls and twelve tool actions. Repeated reads of
+the same node share a result within the turn. The final model round, or a turn
+with 30 seconds left, is reserved for an answer. The loop stops starting work
+after 75 seconds; an active request
+uses the existing 30-second HTTP timeout. Each model response has a 1,600-token
+ceiling. Source errors return to the analyst so he can inspect another source.
+The existing hourly reply and turn caps, daily public-action limits, and once-only
+mutation records continue to apply.
 
 ### The decision-model path (`DASH_DECISIONS`)
 
-With `DASH_DECISIONS=1`, a cheap decision model decides what Dash does, and the
-chat model only writes words. It is **off by default**: the endpoint is alpha,
+With `DASH_DECISIONS=1`, a cheap decision model handles engagement and suggests
+the first lookup and any public action. Dash then uses the shared research loop
+to form his own view. It is **off by default**: the endpoint is alpha,
 no live call has been checked yet, and the thresholds are untuned. With it off,
 nothing changes: the tool loop above runs as before.
 
@@ -353,18 +388,19 @@ The flow for one message that passed the attention rules and the hourly caps:
    `dash_expand` node; the ticker or address comes from the message text, never
    from the model. A Call or comment needs `DASH_DECISION_MUTATION_CONFIDENCE`
    (0.8), a named ticker, budget left, and a reply to announce it.
-3. **Write.** Only for a reply: one chat call to `DASH_MODEL` with the persona,
-   the prefetched lookups, the loaded node and the result of any action. No
-   tools, one round, about forty words. Code checks the draft: a ticker or
-   contract address with nothing loaded behind it gets one rewrite. React and
-   hold make no chat call at all.
-4. **Act.** `make_call`, `close_call` and `comment_on_ticker` run in code
-   through `dash_once`, so a retried update never posts or pays twice. A comment
-   costs one more chat call for its body, and only the first time.
+3. **Research.** A reply plan enters the shared research loop with the prefetched
+   evidence and suggested node. Dash can inspect further sources and save a thesis.
+   Each reply gets a ticker and contract-address check. An unsupported subject gets
+   one correction attempt, followed by a short error reply if it remains unsupported.
+4. **Act.** The plan makes its permitted public action available for its ticker.
+   Dash chooses whether his evidence supports that action. `make_call`, `close_call`,
+   and `comment_on_ticker` still run through `dash_once`. The tool result tells Dash
+   what happened so he can describe it in his reply.
 
-The desk note uses the same model: after the min-gap and `changes.any` guards,
-a `worth_speaking` score (0 to 3) must reach `DASH_DESK_NOTE_MIN_SCORE` (2.0)
-with confidence at or above `DASH_DECISION_CONFIDENCE`, or no note is written.
+The desk note uses the decision model for new market changes after the spacing
+check. A `worth_speaking` score (0 to 3) must reach `DASH_DESK_NOTE_MIN_SCORE` (2.0)
+with confidence at or above `DASH_DECISION_CONFIDENCE`. Due theses go straight to
+research so Dash can evaluate fresh evidence before choosing whether to speak.
 
 **Fallback.** Any decision failure (timeout, network error, 402 out of credits,
 429, 5xx, or an answer that does not parse) falls back to the tool loop for

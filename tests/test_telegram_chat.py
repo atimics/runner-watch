@@ -599,6 +599,22 @@ def test_being_addressed_earns_a_reply_and_opens_a_run(wired):
     assert run["replies_left"] == chat.ENGAGEMENT_REPLIES - 1
 
 
+def test_a_full_analysis_reaches_the_followup_history(wired):
+    from runner_web import main as web_main
+
+    text = "My take: the move needs stronger volume. " * 35
+    text += "I would change my mind if fresh volume supported the breakout."
+    with connection() as database:
+        chat.record_update(database, _update("Explain your take", mention=True), NOW)
+    result = web_main.run_telegram_chat(
+        lambda message, transcript: {"action": "reply", "text": text}, at=NOW
+    )
+    assert result["replied"] == 1
+    with connection() as database:
+        transcript = chat.recent_transcript(database, CHAT, before_update_id=2)
+    assert transcript[-1]["said"] == text
+
+
 def test_every_mention_in_one_backlog_gets_an_answer(wired):
     """A batch of updates is not one instant.
 
@@ -796,7 +812,7 @@ def test_a_reply_that_names_an_unlooked_ticker_gets_one_chance_to_correct(monkey
     )
     scripted = [
         _tool_turn("reply", {"text": "MSGM is up 30%."}),
-        _tool_turn("reply", {"text": "I have not looked at MSGM."}, call_id="call-2"),
+        _tool_turn("reply", {"text": "That stock still needs a fresh lookup."}, call_id="call-2"),
     ]
     calls: list[dict[str, Any]] = []
 
@@ -810,7 +826,7 @@ def test_a_reply_that_names_an_unlooked_ticker_gets_one_chance_to_correct(monkey
         _parse(_update("what about that one", mention=True)), []
     )
 
-    assert decision == {"action": "reply", "text": "I have not looked at MSGM."}
+    assert decision == {"action": "reply", "text": "That stock still needs a fresh lookup."}
     assert len(calls) == 2
 
 
@@ -1048,10 +1064,12 @@ def test_a_rerun_turn_does_not_repeat_a_comment(monkeypatch):
         return {"ok": True, "comment_id": f"c{len(made)}"}
 
     monkeypatch.setattr(web_main, "dash_comment", comment)
+    monkeypatch.setattr(web_main, "dash_expand", lambda node: {"known": True, "price": 2})
     message = _parse(_update("say something", mention=True))
 
     for _ in range(2):
         scripted = [
+            _tool_turn("expand", {"node": "ticker:MSGM"}, call_id="lookup"),
             _tool_turn("comment_on_ticker", {"ticker": "MSGM", "body": "hiss"}),
             _tool_turn("react", {"emoji": "x"}, call_id="call-2"),
         ]

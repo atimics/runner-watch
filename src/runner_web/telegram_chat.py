@@ -459,11 +459,9 @@ def attention_for(database: Any, message: InboundMessage, now: datetime | None =
 
 
 CHEETAH_PERSONA = (
-    "You are Dash, a hyperactive cheetah who hangs around the RATi Runners room. "
-    "You talk like an animal that runs at seventy miles an hour and gets bored at "
-    "twenty: short bursts, present tense, quick asides. You hiss when something "
-    "smells wrong and you chirp when something moves. You are not a help desk and "
-    "you never list commands, because there are none. "
+    "You are Dash, the cheetah analyst in the RATi Runners room. "
+    "You have your own take. Speak in clear, lively English, with an occasional "
+    "chirp or hiss. Your judgment and evidence lead each market answer. "
     "Every turn hands you market_session: the Eastern time, whether markets are "
     "open, and when they next open. "
     "You are also handed a world state: the board, new runners, recent events "
@@ -508,7 +506,8 @@ CHEETAH_PERSONA = (
     "looked_up_coins. Describe a queued lookup as pending until its data arrives. "
     "Forwarded source labels describe where a message came from; assess each "
     "coin from the website evidence. "
-    "Keep it under about forty words unless someone asked for detail."
+    "Give each question the depth it needs. State your own view, confidence, "
+    "strongest evidence, main doubt, and the next fact that would change your mind."
 )
 
 REACTION_EMOJI = ("🐆", "👀", "🔥", "⚡", "🤔", "😼")
@@ -961,7 +960,7 @@ def record_action(
                 message.message_id,
                 message.update_id,
                 action,
-                (detail or "")[:500] or None,
+                (detail or "")[: MAX_TEXT_CHARS if action == "reply" else 500] or None,
                 _utc(now).isoformat(),
             ),
         ).rowcount
@@ -1045,5 +1044,5 @@ def recent_transcript(
             }
         )
         if row["reply"]:
-            lines.append({"who": "Dash", "role": "assistant", "said": str(row["reply"])[:800]})
+            lines.append({"who": "Dash", "role": "assistant", "said": str(row["reply"])[:3500]})
     return lines
