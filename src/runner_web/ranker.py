@@ -856,6 +856,7 @@ def trainer_main() -> None:
                             )
                         ),
                     ),
+                    minimum_usable_groups=RANKER_TRAINING.minimum_groups,
                     source=os.getenv("RANKER_HISTORICAL_BACKFILL_SOURCE", "yahoo"),
                     progress=historical_progress,
                 )

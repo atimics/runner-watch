@@ -83,6 +83,9 @@ production. Unset optional features simply stay off.
 - `APP_ORIGIN`, `RUNNERS_ORIGIN`, `SPORTS_ORIGIN`, `LEGACY_ORIGIN` — public hosts.
 - `RP_ID`, `LEGACY_RP_ID`, `COOKIE_SECURE`, `COOKIE_DOMAIN` — WebAuthn and cookies.
 - `PROCESS_ROLE`, `BACKGROUND_WORKERS_ENABLED`, `WORKER_EXPECTED_INSTANCES`.
+- `WORKER_HEAVY_JOB_CONCURRENCY` — simultaneous large worker jobs (default `1`).
+  Scans, outcome reads, sports collection, actor updates and replay rendering share
+  this queue. Quote refreshes and health checks keep their own thread pools.
 - `TRUST_FLY_CLIENT_IP`, `EDGE_PROXY_SECRET`, `REQUIRE_EDGE_PROXY_SECRET`.
 
 **Storage**

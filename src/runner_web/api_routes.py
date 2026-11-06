@@ -280,6 +280,13 @@ def create_api_routes(
             lambda: api_data.tokens(cursor, limit),
         )
 
+    @router.get("/api/v1/tokens/by-mint/{mint}/analysis")
+    def analysis_by_mint(mint: str, request: Request, owner: Actor):
+        api_data.address(mint)
+        return metered(
+            request, owner, "analysis", {"mint": mint}, lambda: api_data.analysis_by_mint(mint)
+        )
+
     @router.get("/api/v1/tokens/{coin_id}")
     def snapshot(coin_id: str, request: Request, owner: Actor):
         return metered(
@@ -309,10 +316,18 @@ def create_api_routes(
         )
 
     @router.get("/api/v1/wallets/{address}")
-    def wallet(address: str, request: Request, owner: Actor):
+    def wallet(
+        address: str,
+        request: Request,
+        owner: Actor,
+        cursor: str = Query(default="", max_length=64),
+    ):
         api_data.address(address)
+        parameters = {"address": address}
+        if cursor:
+            parameters["cursor"] = cursor
         return metered(
-            request, owner, "wallet", {"address": address}, lambda: api_data.wallet(address)
+            request, owner, "wallet", parameters, lambda: api_data.wallet(address, cursor)
         )
 
     @router.post("/api/v1/jobs/{operation}", status_code=202)
