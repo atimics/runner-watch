@@ -5,6 +5,7 @@ FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c
 RUN npm install --global pnpm@10.19.0
 WORKDIR /desktop
 COPY desktop/package.json desktop/pnpm-lock.yaml ./
+COPY desktop/patches ./patches
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY desktop ./
 RUN pnpm build && find dist -name '*.map' -type f -delete
