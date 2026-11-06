@@ -43,7 +43,7 @@ from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
-from runner_web import attention, dash_jobs, dash_research
+from runner_web import attention, dash_direction, dash_jobs, dash_research
 from runner_web import db as runner_db
 from runner_web import decisions as openrouter_decisions
 from runner_web.account_routes import (
@@ -2539,13 +2539,14 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
         context={
             "task": "desk_research",
             "instruction": (
-                "Choose the most useful question raised by the changes or due theses. "
+                "This is time at your own desk. Choose a question from your own direction, "
+                "the wider world, recent changes, or due theses. "
                 "Expand the evidence, form your own take, and save a thesis worth following. "
                 "Review due theses with fresh lookups. Update or close each reviewed thesis. "
                 "Post when you have a material finding, a changed view, or a useful new idea. "
-                "Explain what changed and what you will watch next. Choose hold when the "
-                "evidence leaves your earlier view unchanged. The previous note is supplied "
-                "for continuity."
+                "Choose how to express the finding. Use set_direction when your focus or "
+                "voice evolves, and choose your next question and check time. Hold when "
+                "quiet is useful. The previous note supplies continuity."
             ),
             "world": world,
         },
@@ -2649,11 +2650,13 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
         return {"status": "waiting"}
     world = dash_world(current)
     due = dash_research.due_notes(dash_research.notebook(scope, current), current)
-    if not active and not world["changes"]["any"] and not due:
+    curiosity_due = dash_direction.due(scope, current)
+    if not active and not world["changes"]["any"] and not due and not curiosity_due:
         return {"status": "quiet"}
     if (
         not active
         and not due
+        and not curiosity_due
         and DASH_DECISIONS_ENABLED
         and _desk_note_gate(world, current) is False
     ):
@@ -2666,6 +2669,7 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
         "research_job": identity,
         "research_chat_id": chat_id,
         "due_theses": due,
+        "self_directed_review": curiosity_due,
         "previous_note": saved.get("dash_desk_note_last_note", ""),
         "previous_delivery_status": finding["status"] if finding else "unknown",
     }

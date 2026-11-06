@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from runner_web import dash_direction, db
 from runner_web import dash_research as research
-from runner_web import db
 from runner_web.db import connection, init_db
 from runner_web.telegram_chat import TOOL_SCHEMA
 
@@ -350,6 +350,8 @@ def test_a_quiet_world_still_reviews_due_room_ideas(monkeypatch):
     assert research.notebook(SCOPE, NOW)[0]["reviewed_at"] == NOW.isoformat()
     assert main.post_dash_desk_note(at=NOW + timedelta(minutes=5))["status"] == "quiet"
     monkeypatch.setattr(main, "telegram_room_chat_id", lambda: -101)
+    with connection() as database:
+        dash_direction.finish(database, research.research_scope(-101), None, NOW, explored=True)
     assert main.post_dash_desk_note(at=NOW + timedelta(hours=2))["status"] == "quiet"
 
 

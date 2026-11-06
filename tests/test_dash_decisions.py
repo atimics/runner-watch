@@ -848,6 +848,10 @@ def desk(monkeypatch):
     monkeypatch.setattr(
         web_main, "_generate_desk_note", lambda world: notes.append(world) or "Something moved."
     )
+    with connection() as database:
+        web_main.dash_direction.finish(
+            database, web_main.dash_research.research_scope(123), None, NOW, explored=True
+        )
     return web_main, sent, notes
 
 
