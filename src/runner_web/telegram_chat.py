@@ -909,13 +909,18 @@ def record_update(database: Any, payload: dict[str, Any], now: datetime | None =
     return bool(inserted)
 
 
-def pending_updates(database: Any, limit: int = 10) -> list[dict[str, Any]]:
+def pending_updates(
+    database: Any, limit: int = 10, *, now: datetime | None = None
+) -> list[dict[str, Any]]:
     rows = database.execute(
         """
-        SELECT * FROM telegram_updates WHERE status='pending' AND attempts<?
-        ORDER BY update_id LIMIT ?
+        SELECT u.* FROM telegram_updates u WHERE u.status='pending' AND u.attempts<?
+        AND NOT EXISTS (
+            SELECT 1 FROM dash_research_jobs j WHERE j.id='telegram:' || CAST(u.update_id AS TEXT)
+            AND j.status='pending' AND (j.next_at>? OR j.lease_until>?)
+        ) ORDER BY u.update_id LIMIT ?
         """,
-        (MAX_UPDATE_ATTEMPTS, max(1, limit)),
+        (MAX_UPDATE_ATTEMPTS, _utc(now).isoformat(), _utc(now).isoformat(), max(1, limit)),
     ).fetchall()
     return [dict(row) for row in rows]
 

@@ -736,16 +736,15 @@ def test_a_decided_comment_runs_once_across_a_retried_turn(room, monkeypatch):
     _decide_with(monkeypatch, room, turn_payload(intent=("comment", 0.95)))
     message = chat.parse_update(_update("comment on $MSGM"), bot_username=BOT, bot_id=BOT_ID)
 
-    web_main._decide_telegram_turn(message, [])
+    first = web_main._decide_telegram_turn(message, [])
     writes_first = len(room.writes)
-    web_main._decide_telegram_turn(message, [])
+    second = web_main._decide_telegram_turn(message, [])
 
     assert [ticker for ticker, _ in posted] == ["MSGM"]
-    # Each turn chooses an action and then answers. The stored action runs once.
+    # A retry reuses the saved answer and the stored action.
     assert writes_first == 2
-    assert len(room.writes) == 4
-    action_result = json.loads(room.writes[-1]["messages"][-1]["content"])
-    assert action_result["already_done"] is True
+    assert len(room.writes) == 2
+    assert second == first
 
 
 def test_a_decided_call_runs_once_and_respects_the_budget(room, monkeypatch):
@@ -841,7 +840,7 @@ def desk(monkeypatch):
     sent: list[str] = []
     notes: list[Any] = []
     monkeypatch.setattr(
-        web_main, "send_telegram_reply", lambda config, chat_id, text, **_: sent.append(text)
+        web_main, "send_telegram_reply", lambda config, chat_id, text, **_: sent.append(text) or 42
     )
     monkeypatch.setattr(
         web_main, "dash_world", lambda *a, **k: {"changes": {"any": True, "new_runners": 1}}

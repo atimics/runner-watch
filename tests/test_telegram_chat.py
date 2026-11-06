@@ -992,7 +992,7 @@ def test_a_missing_tool_action_retries_the_turn(monkeypatch):
     assert scripted == []
 
 
-def test_repeated_missing_actions_receive_a_short_error_reply(monkeypatch):
+def test_repeated_missing_actions_keep_research_pending(monkeypatch):
     web_main = _no_prefetch(monkeypatch)
     calls = []
     monkeypatch.setattr(
@@ -1001,7 +1001,7 @@ def test_repeated_missing_actions_receive_a_short_error_reply(monkeypatch):
 
     result = web_main._generate_telegram_turn(_parse(_update("$EYPT", mention=True)), [])
 
-    assert result == {"action": "reply", "text": "That check hit a problem. Please try again."}
+    assert result == {"action": "retry", "why": "research_pending"}
     assert len(calls) == 2
 
 
