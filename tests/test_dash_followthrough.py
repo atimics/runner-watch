@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import timedelta
 from io import BytesIO
 from urllib.error import HTTPError
@@ -223,18 +224,21 @@ def store_source(*, url=None, text=None, ticker="TEST"):
         )
     )
     record_source_fetch(
-        SourceFetch.success(
-            source="sec",
-            feed="filing_document",
-            locator=url,
-            started_at=NOW,
-            payload=(
-                text
-                or "<html><p>A pilot contract.</p>"
-                "<p>Payment terms: $5 million after acceptance.</p>"
-                "<p>Acceptance requires regulatory approval.</p></html>"
-            ).encode(),
-            content_type="text/html",
+        replace(
+            SourceFetch.success(
+                source="sec",
+                feed="filing_document",
+                locator=url,
+                started_at=NOW,
+                payload=(
+                    text
+                    or "<html><p>A pilot contract.</p>"
+                    "<p>Payment terms: $5 million after acceptance.</p>"
+                    "<p>Acceptance requires regulatory approval.</p></html>"
+                ).encode(),
+                content_type="text/html",
+            ),
+            finished_at=NOW,
         )
     )
     return url
