@@ -1309,7 +1309,8 @@ def test_a_person_filed_with_and_without_a_cik_is_one_node(page):
     expect(person.locator(".map-node-action")).to_have_text("Sold · $1,473,000")
     expect(person).to_have_class(re.compile(r"\bdown\b"))
     expect(page.locator(".map-edge")).to_have_count(3)
-    person.locator("circle").first.dispatch_event("click")
+    # Wallet links open their page. The edge selects the filing.
+    person.focus()
     page.locator('.map-edge[data-edge-event="cik:nonDerivative:2"]').dispatch_event("click")
     expect(page.locator("[data-map-selection] .map-event-action")).to_have_text("Sold · $1,473,000")
     expect(page.locator("[data-map-selection]")).to_contain_text("$7.37")

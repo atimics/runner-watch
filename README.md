@@ -26,6 +26,7 @@ cache.
 
 ```
 src/runner_web/     Online service: routes, data workers, product logic
+  pulse_scoring.py Saved stock inputs, evidence gates and forecast display
 src/runner_watch/   Market scanner, EDGAR, risk and scoring
 src/runner_node/    Desktop node API and local scan runtime
 src/runner_swarm/   Signed node identity, transport and reputation
@@ -40,6 +41,10 @@ scripts/            Operational and release scripts
 ```
 
 ## Local development
+
+Stock scoring lives in `runner_web.pulse_scoring`. Its calculations receive
+saved inputs and an explicit observation time. `main.py` collects those inputs
+and serves the screens. Existing helper imports remain available through `main`.
 
 Requirements: Python 3.11–3.13, [`uv`](https://docs.astral.sh/uv/), and Node for
 the desktop client.
