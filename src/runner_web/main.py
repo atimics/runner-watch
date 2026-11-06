@@ -2076,7 +2076,7 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
     bot_username, bot_id = identity
     config = telegram_config_from_env()
     with connection() as database:
-        updates = telegram_pending_updates(database)
+        updates = telegram_pending_updates(database, now=at)
     tick_deadline = time.monotonic() + TELEGRAM_TICK_SECONDS
     for row in updates:
         # Each update is judged at the moment it is read. Sharing one timestamp
@@ -2101,6 +2101,16 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
         counts["seen"] += 1
         with connection() as database:
             attention = telegram_attention_for(database, message, now)
+            researching = database.execute(
+                "SELECT 1 FROM dash_research_jobs WHERE id=?",
+                (f"telegram:{message.update_id}",),
+            ).fetchone()
+            if researching and attention.reason in {
+                "hourly_budget",
+                "hourly_turn_budget",
+                "cooldown",
+            }:
+                continue
             if attention.consider and time.monotonic() >= tick_deadline:
                 # Out of time for model turns. Skips above and below still finish;
                 # this one stays pending for the next tick.
@@ -2114,7 +2124,7 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
                 before_update_id=message.update_id,
                 message_thread_id=message.message_thread_id,
             )
-        if not attention.consider:
+        if not attention.consider and not (researching and attention.reason == "not_addressed"):
             if message.addresses and attention.reason != "muted":
                 from runner_web.dash_intake import ingest_message
 
@@ -2428,6 +2438,12 @@ def _decide_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dic
     falls back to the tool-loop turn, so the room never goes silent.
     """
 
+    saved = dash_jobs.completed_result(
+        f"telegram:{message.update_id}",
+        dash_research.research_scope(message.chat_id, message.message_thread_id),
+    )
+    if saved:
+        return saved
     now = datetime.now(UTC)
     try:
         with connection() as database:
@@ -2609,6 +2625,19 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
             "WHERE key IN ('dash_desk_note_last_at','dash_desk_note_last_note')"
         ).fetchall()
     saved = {row["key"]: row["value"] for row in rows}
+    with connection() as database:
+        finding = database.execute(
+            "SELECT o.text,o.status,o.created_at FROM telegram_outbox o "
+            "JOIN telegram_outbox_items i ON i.outbox_id=o.id "
+            "WHERE o.chat_id=? AND i.kind='dash_research' "
+            "ORDER BY o.created_at DESC,o.id DESC LIMIT 1",
+            (str(chat_id),),
+        ).fetchone()
+    if finding:
+        saved["dash_desk_note_last_note"] = finding["text"]
+        saved["dash_desk_note_last_at"] = max(
+            saved.get("dash_desk_note_last_at", ""), finding["created_at"]
+        )
     last_at = _stamp(saved.get("dash_desk_note_last_at"))
     scope = dash_research.research_scope(chat_id)
     active = dash_jobs.active_desk_key(scope)
@@ -2638,6 +2667,7 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
         "research_chat_id": chat_id,
         "due_theses": due,
         "previous_note": saved.get("dash_desk_note_last_note", ""),
+        "previous_delivery_status": finding["status"] if finding else "unknown",
     }
     try:
         note = _generate_desk_note(world)

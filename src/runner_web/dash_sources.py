@@ -46,11 +46,16 @@ def _identity(url: str, digest: str) -> str:
 
 
 def _safe_url(url: str) -> bool:
-    parsed = urlsplit(url)
-    return parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username
+    try:
+        parsed = urlsplit(url)
+        return parsed.scheme == "https" and bool(parsed.hostname) and not parsed.username
+    except ValueError:
+        return False
 
 
 def _filing_prefix(url: str) -> str:
+    if not _safe_url(url):
+        return ""
     parsed = urlsplit(url)
     if parsed.hostname not in {"www.sec.gov", "sec.gov"}:
         return ""
@@ -189,6 +194,8 @@ def read_source(reference: dict[str, Any], question: str) -> dict[str, Any]:
         return {"error": "The stored source needs a fresh copy."}
     if len(raw) > MAX_DOCUMENT_BYTES:
         return {"error": "This document needs a smaller stored extract."}
+    if hashlib.sha256(raw).hexdigest() != reference["content_hash"]:
+        return {"error": "This source copy needs its version checked."}
     if "pdf" in str(row["content_type"]).lower():
         return {"error": "This PDF needs a stored text extract."}
     text = raw.decode("utf-8", errors="replace")
@@ -209,17 +216,31 @@ def read_source(reference: dict[str, Any], question: str) -> dict[str, Any]:
                     end = MAX_PASSAGE_CHARS
             chunks.append(paragraph[:end])
             paragraph = paragraph[end:].lstrip()
-    terms = set(re.findall(r"[a-z0-9]{3,}", str(question).lower()[:300]))
-    ranked = sorted(
-        range(len(chunks)), key=lambda i: (-sum(t in chunks[i].lower() for t in terms), i)
-    )
-    chosen = sorted(ranked[:3])
+    terms = set(re.findall(r"[a-z0-9]{3,}", str(question).lower()[:300])) - {
+        "the",
+        "and",
+        "for",
+        "what",
+        "when",
+        "does",
+        "this",
+        "that",
+        "with",
+        "from",
+        "are",
+    }
+    scores = [len(terms & set(re.findall(r"[a-z0-9]{3,}", chunk.lower()))) for chunk in chunks]
+    ranked = sorted(range(len(chunks)), key=lambda i: (-scores[i], i))
+    anchor = ranked[0] if ranked and scores[ranked[0]] else 0
+    # Include neighboring text so qualifications stay beside the selected terms.
+    chosen = range(max(0, anchor - 1), min(len(chunks), max(0, anchor - 1) + 3))
     passages = [{"passage": i + 1, "text": chunks[i]} for i in chosen]
     return {
         **reference,
         "checked_at": datetime.now(UTC).isoformat(),
         "passages": passages,
         "total_passages": len(chunks),
+        "query_matched": any(scores),
         "partial": len(chunks) > len(passages),
         "citation": "[source:" + reference["evidence_id"] + "]",
     }

@@ -22,10 +22,30 @@ def active_desk_key(scope):
     return row["id"] if row else None
 
 
+def completed_result(identity, scope):
+    with connection() as database:
+        row = database.execute(
+            "SELECT result_json FROM dash_research_jobs "
+            "WHERE id=? AND scope=? AND status='complete'",
+            (identity, scope),
+        ).fetchone()
+    return json.loads(row["result_json"]) if row else None
+
+
 def claim(identity, scope, kind, at):
     token = uuid4().hex
     stamp = at.isoformat()
     with connection() as database:
+        database.execute(
+            "UPDATE dash_research_jobs SET status='complete',state_json='{}',result_json=?,"
+            "updated_at=? WHERE status='pending' AND created_at<? AND lease_until<=?",
+            (
+                json.dumps({"action": "hold", "why": "research_expired"}),
+                stamp,
+                (at - timedelta(days=1)).isoformat(),
+                stamp,
+            ),
+        )
         database.execute(
             "DELETE FROM dash_research_jobs WHERE updated_at<? AND status='complete'",
             ((at - timedelta(days=14)).isoformat(),),

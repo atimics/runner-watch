@@ -357,6 +357,49 @@ ceiling. Source errors return to the analyst so he can inspect another source.
 The existing hourly reply and turn caps, daily public-action limits, and once-only
 mutation records continue to apply.
 
+### Saved investigations and source passages
+
+Migration 105 adds `dash_research_jobs`. A chat update has one job identity.
+The main room has at most one pending desk investigation. Each job gets up to
+three research attempts, with a one-minute retry delay and a five-minute worker
+lease. A successful tool step saves its evidence and proposed note changes.
+A resumed job reuses evidence for five minutes; older checks become historical
+context and the analyst refreshes them. Waiting jobs leave space for new chat
+updates. Completed chat replies are reused on a delivery retry.
+
+The final review saves its notes, result, and desk outbox card in one transaction.
+Each view has an outcome: `finding_ready`, `reviewed_quiet`, `deferred_source`,
+`retired`, or `incomplete`. A source failure can receive its own later check.
+An unfinished revision keeps the prior view open and saves the proposed view for
+the next review. Other completed findings can proceed in the same turn.
+
+Desk delivery uses the existing outbox's worker claims, pacing, and receipts.
+Telegram rate limits retain the finding for retry. An ambiguous send stays in
+`uncertain` with its frozen text for receipt review. Failed and stale deliveries
+also retain their status. The latest finding supplies context, including its
+delivery status, so subsequent research can account for it. A pending desk job
+or retry gets another worker tick within a minute. Completed jobs clear their
+working context; a later claim removes completed rows older than 14 days and
+closes unfinished jobs older than one day.
+
+`list_sources` finds up to 30 stored source versions for a ticker, including SEC
+filing exhibits. `read_source` accepts a returned evidence ID and search terms.
+It returns up to three nearby passages of at most 1,800 characters each, with the
+source URL, original dates, collection times, and content hash. The reader checks
+the stored bytes against that hash. Compressed and decoded content each have a
+2 MB limit. PDFs and larger documents return a request for a stored text extract.
+A result marks partial coverage and whether the terms matched.
+
+Every document needs a matching ingestion run whose source policy permits public
+attribution and raw storage. Access is checked during listing and reading. Source
+text stays within these approved records; the existing report access rules apply
+to reports. Reading operates on stored source copies.
+
+Dash cites passages with `[source:ID]`. The reply resolves each marker into its
+source name, date, and URL after a successful read. Saved views retain source
+references alongside their evidence. The source tools share the turn's existing
+tool and time budgets.
+
 ### The decision-model path (`DASH_DECISIONS`)
 
 With `DASH_DECISIONS=1`, a cheap decision model handles engagement and suggests

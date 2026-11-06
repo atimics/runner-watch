@@ -186,7 +186,9 @@ def save_thesis(
                 )
             }
             for name, item in evidence.items()
-            if name.startswith("source:") and item.get("passages")
+            if name.startswith("source:")
+            and item.get("passages")
+            and (not node.startswith("ticker:") or item.get("ticker") == node.split(":", 1)[1])
         ][:12],
         "review_outcome": "reviewed_quiet",
     }
@@ -283,7 +285,12 @@ def run_research(*, job_key=None, job_chat_id=None, **kwargs):
         if claim and claim["attempts"] > dash_jobs.MAX_ATTEMPTS:
             result = {"action": "hold", "why": "research_incomplete"}
         else:
-            result = _run_research(**kwargs, progress=state, checkpoint=checkpoint)
+            try:
+                result = _run_research(**kwargs, progress=state, checkpoint=checkpoint)
+            except Exception:
+                if not claim or claim["attempts"] < dash_jobs.MAX_ATTEMPTS:
+                    raise
+                result = {"action": "hold", "why": "research_incomplete"}
         if (
             result.get("why") == "research_incomplete"
             and claim
@@ -291,6 +298,17 @@ def run_research(*, job_key=None, job_chat_id=None, **kwargs):
         ):
             dash_jobs.release(job_key, claim["token"], current)
             return {"action": "retry", "why": "research_pending"}
+        if result.get("why") == "research_incomplete" and scope:
+            prior = {note["node"]: note for note in notebook(scope, current)}
+            for node, note in state.get("notes", {}).items():
+                state["notes"][node] = {
+                    **prior.get(node, note),
+                    "status": "watching",
+                    "pending_view": {key: note[key] for key in ("thesis", "confidence", "status")},
+                    "review_outcome": "incomplete",
+                    "review_reason": "The finding needs another research pass.",
+                    "review_at": (current + timedelta(minutes=30)).isoformat(),
+                }
         if scope and kwargs.get("proactive"):
             staged = state.setdefault("notes", {})
             for note in due_notes(notebook(scope, current), current):
@@ -309,6 +327,9 @@ def run_research(*, job_key=None, job_chat_id=None, **kwargs):
                 "action": "reply",
                 "text": "That check needs another pass. Please try again.",
             }
+        for note in state.get("notes", {}).values():
+            if note.get("review_outcome") == "reviewed":
+                note["review_outcome"] = "reviewed_quiet"
         if claim:
             dash_jobs.finish(
                 job_key,
@@ -477,7 +498,11 @@ def _run_research(
                     rendered, missing_sources = dash_sources.render_citations(raw_text, evidence)
                     text = _bound_reply(rendered)
                     missing = unbacked(text, evidence) if text else []
-                    if missing_sources:
+                    if "[source:" in raw_text and text != rendered:
+                        output = {
+                            "error": "Shorten the answer so its source links fit in one message."
+                        }
+                    elif missing_sources:
                         output = {
                             "error": "Read the cited sources first.",
                             "evidence_ids": missing_sources,
@@ -562,6 +587,8 @@ def _run_research(
                         )
                         if output.get("saved"):
                             note = output["note"]
+                            if name == "remember_thesis":
+                                note["review_outcome"] = "reviewed"
                             staged[note["node"]] = note
                             reviewed.add(note["node"])
                     elif name == "list_sources":
@@ -606,7 +633,7 @@ def _run_research(
         if terminal is not None:
             if terminal["action"] == "reply":
                 for note in staged.values():
-                    if note.get("review_outcome") == "reviewed_quiet":
+                    if note.get("review_outcome") == "reviewed":
                         note["review_outcome"] = "finding_ready"
             return terminal
     return fallback

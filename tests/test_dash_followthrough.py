@@ -335,3 +335,160 @@ def test_confirmed_reply_handles_rate_limits_and_parse_fallback():
         == 123
     )
     assert payloads[0]["parse_mode"] == "HTML" and "parse_mode" not in payloads[1]
+
+
+def test_old_checkpoint_keeps_context_and_refreshes_market_evidence():
+    with pytest.raises(StopIteration):
+        run([turn(("expand", {"node": "ticker:TEST"}))], job_key="chat-test")
+    reads = []
+    result, requests = run(
+        [
+            turn(("expand", {"node": "ticker:TEST"})),
+            turn(("reply", {"text": "The latest check supports caution."})),
+        ],
+        job_key="chat-test",
+        at_override=NOW + timedelta(minutes=6),
+        expand=lambda node: reads.append(node) or {"price": 3},
+    )
+    assert result["action"] == "reply" and reads == ["ticker:TEST"]
+    context = json.loads(requests[0]["messages"][1]["content"])
+    assert context["earlier_checks"]["ticker:TEST"]["price"] == 2
+    assert "ticker:TEST" not in context["collected_evidence"]
+
+
+def test_exhausted_research_keeps_the_prior_view_open(monkeypatch):
+    dash_research.save_thesis(
+        SCOPE, thesis(), {"ticker:TEST": {"price": 1}}, NOW - timedelta(hours=2)
+    )
+    monkeypatch.setattr(dash_jobs, "MAX_ATTEMPTS", 1)
+    result, _ = run(
+        [
+            turn(("expand", {"node": "ticker:TEST"})),
+            turn(("remember_thesis", thesis(status="closed", thesis="A changed view."))),
+        ],
+        job_key="desk-test",
+        job_chat_id=-100,
+        proactive=True,
+    )
+    assert result["why"] == "research_incomplete"
+    note = dash_research.notebook(SCOPE, NOW)[0]
+    assert note["status"] == "watching" and note["thesis"] == thesis()["thesis"]
+    assert note["pending_view"]["thesis"] == "A changed view."
+    assert note["review_outcome"] == "incomplete"
+    assert job()["status"] == "complete"
+
+
+def test_restart_after_a_lost_lease_reclaims_one_research_job():
+    old = dash_jobs.claim("desk-test", SCOPE, "desk", NOW)
+    new = dash_jobs.claim("desk-test", SCOPE, "desk", NOW + timedelta(minutes=6))
+    assert new["token"] != old["token"]
+    with pytest.raises(RuntimeError, match="lease"):
+        dash_jobs.finish("desk-test", old["token"], SCOPE, {"action": "hold"}, {}, NOW)
+    assert job()["status"] == "pending"
+
+
+def test_quiet_review_retains_its_outcome_beside_a_material_finding():
+    for node in ("ticker:TEST", "ticker:QUIET"):
+        dash_research.save_thesis(
+            SCOPE, thesis(node), {node: {"price": 1}}, NOW - timedelta(hours=2)
+        )
+    run(
+        [
+            turn(("expand", {"node": "ticker:TEST"}), ("expand", {"node": "ticker:QUIET"})),
+            turn(
+                (
+                    "finish_review",
+                    {"node": "ticker:QUIET", "outcome": "reviewed_quiet", "reason": "Same view."},
+                ),
+                ("remember_thesis", thesis()),
+                ("reply", {"text": "A useful change."}),
+            ),
+        ],
+        proactive=True,
+    )
+    notes = {n["node"]: n for n in dash_research.notebook(SCOPE, NOW)}
+    assert notes["ticker:QUIET"]["review_outcome"] == "reviewed_quiet"
+    assert notes["ticker:TEST"]["review_outcome"] == "finding_ready"
+
+
+def test_document_version_and_approval_are_both_required():
+    url = store_source()
+    ref = dash_sources.list_sources("TEST")["sources"][0]
+    with connection() as database:
+        database.execute(
+            "INSERT INTO source_documents(source,source_url,content_hash,content_type,content,"
+            "first_collected_at,last_collected_at) VALUES('sec',?,'unapproved','text/plain',?,?,?)",
+            (url, b"Unreviewed replacement", NOW.isoformat(), NOW.isoformat()),
+        )
+    listed = dash_sources.list_sources("TEST")["sources"]
+    assert len(listed) == 1 and listed[0]["content_hash"] == ref["content_hash"]
+    assert "error" in dash_sources.read_source({**ref, "content_hash": "unapproved"}, "replacement")
+
+
+def test_document_size_budget_covers_compressed_content(monkeypatch):
+    store_source(text="<p>" + "Large document. " * 1000 + "</p>")
+    ref = dash_sources.list_sources("TEST")["sources"][0]
+    monkeypatch.setattr(dash_sources, "MAX_DOCUMENT_BYTES", 1000)
+    assert "smaller stored extract" in dash_sources.read_source(ref, "document")["error"]
+
+
+def test_waiting_research_leaves_room_for_new_questions():
+    from runner_web.telegram_chat import pending_updates
+
+    with connection() as database:
+        for update in (1, 2):
+            database.execute(
+                "INSERT INTO telegram_updates(update_id,payload_json,status,received_at) "
+                "VALUES(?,'{}','pending',?)",
+                (update, NOW.isoformat()),
+            )
+    claim = dash_jobs.claim("telegram:1", SCOPE, "chat", NOW)
+    dash_jobs.release("telegram:1", claim["token"], NOW)
+    with connection() as database:
+        assert [row["update_id"] for row in pending_updates(database, limit=1, now=NOW)] == [2]
+        assert [
+            row["update_id"]
+            for row in pending_updates(database, limit=1, now=NOW + timedelta(minutes=1))
+        ] == [1]
+
+
+def test_source_terms_keep_nearby_qualifications():
+    store_source(
+        text="<html>"
+        + "".join(f"<p>Introduction {i}.</p>" for i in range(6))
+        + "<p>Payment terms: five million dollars.</p><p>Subject to regulatory approval.</p>"
+        + "<p>Other terms.</p></html>"
+    )
+    ref = dash_sources.list_sources("TEST")["sources"][0]
+    result = dash_sources.read_source(ref, "What are the payment terms?")
+    assert result["query_matched"] is True
+    assert "Subject to regulatory approval." in str(result["passages"])
+    assert result["partial"] is True
+
+
+def test_unavailable_source_can_retire_an_existing_view():
+    dash_research.save_thesis(
+        SCOPE, thesis(), {"ticker:TEST": {"price": 1}}, NOW - timedelta(hours=2)
+    )
+    result, _ = run(
+        [
+            turn(("expand", {"node": "ticker:TEST"})),
+            turn(
+                (
+                    "finish_review",
+                    {
+                        "node": "ticker:TEST",
+                        "outcome": "retired",
+                        "reason": "The source was retired.",
+                    },
+                ),
+                ("hold", {"why": "View retired."}),
+            ),
+        ],
+        proactive=True,
+        expand=lambda node: {"known": False},
+    )
+    assert result["action"] == "hold"
+    note = dash_research.notebook(SCOPE, NOW)[0]
+    assert note["status"] == "closed" and note["review_outcome"] == "retired"
+    assert dash_research.due_notes([note], NOW + timedelta(hours=2)) == []
