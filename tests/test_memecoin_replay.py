@@ -560,7 +560,7 @@ def test_replay_worker_renders_and_never_posts_to_the_channel(monkeypatch):
     monkeypatch.setattr(
         store, "render_pending_replays_isolated", lambda: calls.append("render") or {}
     )
-    monkeypatch.setattr(main, "run_in_threadpool", inline)
+    monkeypatch.setattr(main, "run_memory_heavy_job", inline)
     monkeypatch.setattr(main.asyncio, "sleep", stop)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(main.memecoin_replay_worker())

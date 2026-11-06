@@ -4091,6 +4091,22 @@ def _migration_104_api_credits(db: DatabaseConnection) -> None:
     """)
 
 
+def _migration_105_dash_research_jobs(db: DatabaseConnection) -> None:
+    db.executescript("""
+        CREATE TABLE dash_research_jobs (
+            id TEXT PRIMARY KEY, scope TEXT NOT NULL, kind TEXT NOT NULL,
+            status TEXT NOT NULL, state_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT NOT NULL DEFAULT '{}', attempts INTEGER NOT NULL DEFAULT 0,
+            next_at TEXT NOT NULL DEFAULT '', lease_token TEXT NOT NULL DEFAULT '',
+            lease_until TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX dash_research_jobs_scope ON dash_research_jobs(scope,kind,status);
+        CREATE UNIQUE INDEX dash_research_one_desk ON dash_research_jobs(scope)
+            WHERE kind='desk' AND status='pending';
+    """)
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4202,6 +4218,7 @@ MIGRATIONS = (
     Migration(102, "token_discoveries", _migration_102_token_discoveries),
     Migration(103, "replay_objects", _migration_103_replay_objects),
     Migration(104, "api_credits", _migration_104_api_credits),
+    Migration(105, "dash_research_jobs", _migration_105_dash_research_jobs),
 )
 
 

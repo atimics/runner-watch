@@ -6,7 +6,6 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, RunEvent, State};
-use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use url::Url;
@@ -113,11 +112,10 @@ fn desktop_runtime(app: AppHandle, state: State<'_, DesktopState>) -> RuntimePay
 }
 
 #[tauri::command]
-fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
+fn open_external(url: String) -> Result<bool, String> {
     let safe = safe_external_url(&url)
         .ok_or_else(|| "This external address is not allowed".to_string())?;
-    app.opener()
-        .open_url(safe.as_str(), None::<&str>)
+    open::that_detached(safe.as_str())
         .map_err(|error| format!("Could not open this address: {error}"))?;
     Ok(true)
 }
@@ -340,7 +338,6 @@ pub fn run() {
     tauri::Builder::default()
         .manage(DesktopState::new())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![desktop_runtime, open_external])
         .setup(|app| {
             initialize_scanner(app.handle().clone());

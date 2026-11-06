@@ -34,6 +34,7 @@ from runner_web.flash_wallet import (
 # is refunded. A coin that left the board may never be quoted again.
 MEMECOIN_CALL_ORDER_TIMEOUT = timedelta(hours=1)
 MEMECOIN_CALL_MAX_AGE_DAYS = 7
+FILL_LOCK_ID = 721906103
 
 
 def _now() -> str:
@@ -333,6 +334,12 @@ def fill_memecoin_call_orders(at: datetime | None = None) -> list[str]:
     timeout = (current - MEMECOIN_CALL_ORDER_TIMEOUT).isoformat()
     handles: list[str] = []
     with connection() as database:
+        # Both price workers can arrive together. Serialize the whole fill
+        # transaction, including refunds, before reading pending orders.
+        if database.backend == "postgres":
+            database.execute("SELECT pg_advisory_xact_lock(?)", (FILL_LOCK_ID,))
+        else:
+            database.execute("BEGIN IMMEDIATE")
         orders = database.execute(
             """
             SELECT o.*,ci.handle AS caller_handle FROM memecoin_call_orders o

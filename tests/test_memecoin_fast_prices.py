@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
@@ -5,7 +6,10 @@ from unittest.mock import patch
 import pytest
 
 from runner_web import db, memecoin_fast_prices, memecoin_store, memecoins
+from runner_web import main as web_main
+from runner_web import memecoin_calls as call_service
 from runner_web.db import connection, init_db
+from runner_web.flash_wallet import MEMECOIN_CALL_STAKE, credit_flash
 from runner_web.memecoin_evidence import CreditBudgetReached
 
 AT = datetime(2026, 9, 5, 7, tzinfo=UTC)
@@ -51,6 +55,145 @@ def seed_board():
 
 def fast_chain(price):
     return {"sol_usd": 100.0, "prices": {POOL: {"price": price, "liquidity_usd": 50_000.0}}}
+
+
+@pytest.fixture
+def paper_clock(market_db, monkeypatch):
+    clock = {"now": AT}
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock["now"].astimezone(tz) if tz else clock["now"].replace(tzinfo=None)
+
+    for module in (call_service, memecoins, memecoin_fast_prices):
+        monkeypatch.setattr(module, "datetime", Clock)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO users(id,username,display_name,status,created_at) VALUES(?,?,?,?,?)",
+            ("alice", "alice", "Alice", "active", AT.isoformat()),
+        )
+        credit_flash(database, "alice", 100, kind="test_grant", reference_id="grant-alice")
+    seed_board()
+    call_service.create_memecoin_call("alice", "dogecoin")
+    return clock
+
+
+def fast_tick(monkeypatch):
+    """Run one complete worker tick, including its fill and cache invalidation."""
+
+    async def run_task(function):
+        return function()
+
+    async def sleep(seconds):
+        assert seconds == memecoin_fast_prices.FAST_PRICE_SECONDS
+        raise asyncio.CancelledError
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(web_main, "run_in_threadpool", run_task)
+        patcher.setattr(web_main.asyncio, "sleep", sleep)
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(web_main.memecoin_fast_price_worker())
+
+
+def test_unattended_call_fills_on_first_fast_tick_without_slow_refresh(paper_clock, monkeypatch):
+    # The latest board has lost this coin. Its saved receipt still supports the Call.
+    memecoin_store.save_memecoin_snapshot([], run_id="later", collected_at=AT)
+    paper_clock["now"] += timedelta(seconds=memecoin_fast_prices.FAST_PRICE_SECONDS)
+    first_quote_at = paper_clock["now"]
+    with (
+        patch.object(memecoin_fast_prices, "chain_prices", return_value=fast_chain(0.15)) as read,
+        patch.object(web_main, "refresh_memecoins") as slow,
+        patch.object(web_main, "_invalidate_public_screen_data") as invalidate,
+    ):
+        fast_tick(monkeypatch)
+        opened = call_service.active_memecoin_call("alice", "dogecoin")
+        assert opened["entry_at"] == first_quote_at.isoformat()
+        assert opened["entry_price"] == 0.15
+        assert opened["entry_evidence"]["observed_at"] == first_quote_at.isoformat()
+        invalidate.assert_called_once_with("caller", opened["caller_handle"])
+        # Retrying the same sample and a later tick cannot create a second Call or refund.
+        fast_tick(monkeypatch)
+        paper_clock["now"] += timedelta(seconds=memecoin_fast_prices.FAST_PRICE_SECONDS)
+        fast_tick(monkeypatch)
+        assert read.call_count == 3  # Active Calls keep their prices refreshed too.
+        slow.assert_not_called()
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM memecoin_calls").fetchone()[0] == 1
+        assert database.execute("SELECT balance FROM flash_wallets").fetchone()[0] == (
+            100 - MEMECOIN_CALL_STAKE
+        )
+        assert (
+            database.execute(
+                "SELECT COUNT(*) FROM flash_transactions WHERE kind='memecoin_call_refund'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_fast_tick_does_not_fill_at_quote_already_seen_when_order_was_requested(
+    paper_clock, monkeypatch
+):
+    with patch.object(memecoin_fast_prices, "chain_prices", return_value=fast_chain(0.15)):
+        fast_tick(monkeypatch)  # Same timestamp as the order and existing slow quote.
+    assert call_service.active_memecoin_call("alice", "dogecoin") is None
+    assert call_service.pending_memecoin_order("alice", "dogecoin") is not None
+
+
+def test_unattended_close_uses_next_fast_quote_then_goes_idle(paper_clock, monkeypatch):
+    paper_clock["now"] += timedelta(seconds=memecoin_fast_prices.FAST_PRICE_SECONDS)
+    with patch.object(memecoin_fast_prices, "chain_prices", return_value=fast_chain(0.15)):
+        fast_tick(monkeypatch)
+    opened = call_service.active_memecoin_call("alice", "dogecoin")
+    call_service.close_memecoin_call("alice", opened["public_id"])
+    paper_clock["now"] += timedelta(seconds=memecoin_fast_prices.FAST_PRICE_SECONDS)
+    with patch.object(memecoin_fast_prices, "chain_prices", return_value=fast_chain(0.18)) as read:
+        fast_tick(monkeypatch)
+        fast_tick(monkeypatch)
+        read.assert_called_once()
+    with connection() as database:
+        call = database.execute("SELECT * FROM memecoin_calls").fetchone()
+        assert call["status"] == "closed"
+        assert call["exit_price"] == 0.18
+        assert (
+            database.execute(
+                "SELECT COUNT(*) FROM flash_transactions WHERE kind='memecoin_call_settle'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize("failure", [CreditBudgetReached("spent"), ValueError("down"), None])
+def test_unattended_failed_or_empty_read_retries_without_filling(paper_clock, monkeypatch, failure):
+    paper_clock["now"] += timedelta(seconds=memecoin_fast_prices.FAST_PRICE_SECONDS)
+    with (
+        patch.object(
+            memecoin_fast_prices, "chain_prices", side_effect=failure, return_value={"prices": {}}
+        ),
+        patch.object(web_main, "fill_memecoin_call_orders") as fill,
+    ):
+        fast_tick(monkeypatch)
+        fill.assert_not_called()
+    assert call_service.pending_memecoin_order("alice", "dogecoin") is not None
+    paper_clock["now"] += timedelta(seconds=memecoin_fast_prices.FAST_PRICE_SECONDS)
+    with patch.object(memecoin_fast_prices, "chain_prices", return_value=fast_chain(0.16)):
+        fast_tick(monkeypatch)
+    assert call_service.active_memecoin_call("alice", "dogecoin")["entry_price"] == 0.16
+
+
+def test_unattended_watch_only_reads_calls_and_retains_its_cap(market_db):
+    row = seed_board()
+    calls = [{**row, "id": f"call-{i}", "pool_address": f"pool-{i}"} for i in range(50)]
+    with (
+        patch.object(memecoin_fast_prices, "_call_coin_ids", return_value=[r["id"] for r in calls]),
+        patch.object(memecoin_fast_prices, "chain_prices", return_value={"prices": {}}) as read,
+    ):
+        memecoin_store.save_memecoin_snapshot([row, *calls], run_id="many", collected_at=AT)
+        assert memecoin_fast_prices.refresh_watched_prices(at=AT)["status"] == "ok"
+        selected = memecoin_fast_prices.watched_rows([row, *calls], include_traded=False)
+    assert len(selected) == memecoin_fast_prices.WATCH_LIMIT
+    assert all(r["id"] != "dogecoin" for r in selected)
+    assert len(read.call_args.args[0]) == memecoin_fast_prices.WATCH_LIMIT
 
 
 def test_newer_fast_price_replaces_price_and_scales_market_cap():

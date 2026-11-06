@@ -187,6 +187,22 @@ virtual reserve a graduated pool carries over from its curve, so it reads lower
 than GeckoTerminal's for small pools. A bonding curve is shown once $100 has
 gone into it.
 
+The fast price worker runs every 60 seconds by default
+(`MEMECOIN_FAST_PRICE_SECONDS`, minimum 15). It reads at most 40 coins, with
+pending paper Call orders ahead of active Calls. Calls retain their saved pool
+receipts after leaving the board. With a page view in the last five minutes,
+remaining slots can follow coins that traded; without a viewer, only Call coins
+are read. With neither readers nor Calls, the fast worker spends nothing.
+These reads still use the existing price lane, daily credit cap and liquidity
+checks. Busy Call lists can require later ticks or the slower refresh.
+
+After a successful fast update saves quotes, pending paper orders fill from
+their first saved observation after the request and invalidate the caller's
+cached record. Duplicate samples cannot fill an order twice. The fast and slow
+workers serialize fill transactions, including refunds and settlements; a
+failed transaction rolls back for retry. Quote history still uses five-minute
+spacing except while a Call order awaits its next quote.
+
 Quote rows require positive price and volume, recorded trades and at least $1,000
 pool liquidity. Price and volume come from the same representative pool. Quote
 time records the indexer fetch; creation and trade receipts use Solana block time.

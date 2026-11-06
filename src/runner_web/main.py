@@ -43,7 +43,7 @@ from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
-from runner_web import attention, pulse_scoring
+from runner_web import attention, dash_direction, dash_jobs, dash_research, pulse_scoring
 from runner_web import db as runner_db
 from runner_web import decisions as openrouter_decisions
 from runner_web.account_routes import (
@@ -262,6 +262,7 @@ from runner_web.process_memory import (
     peak_rss_mb,
     rss_mb,
     run_in_threadpool,
+    run_memory_heavy_job,
 )
 from runner_web.product_catalog import roadmap_snapshot
 from runner_web.product_policy import BASE_RATES, OPERATIONS
@@ -1789,25 +1790,25 @@ async def outcome_worker() -> None:
     while True:
         try:
             await asyncio.wait_for(
-                run_in_threadpool(refresh_outcomes),
+                run_memory_heavy_job(refresh_outcomes),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             await asyncio.wait_for(
-                run_in_threadpool(refresh_scan_outcomes),
+                run_memory_heavy_job(refresh_scan_outcomes),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             flash_results = await asyncio.wait_for(
-                run_in_threadpool(refresh_flash_forecasts),
+                run_memory_heavy_job(refresh_flash_forecasts),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             if any(flash_results.get(key) for key in ("resolved", "voided", "reviewed")):
                 _invalidate_runners_feeds("pulse")
             await asyncio.wait_for(
-                run_in_threadpool(prune_storage),
+                run_memory_heavy_job(prune_storage),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             await asyncio.wait_for(
-                run_in_threadpool(prune_collection_history),
+                run_memory_heavy_job(prune_collection_history),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
         except asyncio.CancelledError:
@@ -1874,7 +1875,7 @@ async def scan_collection_worker() -> None:
             continue
         started = time.monotonic()
         try:
-            result = await run_in_threadpool(run_scan, "penny")
+            result = await run_memory_heavy_job(run_scan, "penny")
             worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
             worker_state("background_scan_last_error", "")
             if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
@@ -1940,7 +1941,7 @@ async def price_gap_worker() -> None:
     while True:
         delay = PRICE_GAP_INTERVAL_SECONDS
         try:
-            result = await run_in_threadpool(refresh_price_gaps)
+            result = await run_memory_heavy_job(refresh_price_gaps)
             worker_state("price_gap_last_refresh", json.dumps(result, separators=(",", ":")))
             worker_state("price_gap_last_error", "")
         except asyncio.CancelledError:
@@ -2076,7 +2077,7 @@ def _act_on_telegram_message(
                 html=body,
                 preview_url=preview,
             )
-            telegram_record_action(database, message, "reply", text[:200], now)
+            telegram_record_action(database, message, "reply", text[:3500], now)
             telegram_spend_engagement(database, message.chat_id, message.user_id, now)
             return "reply"
     if action == "react":
@@ -2100,7 +2101,7 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
     bot_username, bot_id = identity
     config = telegram_config_from_env()
     with connection() as database:
-        updates = telegram_pending_updates(database)
+        updates = telegram_pending_updates(database, now=at)
     tick_deadline = time.monotonic() + TELEGRAM_TICK_SECONDS
     for row in updates:
         # Each update is judged at the moment it is read. Sharing one timestamp
@@ -2125,6 +2126,16 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
         counts["seen"] += 1
         with connection() as database:
             attention = telegram_attention_for(database, message, now)
+            researching = database.execute(
+                "SELECT 1 FROM dash_research_jobs WHERE id=?",
+                (f"telegram:{message.update_id}",),
+            ).fetchone()
+            if researching and attention.reason in {
+                "hourly_budget",
+                "hourly_turn_budget",
+                "cooldown",
+            }:
+                continue
             if attention.consider and time.monotonic() >= tick_deadline:
                 # Out of time for model turns. Skips above and below still finish;
                 # this one stays pending for the next tick.
@@ -2138,7 +2149,7 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
                 before_update_id=message.update_id,
                 message_thread_id=message.message_thread_id,
             )
-        if not attention.consider:
+        if not attention.consider and not (researching and attention.reason == "not_addressed"):
             if message.addresses and attention.reason != "muted":
                 from runner_web.dash_intake import ingest_message
 
@@ -2176,6 +2187,8 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
                     if generate
                     else {"action": "hold", "why": "no model configured"}
                 )
+            if decision.get("action") == "retry":
+                continue
             with connection() as database:
                 outcome = _act_on_telegram_message(database, config, message, decision, now)
                 telegram_finish_update(database, update_id, "handled", now=now)
@@ -2213,26 +2226,47 @@ def _dash_model() -> str:
     return os.getenv("DASH_MODEL", "").strip() or FLASH.model
 
 
+def _dash_evidence(grounded: dict[str, Any]) -> dict[str, Any]:
+    evidence = {}
+    for item in grounded.get("looked_up") or []:
+        node = dash_research.canonical_node("ticker:" + str(item.get("ticker") or ""))
+        if node:
+            evidence[node] = item
+    for item in grounded.get("looked_up_coins") or []:
+        address = item.get("contract_address") or item.get("query")
+        node = dash_research.canonical_node("coin:" + str(address or ""))
+        if node:
+            evidence[node] = item
+    return evidence
+
+
+def _dash_research_unbacked(text: str, evidence: dict[str, Any]) -> list[str]:
+    symbols = {key.split(":", 1)[1] for key in evidence if key.startswith("ticker:")}
+    return _dash_unbacked(text, symbols, json.dumps(evidence, default=str))
+
+
+def _dash_research_action(message: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    if name == "my_standing":
+        return {"budget": dash_budget(), "open_calls": dash_open_calls()}
+    ticker = str(args.get("ticker") or "").strip().upper().lstrip("$")
+    if name == "make_call":
+        return dash_once(message.update_id, name, ticker, lambda: dash_make_call(ticker))
+    if name == "close_call":
+        return dash_once(message.update_id, name, ticker, lambda: dash_close_call(ticker))
+    if name == "comment_on_ticker":
+        return dash_once(
+            message.update_id,
+            name,
+            ticker,
+            lambda: dash_comment(ticker, str(args.get("body") or "")),
+        )
+    return {"error": "Choose an available action."}
+
+
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
-    """Ask the model what the cheetah does with one message.
-
-    The model chooses a tool rather than writing free text, so "say nothing" is a
-    real answer it can give. What the message points at is looked up first and
-    handed over as already_looked_up, so a named ticker costs one model call
-    instead of two and the model has a fixed list of what it is allowed to quote.
-    A reply that names a ticker with nothing behind it gets one more chance to
-    look it up or to say it has not.
-    """
-
-    tools = [{"type": "function", "function": dict(tool)} for tool in TELEGRAM_TOOL_SCHEMA]
+    """Give Dash the room, current evidence, and time to form his own view."""
     with connection() as database:
         grounded = telegram_prefetch_for(message, database)
-    looked_symbols = {
-        str(item.get("ticker") or "").strip().upper().lstrip("$")
-        for item in grounded.get("looked_up") or []
-        if item.get("ticker")
-    }
-    looked_symbols.discard("")
     world = dash_world()
     context = {
         **world,
@@ -2249,132 +2283,20 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             "your_recent_actions": dash_recent_actions(message.chat_id),
         },
     }
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": CHEETAH_PERSONA},
-        {
-            "role": "user",
-            "content": json.dumps(context, separators=(",", ":"), default=str),
-        },
-    ]
-    # Everything the model was handed or fetched, so an address in a reply can be
-    # checked against it. Numbers are not checked: that stays in the prompt.
-    looked_text = [json.dumps(grounded, default=str), json.dumps(world, default=str)]
-    corrected = False
-    retried_empty = False
-    for _round in range(6):
-        body = {
-            "model": _dash_model(),
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": "required",
-            # A router model (for example typesafe/jev-router) lists no supported
-            # parameters, so these options may make it fail. Try any new
-            # DASH_MODEL on a test chat first.
-            "provider": {"require_parameters": True, "zdr": True},
-            "max_tokens": 700,
-        }
-        result = _telegram_chat_completion(body)
-        choice = (result.get("choices") or [{}])[0].get("message") or {}
-        calls = choice.get("tool_calls") or []
-        if not calls:
-            if retried_empty:
-                return {"action": "reply", "text": "That check hit a problem. Please try again."}
-            retried_empty = True
-            messages.append(
-                {
-                    "role": "user",
-                    "content": "Choose a tool action for this turn: reply, react, hold, or expand.",
-                }
-            )
-            continue
-        call = calls[0]
-        name = str(((call.get("function") or {}).get("name")) or "")
-        try:
-            args = json.loads((call.get("function") or {}).get("arguments") or "{}")
-        except (TypeError, ValueError):
-            args = {}
-        looked: Any = None
-        if name == "expand":
-            node = str(args.get("node") or "")
-            looked = dash_expand(node)
-            key = node.strip().lower()
-            looked_text.append(json.dumps(looked, default=str))
-            if key.startswith("coin:"):
-                looked_text.append(node.strip().split(":", 1)[1])
-            if key.startswith("ticker"):
-                symbol = key.split(":", 1)[1].strip().upper().lstrip("$")
-                if symbol:
-                    looked_symbols.add(symbol)
-        elif name == "my_standing":
-            looked = {"budget": dash_budget(), "open_calls": dash_open_calls()}
-        elif name == "make_call":
-            ticker = str(args.get("ticker") or "")
-            looked = dash_once(message.update_id, name, ticker, lambda t=ticker: dash_make_call(t))
-        elif name == "close_call":
-            ticker = str(args.get("ticker") or "")
-            looked = dash_once(message.update_id, name, ticker, lambda t=ticker: dash_close_call(t))
-        elif name == "comment_on_ticker":
-            ticker = str(args.get("ticker") or "")
-            comment = str(args.get("body") or "")
-            looked = dash_once(
-                message.update_id, name, ticker, lambda t=ticker, c=comment: dash_comment(t, c)
-            )
-        if looked is not None:
-            messages.append(choice)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.get("id"),
-                    "content": json.dumps(looked, separators=(",", ":"), default=str),
-                }
-            )
-            continue
-        if name == "reply":
-            text = str(args.get("text") or "")
-            if not corrected:
-                with connection() as database:
-                    cited = telegram_resolve_tickers(database, text, limit=8)
-                unbacked = [symbol for symbol in cited if symbol not in looked_symbols]
-                backed_text = "\n".join(looked_text)
-                unbacked += [
-                    address
-                    for address in telegram_reply_addresses(text)
-                    if address not in backed_text
-                ]
-                if unbacked:
-                    corrected = True
-                    messages.append(choice)
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call.get("id"),
-                            "content": json.dumps({"held": "no lookup behind this reply"}),
-                        }
-                    )
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "You were about to name "
-                                + ", ".join(unbacked)
-                                + " without having looked it up. Call expand with "
-                                "node ticker:<SYMBOL> (or coin:<ADDRESS>) for it now, "
-                                "or reply saying you "
-                                "have not looked it up. Do not state numbers you did "
-                                "not fetch."
-                            ),
-                        }
-                    )
-                    continue
-            return {"action": "reply", "text": text}
-        if name == "react":
-            return {"action": "react", "emoji": str(args.get("emoji") or "🐆")}
-        return {
-            "action": "hold",
-            "why": str(args.get("why") or ""),
-            "stop": bool(args.get("stop")),
-        }
-    return {"action": "hold", "why": "ran out of lookups"}
+    evidence = {"world": world, **_dash_evidence(grounded)}
+    return dash_research.run_research(
+        context=context,
+        persona=CHEETAH_PERSONA,
+        tools=list(TELEGRAM_TOOL_SCHEMA),
+        complete=_telegram_chat_completion,
+        model=_dash_model(),
+        expand=dash_expand,
+        unbacked=_dash_research_unbacked,
+        evidence=evidence,
+        scope=dash_research.research_scope(message.chat_id, message.message_thread_id),
+        job_key=f"telegram:{message.update_id}",
+        act=lambda name, args: _dash_research_action(message, name, args),
+    )
 
 
 # The decision-model path. Off by default: the Decisions API is alpha and its
@@ -2466,67 +2388,6 @@ def _whole_sentences(text: str) -> str:
     return text[: end + 1] if end >= 0 else ""
 
 
-def _dash_write(instruction: str, context: dict[str, Any], *, max_tokens: int = 700) -> str:
-    """The writing stage: one chat call, no tools, plain words back."""
-
-    body = {
-        "model": _dash_model(),
-        "messages": [
-            {"role": "system", "content": CHEETAH_PERSONA},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {"instruction": instruction, **context},
-                    separators=(",", ":"),
-                    default=str,
-                ),
-            },
-        ],
-        "provider": {"require_parameters": True, "zdr": True},
-        "max_tokens": max_tokens,
-    }
-    result = _telegram_chat_completion(body)
-    first = (result.get("choices") or [{}])[0]
-    text = str((first.get("message") or {}).get("content") or "").strip()
-    if first.get("finish_reason") == "length":
-        text = _whole_sentences(text)
-    return text
-
-
-DASH_REPLY_INSTRUCTION = (
-    "You decided to reply to the message in room.said. You have no tools this turn: "
-    "everything you may quote is in already_looked_up, loaded and your_action. Write "
-    "the reply only, about forty words, plain text, no markdown, a new line for each "
-    "separate thought. Name a stock as $SYMBOL and a coin by its full contract "
-    "address. If something you would need is not in that data, say you have not "
-    "looked rather than guessing. If your_action is present, say what you did."
-)
-
-
-def _run_dash_mutation(message: Any, plan: Any, grounding: dict[str, Any]) -> dict[str, Any]:
-    """Carry out a Call or comment the decision asked for, once per update."""
-
-    ticker = str(plan.ticker or "")
-    if plan.mutation == "make_call":
-        return dash_once(message.update_id, "make_call", ticker, lambda: dash_make_call(ticker))
-    if plan.mutation == "close_call":
-        return dash_once(message.update_id, "close_call", ticker, lambda: dash_close_call(ticker))
-
-    def comment() -> dict[str, Any]:
-        # The body is only written when the comment has not been posted yet.
-        body = _dash_write(
-            "Write one public comment for the page of $"
-            + ticker
-            + ", under 240 characters, plain text, from what is in the data below. "
-            "No advice, no numbers that are not in the data.",
-            {"ticker": ticker, "data": grounding},
-            max_tokens=400,
-        )
-        return dash_comment(ticker, body)
-
-    return dash_once(message.update_id, "comment_on_ticker", ticker, comment)
-
-
 def _dash_unbacked(text: str, looked_symbols: set[str], backed_text: str) -> list[str]:
     with connection() as database:
         cited = telegram_resolve_tickers(database, text, limit=8)
@@ -2540,49 +2401,25 @@ def _dash_unbacked(text: str, looked_symbols: set[str], backed_text: str) -> lis
 def _write_telegram_reply(
     message: Any, transcript: list[dict[str, Any]], plan: Any, now: datetime
 ) -> dict[str, Any]:
-    """Load what the plan needs, act if it says so, then write the words."""
-
+    """Use the decision as a starting point for Dash's own research and judgment."""
     with connection() as database:
         grounded = telegram_prefetch_for(message, database)
-    looked_symbols = {
-        str(item.get("ticker") or "").strip().upper().lstrip("$")
-        for item in grounded.get("looked_up") or []
-        if item.get("ticker")
-    }
-    looked_symbols.discard("")
-    looked_text = [json.dumps(grounded, default=str)]
-    loaded: dict[str, Any] = {}
-    node = plan.node
-    if node and node.startswith("ticker:") and node.split(":", 1)[1] in looked_symbols:
-        node = None  # the prefetch already looked it up
+    evidence = _dash_evidence(grounded)
+    loaded = {}
+    node = dash_research.canonical_node(plan.node)
     if node:
-        loaded[node] = dash_expand(node)
-        looked_text.append(json.dumps(loaded[node], default=str))
-        if node.startswith("coin:"):
-            looked_text.append(node.split(":", 1)[1])
-        if node.startswith("ticker:"):
-            looked_symbols.add(node.split(":", 1)[1].upper())
-    action_result = None
-    if plan.mutation:
-        action_result = {
-            "did": plan.mutation,
-            "ticker": plan.ticker,
-            "result": _run_dash_mutation(message, plan, {**grounded, "loaded": loaded}),
-        }
-        looked_text.append(json.dumps(action_result, default=str))
-        if plan.ticker:
-            looked_symbols.add(str(plan.ticker).upper())
-    clock = market_clock(now)
+        if node not in evidence:
+            evidence[node] = dash_expand(node)
+        loaded[node] = evidence[node]
     context = {
-        "market_session": {
-            "label": clock["label"],
-            "eastern_now": clock["eastern_now"],
-            "next_label": clock["next_label"],
-            "next_at": clock["next_at"],
-        },
+        "market_session": market_clock(now),
         "already_looked_up": grounded,
         "loaded": loaded,
-        **({"your_action": action_result} if action_result else {}),
+        "suggested_action": {"tool": plan.mutation, "ticker": plan.ticker},
+        "instruction": (
+            "Investigate the question and form your own view. Use a suggested public "
+            "action when your evidence supports it. State the result if you act."
+        ),
         "room": {
             "speaker": message.user_name,
             "said": message.text,
@@ -2591,19 +2428,32 @@ def _write_telegram_reply(
             "recent": transcript[-6:],
         },
     }
-    text = _dash_write(DASH_REPLY_INSTRUCTION, context)
-    unbacked = _dash_unbacked(text, looked_symbols, "\n".join(looked_text)) if text else []
-    if unbacked:
-        # One rewrite. Code knows what was loaded, so it names what was not.
-        text = _dash_write(
-            DASH_REPLY_INSTRUCTION
-            + " Your draft named "
-            + ", ".join(unbacked)
-            + " but nothing about it was loaded. Rewrite the reply without it, or say "
-            "you have not looked it up. Do not state numbers that are not in the data.",
-            {**context, "draft": text},
-        )
-    return {"action": "reply", "text": text}
+    allowed = {"reply", "expand", "my_standing"}
+    if plan.mutation:
+        allowed.add(plan.mutation)
+
+    def act(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if name != "my_standing":
+            ticker = str(args.get("ticker") or "").strip().upper().lstrip("$")
+            if name != plan.mutation or ticker != str(plan.ticker).upper():
+                return {"error": "This action is scoped to the planned ticker."}
+        return _dash_research_action(message, name, args)
+
+    return dash_research.run_research(
+        context=context,
+        persona=CHEETAH_PERSONA,
+        tools=[tool for tool in TELEGRAM_TOOL_SCHEMA if tool["name"] in allowed],
+        complete=_telegram_chat_completion,
+        model=_dash_model(),
+        expand=dash_expand,
+        unbacked=_dash_research_unbacked,
+        evidence=evidence,
+        scope=dash_research.research_scope(message.chat_id, message.message_thread_id),
+        job_key=f"telegram:{message.update_id}",
+        act=act,
+        allow_text=True,
+        at=now,
+    )
 
 
 def _decide_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2613,6 +2463,12 @@ def _decide_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dic
     falls back to the tool-loop turn, so the room never goes silent.
     """
 
+    saved = dash_jobs.completed_result(
+        f"telegram:{message.update_id}",
+        dash_research.research_scope(message.chat_id, message.message_thread_id),
+    )
+    if saved:
+        return saved
     now = datetime.now(UTC)
     try:
         with connection() as database:
@@ -2703,47 +2559,57 @@ DASH_DESK_NOTE_MIN_GAP_SECONDS = max(600, int(os.getenv("DASH_DESK_NOTE_MIN_GAP_
 
 
 def _generate_desk_note(world: dict[str, Any]) -> str:
-    """Ask Dash for one short, unprompted note about what changed."""
-
-    body = {
-        "model": _dash_model(),
-        "messages": [
-            {"role": "system", "content": CHEETAH_PERSONA},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "task": "desk_note",
-                        "instruction": (
-                            "Nobody asked you anything. Write one short desk note "
-                            "about what changed in the world, under 60 words, plain "
-                            "text with a new line for each separate thought, no "
-                            "markdown, no advice, no list of commands. If nothing "
-                            "is worth saying, return an empty string."
-                        ),
-                        "world": world,
-                    },
-                    separators=(",", ":"),
-                    default=str,
-                ),
-            },
+    """Research a change or revisit an idea, then share Dash's own take."""
+    result = dash_research.run_research(
+        context={
+            "task": "desk_research",
+            "instruction": (
+                "This is time at your own desk. Choose a question from your own direction, "
+                "the wider world, recent changes, or due theses. "
+                "Expand the evidence, form your own take, and save a thesis worth following. "
+                "Review due theses with fresh lookups. Update or close each reviewed thesis. "
+                "Post when you have a material finding, a changed view, or a useful new idea. "
+                "Choose how to express the finding. Use set_direction when your focus or "
+                "voice evolves, and choose your next question and check time. Hold when "
+                "quiet is useful. The previous note supplies continuity."
+            ),
+            "world": world,
+        },
+        persona=CHEETAH_PERSONA,
+        tools=[
+            tool for tool in TELEGRAM_TOOL_SCHEMA if tool["name"] in {"expand", "reply", "hold"}
         ],
-        # Same caution as the chat turn: a router model may fail these options.
-        "provider": {"require_parameters": True, "zdr": True},
-        # Room for the model's reasoning as well as the note: a contract address
-        # alone is dozens of tokens, and a tight cap cut notes off mid-address.
-        "max_tokens": 700,
-    }
-    result = _telegram_chat_completion(body)
-    first = (result.get("choices") or [{}])[0]
-    note = str((first.get("message") or {}).get("content") or "").strip()
-    if first.get("finish_reason") == "length":
-        note = _whole_sentences(note)
-    return note
+        complete=_telegram_chat_completion,
+        model=_dash_model(),
+        expand=dash_expand,
+        unbacked=_dash_research_unbacked,
+        evidence={
+            "world": {
+                key: value
+                for key, value in world.items()
+                if key
+                not in {
+                    "due_theses",
+                    "previous_note",
+                    "research_scope",
+                    "research_time",
+                    "research_job",
+                    "research_chat_id",
+                }
+            }
+        },
+        scope=world.get("research_scope"),
+        job_key=world.get("research_job"),
+        job_chat_id=world.get("research_chat_id"),
+        proactive=True,
+        allow_text=True,
+        at=_stamp(world.get("research_time")),
+    )
+    return str(result.get("text") or "") if result["action"] == "reply" else ""
 
 
 def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
-    """The proactive tick: speak in the room only when the world changed."""
+    """Research changes and due ideas, then share material findings with the room."""
 
     if not DASH_DESK_NOTES_ENABLED or not OPENROUTER_API_KEY:
         return {"status": "off"}
@@ -2753,31 +2619,107 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     chat_id = telegram_room_chat_id()
     if chat_id is None:
         return {"status": "no_room"}
+    from dataclasses import replace
+
+    from runner_web.telegram_outbox import deliver_outbox, enqueue_cards
+
     current = at or now()
+    room_config = replace(config, chat_id=str(chat_id))
+
+    def deliver():
+        def sender(target, text):
+            with connection() as database:
+                body, preview = _dash_reply_markup(database, text)
+            return send_telegram_reply(
+                target, chat_id, text, html=body, preview_url=preview, confirmed=True
+            )
+
+        result = deliver_outbox(room_config, sender, at=current, kinds=("dash_research",))
+        if result["status"] == "sent":
+            note = result["items"][0]["text"]
+            worker_state("dash_desk_note_last_at", current.isoformat())
+            worker_state("dash_desk_note_last_note", note[:3500])
+        return result
+
+    # Recover frozen findings before considering new research or quiet-time gates.
+    pending = deliver()
+    if pending["status"] != "empty":
+        return pending
     with connection() as database:
-        row = database.execute(
-            "SELECT value FROM worker_state WHERE key='dash_desk_note_last_at'"
+        rows = database.execute(
+            "SELECT key,value FROM worker_state "
+            "WHERE key IN ('dash_desk_note_last_at','dash_desk_note_last_note')"
+        ).fetchall()
+    saved = {row["key"]: row["value"] for row in rows}
+    with connection() as database:
+        finding = database.execute(
+            "SELECT o.text,o.status,o.created_at FROM telegram_outbox o "
+            "JOIN telegram_outbox_items i ON i.outbox_id=o.id "
+            "WHERE o.chat_id=? AND i.kind='dash_research' "
+            "ORDER BY o.created_at DESC,o.id DESC LIMIT 1",
+            (str(chat_id),),
         ).fetchone()
-    last_at = _stamp(row["value"]) if row else None
-    if last_at and (current - last_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS:
+    if finding:
+        saved["dash_desk_note_last_note"] = finding["text"]
+        saved["dash_desk_note_last_at"] = max(
+            saved.get("dash_desk_note_last_at", ""), finding["created_at"]
+        )
+    last_at = _stamp(saved.get("dash_desk_note_last_at"))
+    scope = dash_research.research_scope(chat_id)
+    active = dash_jobs.active_desk_key(scope)
+    if (
+        not active
+        and last_at
+        and (current - last_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS
+    ):
         return {"status": "waiting"}
     world = dash_world(current)
-    if not world["changes"]["any"]:
+    due = dash_research.due_notes(dash_research.notebook(scope, current), current)
+    curiosity_due = dash_direction.due(scope, current)
+    if not active and not world["changes"]["any"] and not due and not curiosity_due:
         return {"status": "quiet"}
-    if DASH_DECISIONS_ENABLED and _desk_note_gate(world, current) is False:
+    if (
+        not active
+        and not due
+        and not curiosity_due
+        and DASH_DECISIONS_ENABLED
+        and _desk_note_gate(world, current) is False
+    ):
         return {"status": "held", "detail": "not_worth_speaking"}
+    identity = active or "desk:" + uuid.uuid4().hex
+    world = {
+        **world,
+        "research_scope": scope,
+        "research_time": current.isoformat(),
+        "research_job": identity,
+        "research_chat_id": chat_id,
+        "due_theses": due,
+        "self_directed_review": curiosity_due,
+        "previous_note": saved.get("dash_desk_note_last_note", ""),
+        "previous_delivery_status": finding["status"] if finding else "unknown",
+    }
     try:
         note = _generate_desk_note(world)
     except Exception as exc:
         return {"status": "error", "detail": type(exc).__name__}
-    if not note:
-        return {"status": "held"}
+    if not note or note == saved.get("dash_desk_note_last_note"):
+        return {"status": "pending" if dash_jobs.active_desk_key(scope) else "held"}
+    # The research completion enqueues atomically. This also accepts alternate generators.
     with connection() as database:
-        body, preview = _dash_reply_markup(database, note)
-    send_telegram_reply(config, chat_id, note, html=body, preview_url=preview)
-    worker_state("dash_desk_note_last_at", current.isoformat())
-    worker_state("dash_desk_note_last_note", note[:500])
-    return {"status": "sent", "chars": len(note)}
+        enqueue_cards(
+            database,
+            str(chat_id),
+            [
+                {
+                    "kind": "dash_research",
+                    "subject": f"{scope}:{identity}",
+                    "text": note,
+                    "research_job": identity,
+                }
+            ],
+            at=current,
+        )
+    return deliver()
 
 
 async def dash_desk_note_worker() -> None:
@@ -2785,6 +2727,7 @@ async def dash_desk_note_worker() -> None:
         return
     await asyncio.sleep(180)
     while True:
+        result = {"status": "error"}
         try:
             result = await run_in_threadpool(post_dash_desk_note)
             worker_state("dash_desk_note_last_run", json.dumps(result, separators=(",", ":")))
@@ -2792,7 +2735,10 @@ async def dash_desk_note_worker() -> None:
             raise
         except Exception as exc:
             worker_state("dash_desk_note_last_error", str(exc)[:500])
-        await asyncio.sleep(DASH_DESK_NOTE_SECONDS)
+        delay = DASH_DESK_NOTE_SECONDS
+        if result.get("status") in {"pending", "retry", "error", "waiting"}:
+            delay = min(delay, 60)
+        await asyncio.sleep(delay)
 
 
 def _telegram_has_pending() -> bool:
@@ -3047,7 +2993,10 @@ async def memecoin_fast_price_worker() -> None:
 
     while True:
         try:
-            await run_in_threadpool(refresh_watched_prices)
+            result = await run_in_threadpool(refresh_watched_prices)
+            if result.get("status") == "ok" and result.get("count", 0) > 0:
+                for handle in dict.fromkeys(await run_in_threadpool(fill_memecoin_call_orders)):
+                    _invalidate_public_screen_data("caller", handle)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -3090,7 +3039,7 @@ async def memecoin_replay_worker() -> None:
 
     while True:
         try:
-            await run_in_threadpool(render_pending_replays_isolated)
+            await run_memory_heavy_job(render_pending_replays_isolated)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -3104,7 +3053,7 @@ async def market_actor_worker() -> None:
         try:
             board = await run_in_threadpool(_public_pulse_data, limit=40)
             tickers = [str(row.get("ticker")) for row in board.get("rows", []) if row.get("ticker")]
-            result = await run_in_threadpool(derive_market_actors, tickers=tickers)
+            result = await run_memory_heavy_job(derive_market_actors, tickers=tickers)
             worker_state("market_actor_last_run", json.dumps(result, separators=(",", ":")))
             worker_state("market_actor_last_error", "")
         except asyncio.CancelledError:
@@ -3132,7 +3081,7 @@ async def sports_ingestion_worker() -> None:
     await asyncio.sleep(5)
     while True:
         try:
-            result = await run_in_threadpool(refresh_sports)
+            result = await run_memory_heavy_job(refresh_sports)
             worker_state("sports_last_refresh", json.dumps(result, separators=(",", ":")))
             worker_state("sports_last_error", "")
         except asyncio.CancelledError:

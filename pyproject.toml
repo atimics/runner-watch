@@ -67,7 +67,7 @@ stonks-tree-challenger = "runner_web.tree_challenger:main"
 stonks-tree-ranker = "runner_web.tree_ranker:main"
 
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=84.1.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
