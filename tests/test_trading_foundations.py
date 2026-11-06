@@ -4,12 +4,40 @@ from unittest.mock import patch
 
 from runner_trading import ledger
 from runner_trading.config import Policy
-from runner_web import deployment_check, memecoin_fast_prices, memecoin_store, memecoins
+from runner_web import (
+    dash_jobs,
+    db,
+    deployment_check,
+    memecoin_fast_prices,
+    memecoin_store,
+    memecoins,
+)
 from runner_web.db import connection
 from runner_web.memecoin_calls import expire_memecoin_calls
 from tests.test_call_expiry import _database, _quote_history, _stale_memecoin_call
 from tests.test_memecoin_fast_prices import AT, fast_chain, seed_board
 from tests.test_memecoin_fast_prices import market_db as market_db
+
+
+def test_trading_upgrade_preserves_existing_dash_research(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "upgrade.db")
+    with monkeypatch.context() as earlier:
+        earlier.setattr(db, "MIGRATIONS", tuple(m for m in db.MIGRATIONS if m.version <= 105))
+        db.init_db()
+    claim = dash_jobs.claim("keep-research", "chat:1:topic:0", "chat", AT)
+    db.init_db()
+    with connection() as database:
+        versions = {
+            row["version"]: row["name"]
+            for row in database.execute("SELECT version,name FROM schema_migrations")
+        }
+        saved = database.execute(
+            "SELECT lease_token FROM dash_research_jobs WHERE id='keep-research'"
+        ).fetchone()
+    assert versions[105] == "dash_research_jobs"
+    assert versions[106] == "solana_trading"
+    assert saved["lease_token"] == claim["token"]
+    assert ledger.ensure_account("paper", Policy(), AT)["mode"] == "paper"
 
 
 def test_open_calls_receive_prices_after_leaving_the_board(market_db, monkeypatch):

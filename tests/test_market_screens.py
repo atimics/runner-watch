@@ -359,13 +359,14 @@ def test_list_exposes_score_and_breakdown_without_internal_fields():
     assert SENTINEL not in html
 
 
-def test_old_assessment_price_is_explained_on_list_and_detail():
+@pytest.mark.parametrize("reason", ["stale_quote", "stale_assessment"])
+def test_old_assessment_price_is_explained_on_list_and_detail(reason):
     item = scored_stock(
         trade_state="WATCH",
         stage="WATCH",
         eligibility={
             "state": "unknown",
-            "reasons": [{"code": "stale_quote", "label": "Quote is not current"}],
+            "reasons": [{"code": reason, "label": "Quote is not current"}],
         },
         eligibility_note="Quote is not current",
         quote_as_of="2026-09-23T14:15:00Z",
@@ -374,7 +375,7 @@ def test_old_assessment_price_is_explained_on_list_and_detail():
     board = listing("stocks", [item])
     assert board["stale_assessments"] == 1
     assert board["rows"][0]["tag"] == "PAUSED"
-    assert "1 stock assessment uses an older price" in render(board)
+    assert "1 stock assessment needs a refresh" in render(board)
 
     screen = detail("stocks", {"ticker": "OPK", "company": "OPKO Health", "current": item})
     html = render(screen)

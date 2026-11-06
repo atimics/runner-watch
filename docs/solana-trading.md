@@ -153,7 +153,7 @@ uv run pytest -o addopts= -m browser tests/test_browser_trading.py
 Tests cover reservations, restart recovery, one settlement per order, missing
 exit routes, stale evidence, holder aggregation, transaction validation,
 provider timeouts, expiry, finalized failures, operator access, and the desk at
-320, 390, and 1,440 pixels. Migration 105 supports SQLite and PostgreSQL.
+320, 390, and 1,440 pixels. Migration 106 supports SQLite and PostgreSQL.
 
 Provider contracts: [Jupiter order and execute](https://developers.jup.ag/docs/swap/order-and-execute),
 [Jupiter v6 CPI interface](https://github.com/jup-ag/jupiter-cpi/blob/main/idl.json),

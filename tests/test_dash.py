@@ -842,7 +842,7 @@ def test_recent_actions_reads_dashs_chat_log():
     assert actions and actions[0]["action"] == "reply"
 
 
-def test_the_desk_note_speaks_only_when_something_changed(monkeypatch):
+def test_the_desk_note_waits_for_changes_between_scheduled_reviews(monkeypatch):
     from runner_web import main as web_main
 
     monkeypatch.setattr(web_main, "DASH_DESK_NOTES_ENABLED", True)
@@ -854,10 +854,15 @@ def test_the_desk_note_speaks_only_when_something_changed(monkeypatch):
     monkeypatch.setattr(
         web_main,
         "send_telegram_reply",
-        lambda config, chat_id, text, **_: sent.append((chat_id, text)),
+        lambda config, chat_id, text, **_: sent.append((chat_id, text)) or 42,
     )
     monkeypatch.setattr(web_main, "dash_world", lambda *a, **k: {"changes": {"any": True}})
     monkeypatch.setattr(web_main, "_generate_desk_note", lambda world: "Something moved.")
+
+    with connection() as database:
+        web_main.dash_direction.finish(
+            database, web_main.dash_research.research_scope(123), None, NOW, explored=True
+        )
 
     result = web_main.post_dash_desk_note(at=NOW)
 
@@ -1234,25 +1239,38 @@ def test_a_desk_note_cut_off_by_the_token_cap_keeps_only_whole_sentences(monkeyp
     from runner_web import main as web_main
 
     cut = "NCPL flying 246 percent on a fresh 8-K. One memecoin, PvgENd3WRfbuuEsMTj"
-    monkeypatch.setattr(
-        web_main,
-        "_telegram_chat_completion",
-        lambda body: {"choices": [{"message": {"content": cut}, "finish_reason": "length"}]},
-    )
+    monkeypatch.setattr(web_main, "dash_expand", lambda node: {"known": True, "price": 2})
+
+    def completion(text, finish):
+        def generate(body):
+            if not any(message["role"] == "tool" for message in body["messages"]):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "id": "lookup",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "expand",
+                                            "arguments": '{"node":"ticker:NCPL"}',
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            return {"choices": [{"message": {"content": text}, "finish_reason": finish}]}
+
+        return generate
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion(cut, "length"))
     assert web_main._generate_desk_note({}) == "NCPL flying 246 percent on a fresh 8-K."
-
-    monkeypatch.setattr(
-        web_main,
-        "_telegram_chat_completion",
-        lambda body: {"choices": [{"message": {"content": "Up 21."}, "finish_reason": "length"}]},
-    )
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion("Up 21.", "length"))
     assert web_main._generate_desk_note({}) == ""
-
-    monkeypatch.setattr(
-        web_main,
-        "_telegram_chat_completion",
-        lambda body: {"choices": [{"message": {"content": cut}, "finish_reason": "stop"}]},
-    )
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion(cut, "stop"))
     assert web_main._generate_desk_note({}) == cut
 
 

@@ -182,7 +182,7 @@
     }
     return tone;
   }
-  function paintStates(data, coords) {
+  function paintStates(data, coords, breaks = new Set()) {
     if (!chart) return;
     chart.querySelectorAll('.chart-state').forEach(node => node.remove());
     if (!chartStates.length || data.length < 2) return;
@@ -201,7 +201,8 @@
     };
     data.forEach((point, index) => {
       const tone = toneAt(point[0]);
-      if (tone !== runTone) { flush(); runTone = tone; }
+      if (breaks.has(index)) { flush(); run = []; runTone = tone; }
+      else if (tone !== runTone) { flush(); runTone = tone; }
       run.push(coords[index]);
     });
     flush();
@@ -230,6 +231,43 @@
     line.setAttribute('d', points.map((point, index) => `${index ? 'L' : 'M'}${x(point.t).toFixed(2)},${y(point.price).toFixed(2)}`).join(''));
     const base = chart.querySelector('.chart-line');
     if (base) { base.before(band); base.after(line); } else { chart.append(band, line); }
+  }
+  /* A stretch with no saved prices is shown as a hole, not a straight line: the
+     line breaks, a faint band covers the missing time and a dotted joiner keeps
+     the price levels readable. A hole is longer than a long weekend and four
+     times the longest usual step, so market closes and overnights stay joined. */
+  const HOLE_MIN_MS = 4 * 24 * 3600 * 1000;
+  function holesIn(data) {
+    if (data.length < 3) return [];
+    const steps = data.slice(1).map((point, i) => point[0] - data[i][0]).sort((a, b) => a - b);
+    const usual = steps[Math.floor(steps.length * 0.9)];
+    const holes = [];
+    for (let i = 1; i < data.length; i++) {
+      const step = data[i][0] - data[i - 1][0];
+      if (step > HOLE_MIN_MS && step > usual * 4) holes.push(i);
+    }
+    return holes;
+  }
+  function drawHoles(data, holes, projector) {
+    chart.querySelectorAll('.chart-hole').forEach(node => node.remove());
+    const ns = 'http://www.w3.org/2000/svg';
+    const [x, y] = projector;
+    const base = chart.querySelector('.chart-area');
+    holes.forEach(index => {
+      const [t0, v0] = data[index - 1], [t1, v1] = data[index];
+      const band = document.createElementNS(ns, 'rect');
+      Object.entries({x: x(t0).toFixed(2), y: 0, width: (x(t1) - x(t0)).toFixed(2), height: 280, class: 'chart-hole chart-hole-band'})
+        .forEach(([key, value]) => band.setAttribute(key, value));
+      const title = document.createElementNS(ns, 'title');
+      const day = t => new Date(t).toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'});
+      title.textContent = `No saved prices, ${day(t0)} to ${day(t1)}`;
+      band.append(title);
+      const joiner = document.createElementNS(ns, 'path');
+      joiner.setAttribute('class', 'chart-hole chart-hole-line');
+      joiner.setAttribute('d', `M${x(t0).toFixed(2)},${y(v0).toFixed(2)}L${x(t1).toFixed(2)},${y(v1).toFixed(2)}`);
+      if (base) base.before(band); else chart.prepend(band);
+      chart.querySelector('.chart-line').after(joiner);
+    });
   }
   function draw(points, gap) {
     if (!chart) return;
@@ -260,12 +298,19 @@
     const move = ((last / first - 1) * 100).toLocaleString('en-US', {signDisplay:'always', maximumFractionDigits:6});
     const summary = data.length === 1 ? `One saved price: ${money(first)}` : `${money(first)} → ${money(last)} · ${move}%`;
     const liveNote = data.length ? `${label(start)}${data.length > 1 ? ' to ' + label(data[data.length-1][0]) : ''}.` : '';
-    chart.setAttribute('aria-label', `Price history: ${summary}. ${liveNote}${gapPoints.length ? ' ' + (gap.label || 'Dashed line is our projection over the price gap.') : ''}`);
+    const holes = holesIn(data), holeCount = holes.length;
+    const holeNote = holeCount ? ` ${holeCount === 1 ? 'One stretch has' : holeCount + ' stretches have'} no saved prices.` : '';
+    chart.setAttribute('aria-label', `Price history: ${summary}. ${liveNote}${holeNote}${gapPoints.length ? ' ' + (gap.label || 'Dashed line is our projection over the price gap.') : ''}`);
     const coords = data.map(p=>[projectX(p[0]), projectY(p[1])]);
-    const line = coords.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
-    chart.querySelector('.chart-line').setAttribute('d',line);
-    chart.querySelector('.chart-area').setAttribute('d',data.length === 1 ? '' : `${line} L792,280 L8,280 Z`);
-    paintStates(data, coords);
+    const breaks = new Set(holes);
+    const pieces = [];
+    coords.forEach((p, i) => { if (!i || breaks.has(i)) pieces.push([]); pieces[pieces.length - 1].push(p); });
+    const trace = piece => piece.map((p,i)=>`${i?'L':'M'}${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(' ');
+    chart.querySelector('.chart-line').setAttribute('d',pieces.map(trace).join(' '));
+    chart.querySelector('.chart-area').setAttribute('d',data.length === 1 ? '' : pieces.filter(piece => piece.length > 1)
+      .map(piece => `${trace(piece)} L${piece[piece.length-1][0].toFixed(2)},280 L${piece[0][0].toFixed(2)},280 Z`).join(' '));
+    drawHoles(data, holes, [projectX, projectY]);
+    paintStates(data, coords, breaks);
     dot.toggleAttribute('hidden', data.length !== 1); dot.setAttribute('cx', '400'); dot.setAttribute('cy', '140');
     drawGap(gap, [projectX, projectY]);
     chart.removeAttribute('hidden'); status.hidden = true;

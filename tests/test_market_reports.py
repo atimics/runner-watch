@@ -724,7 +724,7 @@ def test_the_scan_interval_is_the_cadence_not_a_gap_after_the_work(
             raise asyncio.CancelledError
 
     monkeypatch.setattr(web_main, "scan_collection_allowed", lambda _moment: True)
-    monkeypatch.setattr(web_main, "run_in_threadpool", run)
+    monkeypatch.setattr(web_main, "run_memory_heavy_job", run)
     monkeypatch.setattr(web_main, "worker_state", lambda *_args: None)
     monkeypatch.setattr(web_main.time, "monotonic", monotonic)
     monkeypatch.setattr(web_main.asyncio, "sleep", sleep)
@@ -760,7 +760,7 @@ def test_a_scan_that_overruns_the_interval_still_gets_a_gap(
             raise asyncio.CancelledError
 
     monkeypatch.setattr(web_main, "scan_collection_allowed", lambda _moment: True)
-    monkeypatch.setattr(web_main, "run_in_threadpool", run)
+    monkeypatch.setattr(web_main, "run_memory_heavy_job", run)
     monkeypatch.setattr(web_main, "worker_state", lambda *_args: None)
     monkeypatch.setattr(web_main.time, "monotonic", monotonic)
     monkeypatch.setattr(web_main.asyncio, "sleep", sleep)

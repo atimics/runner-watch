@@ -43,7 +43,7 @@ from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
-from runner_web import attention
+from runner_web import attention, dash_direction, dash_jobs, dash_research, pulse_scoring
 from runner_web import db as runner_db
 from runner_web import decisions as openrouter_decisions
 from runner_web.account_routes import (
@@ -194,6 +194,7 @@ from runner_web.market_actors import (
 from runner_web.market_clock import market_clock
 from runner_web.market_commentary import generate_report_commentary
 from runner_web.market_forecasts import generate_market_forecasts, settle_market_forecasts
+from runner_web.market_marks import usable_market_mark as _usable_market_mark
 from runner_web.market_reports import (
     REPORT_LABELS,
     REPORT_SLUGS,
@@ -261,13 +262,37 @@ from runner_web.process_memory import (
     peak_rss_mb,
     rss_mb,
     run_in_threadpool,
+    run_memory_heavy_job,
 )
 from runner_web.product_catalog import roadmap_snapshot
-from runner_web.product_policy import BASE_RATES, EVIDENCE_GATE, OPERATIONS
+from runner_web.product_policy import BASE_RATES, OPERATIONS
 from runner_web.pseudonyms import (
     comment_avatar_ability,
     comment_avatar_profile,
     ensure_comment_avatar,
+)
+from runner_web.pulse_scoring import (  # noqa: F401 (existing module imports)
+    FILING_SENTIMENT_BASIS,
+    PUBLIC_SCORE_DRIVERS,
+    PUBLIC_SCORE_PENALTIES,
+    _event_payload,
+    _event_timestamp,
+    _nonnegative_event_count,
+)
+from runner_web.pulse_scoring import (
+    baseline_summary as _baseline_summary,  # noqa: F401
+)
+from runner_web.pulse_scoring import (
+    directional_thesis as _ranker_directional_thesis,
+)
+from runner_web.pulse_scoring import (
+    evidence_gate as _evidence_gate,
+)
+from runner_web.pulse_scoring import (
+    external_event_label as _external_event_label,
+)
+from runner_web.pulse_scoring import (
+    public_score_detail as _public_score_detail,
 )
 from runner_web.quotes import (
     HOT_SET_LIMIT as HOT_QUOTE_LIMIT,
@@ -1766,25 +1791,25 @@ async def outcome_worker() -> None:
     while True:
         try:
             await asyncio.wait_for(
-                run_in_threadpool(refresh_outcomes),
+                run_memory_heavy_job(refresh_outcomes),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             await asyncio.wait_for(
-                run_in_threadpool(refresh_scan_outcomes),
+                run_memory_heavy_job(refresh_scan_outcomes),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             flash_results = await asyncio.wait_for(
-                run_in_threadpool(refresh_flash_forecasts),
+                run_memory_heavy_job(refresh_flash_forecasts),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             if any(flash_results.get(key) for key in ("resolved", "voided", "reviewed")):
                 _invalidate_runners_feeds("pulse")
             await asyncio.wait_for(
-                run_in_threadpool(prune_storage),
+                run_memory_heavy_job(prune_storage),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
             await asyncio.wait_for(
-                run_in_threadpool(prune_collection_history),
+                run_memory_heavy_job(prune_collection_history),
                 timeout=OUTCOME_REFRESH_TIMEOUT_SECONDS,
             )
         except asyncio.CancelledError:
@@ -1851,7 +1876,7 @@ async def scan_collection_worker() -> None:
             continue
         started = time.monotonic()
         try:
-            result = await run_in_threadpool(run_scan, "penny")
+            result = await run_memory_heavy_job(run_scan, "penny")
             worker_state("background_scan_last_run", str(result.get("scan_run_id") or "cached"))
             worker_state("background_scan_last_error", "")
             if SWARM_RUNTIME is not None and SWARM_RUNTIME.config.publish_scan_claims:
@@ -1917,7 +1942,7 @@ async def price_gap_worker() -> None:
     while True:
         delay = PRICE_GAP_INTERVAL_SECONDS
         try:
-            result = await run_in_threadpool(refresh_price_gaps)
+            result = await run_memory_heavy_job(refresh_price_gaps)
             worker_state("price_gap_last_refresh", json.dumps(result, separators=(",", ":")))
             worker_state("price_gap_last_error", "")
         except asyncio.CancelledError:
@@ -2053,7 +2078,7 @@ def _act_on_telegram_message(
                 html=body,
                 preview_url=preview,
             )
-            telegram_record_action(database, message, "reply", text[:200], now)
+            telegram_record_action(database, message, "reply", text[:3500], now)
             telegram_spend_engagement(database, message.chat_id, message.user_id, now)
             return "reply"
     if action == "react":
@@ -2077,7 +2102,7 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
     bot_username, bot_id = identity
     config = telegram_config_from_env()
     with connection() as database:
-        updates = telegram_pending_updates(database)
+        updates = telegram_pending_updates(database, now=at)
     tick_deadline = time.monotonic() + TELEGRAM_TICK_SECONDS
     for row in updates:
         # Each update is judged at the moment it is read. Sharing one timestamp
@@ -2102,6 +2127,16 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
         counts["seen"] += 1
         with connection() as database:
             attention = telegram_attention_for(database, message, now)
+            researching = database.execute(
+                "SELECT 1 FROM dash_research_jobs WHERE id=?",
+                (f"telegram:{message.update_id}",),
+            ).fetchone()
+            if researching and attention.reason in {
+                "hourly_budget",
+                "hourly_turn_budget",
+                "cooldown",
+            }:
+                continue
             if attention.consider and time.monotonic() >= tick_deadline:
                 # Out of time for model turns. Skips above and below still finish;
                 # this one stays pending for the next tick.
@@ -2115,7 +2150,7 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
                 before_update_id=message.update_id,
                 message_thread_id=message.message_thread_id,
             )
-        if not attention.consider:
+        if not attention.consider and not (researching and attention.reason == "not_addressed"):
             if message.addresses and attention.reason != "muted":
                 from runner_web.dash_intake import ingest_message
 
@@ -2153,6 +2188,8 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
                     if generate
                     else {"action": "hold", "why": "no model configured"}
                 )
+            if decision.get("action") == "retry":
+                continue
             with connection() as database:
                 outcome = _act_on_telegram_message(database, config, message, decision, now)
                 telegram_finish_update(database, update_id, "handled", now=now)
@@ -2190,26 +2227,47 @@ def _dash_model() -> str:
     return os.getenv("DASH_MODEL", "").strip() or FLASH.model
 
 
+def _dash_evidence(grounded: dict[str, Any]) -> dict[str, Any]:
+    evidence = {}
+    for item in grounded.get("looked_up") or []:
+        node = dash_research.canonical_node("ticker:" + str(item.get("ticker") or ""))
+        if node:
+            evidence[node] = item
+    for item in grounded.get("looked_up_coins") or []:
+        address = item.get("contract_address") or item.get("query")
+        node = dash_research.canonical_node("coin:" + str(address or ""))
+        if node:
+            evidence[node] = item
+    return evidence
+
+
+def _dash_research_unbacked(text: str, evidence: dict[str, Any]) -> list[str]:
+    symbols = {key.split(":", 1)[1] for key in evidence if key.startswith("ticker:")}
+    return _dash_unbacked(text, symbols, json.dumps(evidence, default=str))
+
+
+def _dash_research_action(message: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    if name == "my_standing":
+        return {"budget": dash_budget(), "open_calls": dash_open_calls()}
+    ticker = str(args.get("ticker") or "").strip().upper().lstrip("$")
+    if name == "make_call":
+        return dash_once(message.update_id, name, ticker, lambda: dash_make_call(ticker))
+    if name == "close_call":
+        return dash_once(message.update_id, name, ticker, lambda: dash_close_call(ticker))
+    if name == "comment_on_ticker":
+        return dash_once(
+            message.update_id,
+            name,
+            ticker,
+            lambda: dash_comment(ticker, str(args.get("body") or "")),
+        )
+    return {"error": "Choose an available action."}
+
+
 def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
-    """Ask the model what the cheetah does with one message.
-
-    The model chooses a tool rather than writing free text, so "say nothing" is a
-    real answer it can give. What the message points at is looked up first and
-    handed over as already_looked_up, so a named ticker costs one model call
-    instead of two and the model has a fixed list of what it is allowed to quote.
-    A reply that names a ticker with nothing behind it gets one more chance to
-    look it up or to say it has not.
-    """
-
-    tools = [{"type": "function", "function": dict(tool)} for tool in TELEGRAM_TOOL_SCHEMA]
+    """Give Dash the room, current evidence, and time to form his own view."""
     with connection() as database:
         grounded = telegram_prefetch_for(message, database)
-    looked_symbols = {
-        str(item.get("ticker") or "").strip().upper().lstrip("$")
-        for item in grounded.get("looked_up") or []
-        if item.get("ticker")
-    }
-    looked_symbols.discard("")
     world = dash_world()
     context = {
         **world,
@@ -2226,132 +2284,20 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
             "your_recent_actions": dash_recent_actions(message.chat_id),
         },
     }
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": CHEETAH_PERSONA},
-        {
-            "role": "user",
-            "content": json.dumps(context, separators=(",", ":"), default=str),
-        },
-    ]
-    # Everything the model was handed or fetched, so an address in a reply can be
-    # checked against it. Numbers are not checked: that stays in the prompt.
-    looked_text = [json.dumps(grounded, default=str), json.dumps(world, default=str)]
-    corrected = False
-    retried_empty = False
-    for _round in range(6):
-        body = {
-            "model": _dash_model(),
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": "required",
-            # A router model (for example typesafe/jev-router) lists no supported
-            # parameters, so these options may make it fail. Try any new
-            # DASH_MODEL on a test chat first.
-            "provider": {"require_parameters": True, "zdr": True},
-            "max_tokens": 700,
-        }
-        result = _telegram_chat_completion(body)
-        choice = (result.get("choices") or [{}])[0].get("message") or {}
-        calls = choice.get("tool_calls") or []
-        if not calls:
-            if retried_empty:
-                return {"action": "reply", "text": "That check hit a problem. Please try again."}
-            retried_empty = True
-            messages.append(
-                {
-                    "role": "user",
-                    "content": "Choose a tool action for this turn: reply, react, hold, or expand.",
-                }
-            )
-            continue
-        call = calls[0]
-        name = str(((call.get("function") or {}).get("name")) or "")
-        try:
-            args = json.loads((call.get("function") or {}).get("arguments") or "{}")
-        except (TypeError, ValueError):
-            args = {}
-        looked: Any = None
-        if name == "expand":
-            node = str(args.get("node") or "")
-            looked = dash_expand(node)
-            key = node.strip().lower()
-            looked_text.append(json.dumps(looked, default=str))
-            if key.startswith("coin:"):
-                looked_text.append(node.strip().split(":", 1)[1])
-            if key.startswith("ticker"):
-                symbol = key.split(":", 1)[1].strip().upper().lstrip("$")
-                if symbol:
-                    looked_symbols.add(symbol)
-        elif name == "my_standing":
-            looked = {"budget": dash_budget(), "open_calls": dash_open_calls()}
-        elif name == "make_call":
-            ticker = str(args.get("ticker") or "")
-            looked = dash_once(message.update_id, name, ticker, lambda t=ticker: dash_make_call(t))
-        elif name == "close_call":
-            ticker = str(args.get("ticker") or "")
-            looked = dash_once(message.update_id, name, ticker, lambda t=ticker: dash_close_call(t))
-        elif name == "comment_on_ticker":
-            ticker = str(args.get("ticker") or "")
-            comment = str(args.get("body") or "")
-            looked = dash_once(
-                message.update_id, name, ticker, lambda t=ticker, c=comment: dash_comment(t, c)
-            )
-        if looked is not None:
-            messages.append(choice)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.get("id"),
-                    "content": json.dumps(looked, separators=(",", ":"), default=str),
-                }
-            )
-            continue
-        if name == "reply":
-            text = str(args.get("text") or "")
-            if not corrected:
-                with connection() as database:
-                    cited = telegram_resolve_tickers(database, text, limit=8)
-                unbacked = [symbol for symbol in cited if symbol not in looked_symbols]
-                backed_text = "\n".join(looked_text)
-                unbacked += [
-                    address
-                    for address in telegram_reply_addresses(text)
-                    if address not in backed_text
-                ]
-                if unbacked:
-                    corrected = True
-                    messages.append(choice)
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call.get("id"),
-                            "content": json.dumps({"held": "no lookup behind this reply"}),
-                        }
-                    )
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "You were about to name "
-                                + ", ".join(unbacked)
-                                + " without having looked it up. Call expand with "
-                                "node ticker:<SYMBOL> (or coin:<ADDRESS>) for it now, "
-                                "or reply saying you "
-                                "have not looked it up. Do not state numbers you did "
-                                "not fetch."
-                            ),
-                        }
-                    )
-                    continue
-            return {"action": "reply", "text": text}
-        if name == "react":
-            return {"action": "react", "emoji": str(args.get("emoji") or "🐆")}
-        return {
-            "action": "hold",
-            "why": str(args.get("why") or ""),
-            "stop": bool(args.get("stop")),
-        }
-    return {"action": "hold", "why": "ran out of lookups"}
+    evidence = {"world": world, **_dash_evidence(grounded)}
+    return dash_research.run_research(
+        context=context,
+        persona=CHEETAH_PERSONA,
+        tools=list(TELEGRAM_TOOL_SCHEMA),
+        complete=_telegram_chat_completion,
+        model=_dash_model(),
+        expand=dash_expand,
+        unbacked=_dash_research_unbacked,
+        evidence=evidence,
+        scope=dash_research.research_scope(message.chat_id, message.message_thread_id),
+        job_key=f"telegram:{message.update_id}",
+        act=lambda name, args: _dash_research_action(message, name, args),
+    )
 
 
 # The decision-model path. Off by default: the Decisions API is alpha and its
@@ -2443,67 +2389,6 @@ def _whole_sentences(text: str) -> str:
     return text[: end + 1] if end >= 0 else ""
 
 
-def _dash_write(instruction: str, context: dict[str, Any], *, max_tokens: int = 700) -> str:
-    """The writing stage: one chat call, no tools, plain words back."""
-
-    body = {
-        "model": _dash_model(),
-        "messages": [
-            {"role": "system", "content": CHEETAH_PERSONA},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {"instruction": instruction, **context},
-                    separators=(",", ":"),
-                    default=str,
-                ),
-            },
-        ],
-        "provider": {"require_parameters": True, "zdr": True},
-        "max_tokens": max_tokens,
-    }
-    result = _telegram_chat_completion(body)
-    first = (result.get("choices") or [{}])[0]
-    text = str((first.get("message") or {}).get("content") or "").strip()
-    if first.get("finish_reason") == "length":
-        text = _whole_sentences(text)
-    return text
-
-
-DASH_REPLY_INSTRUCTION = (
-    "You decided to reply to the message in room.said. You have no tools this turn: "
-    "everything you may quote is in already_looked_up, loaded and your_action. Write "
-    "the reply only, about forty words, plain text, no markdown, a new line for each "
-    "separate thought. Name a stock as $SYMBOL and a coin by its full contract "
-    "address. If something you would need is not in that data, say you have not "
-    "looked rather than guessing. If your_action is present, say what you did."
-)
-
-
-def _run_dash_mutation(message: Any, plan: Any, grounding: dict[str, Any]) -> dict[str, Any]:
-    """Carry out a Call or comment the decision asked for, once per update."""
-
-    ticker = str(plan.ticker or "")
-    if plan.mutation == "make_call":
-        return dash_once(message.update_id, "make_call", ticker, lambda: dash_make_call(ticker))
-    if plan.mutation == "close_call":
-        return dash_once(message.update_id, "close_call", ticker, lambda: dash_close_call(ticker))
-
-    def comment() -> dict[str, Any]:
-        # The body is only written when the comment has not been posted yet.
-        body = _dash_write(
-            "Write one public comment for the page of $"
-            + ticker
-            + ", under 240 characters, plain text, from what is in the data below. "
-            "No advice, no numbers that are not in the data.",
-            {"ticker": ticker, "data": grounding},
-            max_tokens=400,
-        )
-        return dash_comment(ticker, body)
-
-    return dash_once(message.update_id, "comment_on_ticker", ticker, comment)
-
-
 def _dash_unbacked(text: str, looked_symbols: set[str], backed_text: str) -> list[str]:
     with connection() as database:
         cited = telegram_resolve_tickers(database, text, limit=8)
@@ -2517,49 +2402,25 @@ def _dash_unbacked(text: str, looked_symbols: set[str], backed_text: str) -> lis
 def _write_telegram_reply(
     message: Any, transcript: list[dict[str, Any]], plan: Any, now: datetime
 ) -> dict[str, Any]:
-    """Load what the plan needs, act if it says so, then write the words."""
-
+    """Use the decision as a starting point for Dash's own research and judgment."""
     with connection() as database:
         grounded = telegram_prefetch_for(message, database)
-    looked_symbols = {
-        str(item.get("ticker") or "").strip().upper().lstrip("$")
-        for item in grounded.get("looked_up") or []
-        if item.get("ticker")
-    }
-    looked_symbols.discard("")
-    looked_text = [json.dumps(grounded, default=str)]
-    loaded: dict[str, Any] = {}
-    node = plan.node
-    if node and node.startswith("ticker:") and node.split(":", 1)[1] in looked_symbols:
-        node = None  # the prefetch already looked it up
+    evidence = _dash_evidence(grounded)
+    loaded = {}
+    node = dash_research.canonical_node(plan.node)
     if node:
-        loaded[node] = dash_expand(node)
-        looked_text.append(json.dumps(loaded[node], default=str))
-        if node.startswith("coin:"):
-            looked_text.append(node.split(":", 1)[1])
-        if node.startswith("ticker:"):
-            looked_symbols.add(node.split(":", 1)[1].upper())
-    action_result = None
-    if plan.mutation:
-        action_result = {
-            "did": plan.mutation,
-            "ticker": plan.ticker,
-            "result": _run_dash_mutation(message, plan, {**grounded, "loaded": loaded}),
-        }
-        looked_text.append(json.dumps(action_result, default=str))
-        if plan.ticker:
-            looked_symbols.add(str(plan.ticker).upper())
-    clock = market_clock(now)
+        if node not in evidence:
+            evidence[node] = dash_expand(node)
+        loaded[node] = evidence[node]
     context = {
-        "market_session": {
-            "label": clock["label"],
-            "eastern_now": clock["eastern_now"],
-            "next_label": clock["next_label"],
-            "next_at": clock["next_at"],
-        },
+        "market_session": market_clock(now),
         "already_looked_up": grounded,
         "loaded": loaded,
-        **({"your_action": action_result} if action_result else {}),
+        "suggested_action": {"tool": plan.mutation, "ticker": plan.ticker},
+        "instruction": (
+            "Investigate the question and form your own view. Use a suggested public "
+            "action when your evidence supports it. State the result if you act."
+        ),
         "room": {
             "speaker": message.user_name,
             "said": message.text,
@@ -2568,19 +2429,32 @@ def _write_telegram_reply(
             "recent": transcript[-6:],
         },
     }
-    text = _dash_write(DASH_REPLY_INSTRUCTION, context)
-    unbacked = _dash_unbacked(text, looked_symbols, "\n".join(looked_text)) if text else []
-    if unbacked:
-        # One rewrite. Code knows what was loaded, so it names what was not.
-        text = _dash_write(
-            DASH_REPLY_INSTRUCTION
-            + " Your draft named "
-            + ", ".join(unbacked)
-            + " but nothing about it was loaded. Rewrite the reply without it, or say "
-            "you have not looked it up. Do not state numbers that are not in the data.",
-            {**context, "draft": text},
-        )
-    return {"action": "reply", "text": text}
+    allowed = {"reply", "expand", "my_standing"}
+    if plan.mutation:
+        allowed.add(plan.mutation)
+
+    def act(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if name != "my_standing":
+            ticker = str(args.get("ticker") or "").strip().upper().lstrip("$")
+            if name != plan.mutation or ticker != str(plan.ticker).upper():
+                return {"error": "This action is scoped to the planned ticker."}
+        return _dash_research_action(message, name, args)
+
+    return dash_research.run_research(
+        context=context,
+        persona=CHEETAH_PERSONA,
+        tools=[tool for tool in TELEGRAM_TOOL_SCHEMA if tool["name"] in allowed],
+        complete=_telegram_chat_completion,
+        model=_dash_model(),
+        expand=dash_expand,
+        unbacked=_dash_research_unbacked,
+        evidence=evidence,
+        scope=dash_research.research_scope(message.chat_id, message.message_thread_id),
+        job_key=f"telegram:{message.update_id}",
+        act=act,
+        allow_text=True,
+        at=now,
+    )
 
 
 def _decide_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2590,6 +2464,12 @@ def _decide_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> dic
     falls back to the tool-loop turn, so the room never goes silent.
     """
 
+    saved = dash_jobs.completed_result(
+        f"telegram:{message.update_id}",
+        dash_research.research_scope(message.chat_id, message.message_thread_id),
+    )
+    if saved:
+        return saved
     now = datetime.now(UTC)
     try:
         with connection() as database:
@@ -2680,47 +2560,57 @@ DASH_DESK_NOTE_MIN_GAP_SECONDS = max(600, int(os.getenv("DASH_DESK_NOTE_MIN_GAP_
 
 
 def _generate_desk_note(world: dict[str, Any]) -> str:
-    """Ask Dash for one short, unprompted note about what changed."""
-
-    body = {
-        "model": _dash_model(),
-        "messages": [
-            {"role": "system", "content": CHEETAH_PERSONA},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "task": "desk_note",
-                        "instruction": (
-                            "Nobody asked you anything. Write one short desk note "
-                            "about what changed in the world, under 60 words, plain "
-                            "text with a new line for each separate thought, no "
-                            "markdown, no advice, no list of commands. If nothing "
-                            "is worth saying, return an empty string."
-                        ),
-                        "world": world,
-                    },
-                    separators=(",", ":"),
-                    default=str,
-                ),
-            },
+    """Research a change or revisit an idea, then share Dash's own take."""
+    result = dash_research.run_research(
+        context={
+            "task": "desk_research",
+            "instruction": (
+                "This is time at your own desk. Choose a question from your own direction, "
+                "the wider world, recent changes, or due theses. "
+                "Expand the evidence, form your own take, and save a thesis worth following. "
+                "Review due theses with fresh lookups. Update or close each reviewed thesis. "
+                "Post when you have a material finding, a changed view, or a useful new idea. "
+                "Choose how to express the finding. Use set_direction when your focus or "
+                "voice evolves, and choose your next question and check time. Hold when "
+                "quiet is useful. The previous note supplies continuity."
+            ),
+            "world": world,
+        },
+        persona=CHEETAH_PERSONA,
+        tools=[
+            tool for tool in TELEGRAM_TOOL_SCHEMA if tool["name"] in {"expand", "reply", "hold"}
         ],
-        # Same caution as the chat turn: a router model may fail these options.
-        "provider": {"require_parameters": True, "zdr": True},
-        # Room for the model's reasoning as well as the note: a contract address
-        # alone is dozens of tokens, and a tight cap cut notes off mid-address.
-        "max_tokens": 700,
-    }
-    result = _telegram_chat_completion(body)
-    first = (result.get("choices") or [{}])[0]
-    note = str((first.get("message") or {}).get("content") or "").strip()
-    if first.get("finish_reason") == "length":
-        note = _whole_sentences(note)
-    return note
+        complete=_telegram_chat_completion,
+        model=_dash_model(),
+        expand=dash_expand,
+        unbacked=_dash_research_unbacked,
+        evidence={
+            "world": {
+                key: value
+                for key, value in world.items()
+                if key
+                not in {
+                    "due_theses",
+                    "previous_note",
+                    "research_scope",
+                    "research_time",
+                    "research_job",
+                    "research_chat_id",
+                }
+            }
+        },
+        scope=world.get("research_scope"),
+        job_key=world.get("research_job"),
+        job_chat_id=world.get("research_chat_id"),
+        proactive=True,
+        allow_text=True,
+        at=_stamp(world.get("research_time")),
+    )
+    return str(result.get("text") or "") if result["action"] == "reply" else ""
 
 
 def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
-    """The proactive tick: speak in the room only when the world changed."""
+    """Research changes and due ideas, then share material findings with the room."""
 
     if not DASH_DESK_NOTES_ENABLED or not OPENROUTER_API_KEY:
         return {"status": "off"}
@@ -2730,31 +2620,107 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     chat_id = telegram_room_chat_id()
     if chat_id is None:
         return {"status": "no_room"}
+    from dataclasses import replace
+
+    from runner_web.telegram_outbox import deliver_outbox, enqueue_cards
+
     current = at or now()
+    room_config = replace(config, chat_id=str(chat_id))
+
+    def deliver():
+        def sender(target, text):
+            with connection() as database:
+                body, preview = _dash_reply_markup(database, text)
+            return send_telegram_reply(
+                target, chat_id, text, html=body, preview_url=preview, confirmed=True
+            )
+
+        result = deliver_outbox(room_config, sender, at=current, kinds=("dash_research",))
+        if result["status"] == "sent":
+            note = result["items"][0]["text"]
+            worker_state("dash_desk_note_last_at", current.isoformat())
+            worker_state("dash_desk_note_last_note", note[:3500])
+        return result
+
+    # Recover frozen findings before considering new research or quiet-time gates.
+    pending = deliver()
+    if pending["status"] != "empty":
+        return pending
     with connection() as database:
-        row = database.execute(
-            "SELECT value FROM worker_state WHERE key='dash_desk_note_last_at'"
+        rows = database.execute(
+            "SELECT key,value FROM worker_state "
+            "WHERE key IN ('dash_desk_note_last_at','dash_desk_note_last_note')"
+        ).fetchall()
+    saved = {row["key"]: row["value"] for row in rows}
+    with connection() as database:
+        finding = database.execute(
+            "SELECT o.text,o.status,o.created_at FROM telegram_outbox o "
+            "JOIN telegram_outbox_items i ON i.outbox_id=o.id "
+            "WHERE o.chat_id=? AND i.kind='dash_research' "
+            "ORDER BY o.created_at DESC,o.id DESC LIMIT 1",
+            (str(chat_id),),
         ).fetchone()
-    last_at = _stamp(row["value"]) if row else None
-    if last_at and (current - last_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS:
+    if finding:
+        saved["dash_desk_note_last_note"] = finding["text"]
+        saved["dash_desk_note_last_at"] = max(
+            saved.get("dash_desk_note_last_at", ""), finding["created_at"]
+        )
+    last_at = _stamp(saved.get("dash_desk_note_last_at"))
+    scope = dash_research.research_scope(chat_id)
+    active = dash_jobs.active_desk_key(scope)
+    if (
+        not active
+        and last_at
+        and (current - last_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS
+    ):
         return {"status": "waiting"}
     world = dash_world(current)
-    if not world["changes"]["any"]:
+    due = dash_research.due_notes(dash_research.notebook(scope, current), current)
+    curiosity_due = dash_direction.due(scope, current)
+    if not active and not world["changes"]["any"] and not due and not curiosity_due:
         return {"status": "quiet"}
-    if DASH_DECISIONS_ENABLED and _desk_note_gate(world, current) is False:
+    if (
+        not active
+        and not due
+        and not curiosity_due
+        and DASH_DECISIONS_ENABLED
+        and _desk_note_gate(world, current) is False
+    ):
         return {"status": "held", "detail": "not_worth_speaking"}
+    identity = active or "desk:" + uuid.uuid4().hex
+    world = {
+        **world,
+        "research_scope": scope,
+        "research_time": current.isoformat(),
+        "research_job": identity,
+        "research_chat_id": chat_id,
+        "due_theses": due,
+        "self_directed_review": curiosity_due,
+        "previous_note": saved.get("dash_desk_note_last_note", ""),
+        "previous_delivery_status": finding["status"] if finding else "unknown",
+    }
     try:
         note = _generate_desk_note(world)
     except Exception as exc:
         return {"status": "error", "detail": type(exc).__name__}
-    if not note:
-        return {"status": "held"}
+    if not note or note == saved.get("dash_desk_note_last_note"):
+        return {"status": "pending" if dash_jobs.active_desk_key(scope) else "held"}
+    # The research completion enqueues atomically. This also accepts alternate generators.
     with connection() as database:
-        body, preview = _dash_reply_markup(database, note)
-    send_telegram_reply(config, chat_id, note, html=body, preview_url=preview)
-    worker_state("dash_desk_note_last_at", current.isoformat())
-    worker_state("dash_desk_note_last_note", note[:500])
-    return {"status": "sent", "chars": len(note)}
+        enqueue_cards(
+            database,
+            str(chat_id),
+            [
+                {
+                    "kind": "dash_research",
+                    "subject": f"{scope}:{identity}",
+                    "text": note,
+                    "research_job": identity,
+                }
+            ],
+            at=current,
+        )
+    return deliver()
 
 
 async def dash_desk_note_worker() -> None:
@@ -2762,6 +2728,7 @@ async def dash_desk_note_worker() -> None:
         return
     await asyncio.sleep(180)
     while True:
+        result = {"status": "error"}
         try:
             result = await run_in_threadpool(post_dash_desk_note)
             worker_state("dash_desk_note_last_run", json.dumps(result, separators=(",", ":")))
@@ -2769,7 +2736,10 @@ async def dash_desk_note_worker() -> None:
             raise
         except Exception as exc:
             worker_state("dash_desk_note_last_error", str(exc)[:500])
-        await asyncio.sleep(DASH_DESK_NOTE_SECONDS)
+        delay = DASH_DESK_NOTE_SECONDS
+        if result.get("status") in {"pending", "retry", "error", "waiting"}:
+            delay = min(delay, 60)
+        await asyncio.sleep(delay)
 
 
 def _telegram_has_pending() -> bool:
@@ -3024,7 +2994,10 @@ async def memecoin_fast_price_worker() -> None:
 
     while True:
         try:
-            await run_in_threadpool(refresh_watched_prices)
+            result = await run_in_threadpool(refresh_watched_prices)
+            if result.get("status") == "ok" and result.get("count", 0) > 0:
+                for handle in dict.fromkeys(await run_in_threadpool(fill_memecoin_call_orders)):
+                    _invalidate_public_screen_data("caller", handle)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -3067,7 +3040,7 @@ async def memecoin_replay_worker() -> None:
 
     while True:
         try:
-            await run_in_threadpool(render_pending_replays_isolated)
+            await run_memory_heavy_job(render_pending_replays_isolated)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -3081,7 +3054,7 @@ async def market_actor_worker() -> None:
         try:
             board = await run_in_threadpool(_public_pulse_data, limit=40)
             tickers = [str(row.get("ticker")) for row in board.get("rows", []) if row.get("ticker")]
-            result = await run_in_threadpool(derive_market_actors, tickers=tickers)
+            result = await run_memory_heavy_job(derive_market_actors, tickers=tickers)
             worker_state("market_actor_last_run", json.dumps(result, separators=(",", ":")))
             worker_state("market_actor_last_error", "")
         except asyncio.CancelledError:
@@ -3109,7 +3082,7 @@ async def sports_ingestion_worker() -> None:
     await asyncio.sleep(5)
     while True:
         try:
-            result = await run_in_threadpool(refresh_sports)
+            result = await run_memory_heavy_job(refresh_sports)
             worker_state("sports_last_refresh", json.dumps(result, separators=(",", ":")))
             worker_state("sports_last_error", "")
         except asyncio.CancelledError:
@@ -3956,13 +3929,6 @@ def _calls_flash_picks() -> dict[str, Any]:
     )
 
 
-FILING_SENTIMENT_BASIS = (
-    "Filings collected in the past 3 days, by form type. Offerings, late reports, "
-    "proposed sales and insider sales are flagged bearish; no form type is scored "
-    "bullish, so this counts risk flags rather than measuring a balance"
-)
-
-
 def _calls_head_to_head(mine: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     """Both hit rates with their 95% ranges, and Flash against a do-nothing baseline.
 
@@ -4560,303 +4526,6 @@ def _market_trade_pressure(ticker: str) -> dict[str, Any]:
     }
 
 
-def _evidence_gate(
-    current: dict[str, Any],
-    events: list[dict[str, Any]],
-    pressure: dict[str, Any] | None = None,
-    external_context: dict[str, Any] | None = None,
-    base_rates: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    market_checks: list[str] = []
-    blockers: list[str] = []
-    relative_volume = _number(current.get("relative_volume"))
-    recent_relative_volume = _number(current.get("recent_relative_volume"))
-    momentum_15m = _number(current.get("momentum_15m_pct"))
-    acceleration = _number(current.get("momentum_acceleration_pct"))
-    vwap_position = _number(current.get("vwap_position_pct"))
-    breakout = _number(current.get("breakout_pct"))
-    if relative_volume is not None and relative_volume >= 2:
-        market_checks.append("Unusual volume")
-    if recent_relative_volume is not None and recent_relative_volume >= 3:
-        market_checks.append("Volume burst")
-    if momentum_15m is not None and momentum_15m >= 3:
-        market_checks.append("15m momentum")
-    if acceleration is not None and acceleration >= 0.5:
-        market_checks.append("Momentum rising")
-    if vwap_position is not None and vwap_position > 0:
-        market_checks.append("Above VWAP")
-    if breakout is not None and breakout > 0:
-        market_checks.append("Above prior high")
-    if pressure and pressure.get("available") and pressure.get("buy_pressure_pct", 0) >= 60:
-        market_checks.append("Buy pressure")
-
-    positive_primary = current.get("catalyst_sentiment") == "positive" or any(
-        event.get("sentiment") == "positive" for event in events
-    )
-    context = external_context or {}
-    news_count = int(context.get("news_count") or current.get("news_count") or 0)
-    social_mentions = int(
-        context.get("social_mentions") or current.get("external_social_mentions") or 0
-    )
-    call_count = int(current.get("call_count") or 0)
-    comment_count = int(current.get("comment_count") or 0)
-    community_count = call_count + comment_count
-
-    baseline_mode = str((base_rates or {}).get("mode") or "unavailable")
-    notable_metrics = list((base_rates or {}).get("notable_metrics") or [])
-    market_confirmed = bool(market_checks) and (
-        baseline_mode != "empirical" or bool(notable_metrics)
-    )
-    crowd_confirmed = social_mentions > 0 or community_count >= 2
-    family_receipts = [
-        {
-            "family": "market",
-            "label": "Market structure",
-            "status": "confirmed" if market_confirmed else "not_confirmed",
-            "mode": "derived",
-            "source": "market bars",
-            "evidence": market_checks,
-            "base_rate": base_rates,
-        },
-        {
-            "family": "primary",
-            "label": "Primary filing",
-            "status": "confirmed" if positive_primary else "not_confirmed",
-            "mode": "observed",
-            "source": "SEC",
-            "evidence": ["Positive SEC filing"] if positive_primary else [],
-        },
-        {
-            "family": "news",
-            "label": "News coverage",
-            "status": "confirmed" if news_count > 0 else "not_confirmed",
-            "mode": "observed",
-            "source": "news metadata",
-            "evidence": [f"{news_count} fresh article{'s' if news_count != 1 else ''}"]
-            if news_count > 0
-            else [],
-        },
-        {
-            "family": "crowd",
-            "label": "Crowd activity",
-            "status": "confirmed" if crowd_confirmed else "not_confirmed",
-            "mode": "observed",
-            "source": "public social and community",
-            "evidence": [
-                *(
-                    [f"{social_mentions} public mention{'s' if social_mentions != 1 else ''}"]
-                    if social_mentions > 0
-                    else []
-                ),
-                *(
-                    [f"{call_count} public Calls and {comment_count} comments"]
-                    if community_count >= 2
-                    else []
-                ),
-            ],
-        },
-    ]
-    confirmed_families = [
-        receipt for receipt in family_receipts if receipt["status"] == "confirmed"
-    ]
-    checks = [str(receipt["label"]) for receipt in confirmed_families]
-    rug_score = _number(current.get("rug_score"))
-    rug_level = str(current.get("rug_level") or "UNKNOWN").upper()
-    raw_trade_state = current.get("trade_state")
-    trade_state = str(raw_trade_state).upper() if raw_trade_state else "UNKNOWN"
-    if bool(current.get("hard_veto")):
-        blockers.append("Blocked by risk rule")
-    if rug_score is not None and rug_score >= 75:
-        blockers.append("Risk factors triggered a block")
-    if trade_state in {"AVOID", "EXIT"}:
-        blockers.append(f"State: {trade_state.title()}")
-    eligibility_state = (current.get("eligibility") or {}).get("state")
-    if eligibility_state == "blocked" and not blockers:
-        blockers.append("Blocked by current eligibility")
-    threshold = EVIDENCE_GATE.threshold
-    evidence_count = len(confirmed_families)
-    if blockers:
-        state = "blocked"
-    elif eligibility_state == "unknown":
-        state = "gathering"
-    elif (
-        market_confirmed
-        and evidence_count >= threshold
-        and trade_state
-        in {
-            "TRIGGERED",
-            "MANAGE",
-            "UNKNOWN",
-        }
-    ):
-        state = "ready"
-    elif (
-        market_confirmed
-        and evidence_count >= threshold - 1
-        and trade_state
-        in {
-            "ARMED",
-            "TRIGGERED",
-            "MANAGE",
-            "UNKNOWN",
-        }
-    ):
-        state = "near"
-    else:
-        state = "gathering"
-    return {
-        "count": min(evidence_count, threshold),
-        "threshold": threshold,
-        "state": state,
-        "checks": checks,
-        "blockers": blockers,
-        "rug_score": rug_score,
-        "rug_level": rug_level,
-        "trade_state": trade_state,
-        "families": family_receipts,
-        "raw_market_checks": market_checks,
-        "required_family": "market",
-        "base_rates": base_rates,
-        "baseline_summary": _baseline_summary(base_rates),
-        "summary": (
-            "Blocked by risk"
-            if state == "blocked"
-            else "Confirmed"
-            if state == "ready"
-            else "Almost ready"
-            if state == "near"
-            else "Waiting for evidence"
-        ),
-    }
-
-
-def _baseline_summary(base_rates: dict[str, Any] | None) -> str | None:
-    if not base_rates or str(base_rates.get("mode") or "") == "deferred":
-        return None
-    metrics = base_rates.get("metrics") or {}
-    empirical = [
-        receipt
-        for receipt in metrics.values()
-        if isinstance(receipt, dict) and receipt.get("mode") == "empirical"
-    ]
-    if not empirical:
-        matched = int(base_rates.get("matched_sessions") or 0)
-        minimum = int(base_rates.get("minimum_samples") or 0)
-        return f"Baseline learning: {matched}/{minimum} matched sessions"
-    notable = [receipt for receipt in empirical if receipt.get("notable")]
-    if not notable:
-        return "Market readings are normal for matched sessions"
-    strongest = max(notable, key=lambda receipt: float(receipt.get("percentile") or 0))
-    percentile = round(float(strongest["percentile"]) * 100)
-    return (
-        f"{strongest['label']} is above {percentile}% of "
-        f"{strongest['sample_count']} matched sessions"
-    )
-
-
-def _ranker_directional_thesis(prediction: dict[str, Any] | None) -> dict[str, Any] | None:
-
-    if not prediction:
-        return None
-    probabilities: dict[str, float] = {}
-    for outcome in ("up", "down", "timeout"):
-        value = prediction.get(f"probability_{outcome}")
-        try:
-            probability = float(value)
-        except (TypeError, ValueError):
-            return None
-        if not 0 <= probability <= 1:
-            return None
-        probabilities[outcome] = probability
-
-    total_probability = sum(probabilities.values())
-    if not 0.98 <= total_probability <= 1.02:
-        return None
-    probabilities = {
-        outcome: probability / total_probability for outcome, probability in probabilities.items()
-    }
-
-    try:
-        expected_return_pct = float(prediction.get("expected_return_pct"))
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(expected_return_pct):
-        return None
-
-    ranked_outcome = "up" if expected_return_pct > 0 else "down"
-    directional_margin = probabilities[ranked_outcome] - probabilities["timeout"]
-    if expected_return_pct == 0 or directional_margin < 0.05:
-        outcome = "timeout"
-    else:
-        outcome = ranked_outcome
-
-    ordered_outcomes = ("down", "timeout", "up")
-    raw_percentages = [probabilities[key] * 100 for key in ordered_outcomes]
-    display_percentages = [math.floor(value) for value in raw_percentages]
-    remaining = 100 - sum(display_percentages)
-    fractions = sorted(
-        range(len(ordered_outcomes)),
-        key=lambda index: (raw_percentages[index] - display_percentages[index], -index),
-        reverse=True,
-    )
-    for index in fractions[:remaining]:
-        display_percentages[index] += 1
-
-    outcome_copy = {
-        "down": ("−4% first", "Down barrier"),
-        "timeout": ("No barrier", "Neither barrier"),
-        "up": ("+8% first", "Up barrier"),
-    }
-    distribution = [
-        {
-            "key": key,
-            "label": outcome_copy[key][0],
-            "accessible_label": outcome_copy[key][1],
-            "probability": round(probabilities[key], 6),
-            "probability_pct": display_percentages[index],
-        }
-        for index, key in enumerate(ordered_outcomes)
-    ]
-
-    direction = "flat" if outcome == "timeout" else outcome
-    labels = {
-        "up": "Upside setup",
-        "down": "Downside pressure",
-        "timeout": "No directional call",
-    }
-    arrows = {"up": "↑", "down": "↓", "timeout": "↔"}
-    model_status = str(prediction.get("model_status") or "shadow").lower()
-    status_label = "Live model" if model_status == "active" else "Shadow model"
-    evidence_at = str(prediction.get("created_at") or "") or None
-    model_id = str(prediction.get("model_id") or "unversioned")
-    accessible_distribution = "; ".join(
-        f"{item['probability_pct']} percent {item['label']}" for item in distribution
-    )
-    return {
-        "direction": direction,
-        "label": labels[outcome],
-        "arrow": arrows[outcome],
-        "probability": round(probabilities[outcome], 4),
-        "probability_pct": display_percentages[ordered_outcomes.index(outcome)],
-        "probability_up": round(probabilities["up"], 6),
-        "probability_down": round(probabilities["down"], 6),
-        "probability_timeout": round(probabilities["timeout"], 6),
-        "distribution": distribution,
-        "expected_return_pct": round(expected_return_pct, 4),
-        "horizon": "60m",
-        "horizon_label": "60 minutes",
-        "contract": "+8% before −4% within 60 minutes",
-        "model_id": model_id,
-        "model_status": model_status,
-        "status_label": status_label,
-        "evidence_at": evidence_at,
-        "accessible_description": (
-            f"Directional thesis: {labels[outcome]}, 60 minutes. "
-            f"{accessible_distribution}. {status_label}, model {model_id}."
-        ),
-    }
-
-
 def _market_pulse_label(snapshot: dict[str, Any], catalyst: dict[str, Any] | None) -> str:
     if catalyst:
         label = _pulse_label(catalyst)
@@ -4871,138 +4540,10 @@ def _market_pulse_label(snapshot: dict[str, Any], catalyst: dict[str, Any] | Non
     return " · ".join(parts) or "Market move · no recent filing"
 
 
-def _event_payload(row: dict[str, Any]) -> dict[str, Any]:
-    raw = row.get("payload_json")
-    if isinstance(raw, dict):
-        return raw
-    try:
-        parsed = json.loads(raw or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _nonnegative_event_count(value: Any) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError, OverflowError):
-        return 0
-
-
-def _event_timestamp(row: dict[str, Any]) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(row.get("event_at") or ""))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
 def _external_event_context(
     rows: list[dict[str, Any]], *, at: datetime | None = None
 ) -> dict[str, Any]:
-    from runner_web.nasdaq_halts import latest_halt_versions
-
-    checked_at = at or now()
-    news: list[dict[str, Any]] = []
-    social_by_source: dict[str, dict[str, Any]] = {}
-    news_keys: set[str] = set()
-    active_halt: dict[str, Any] | None = None
-    seen_halts: set[str] = set()
-    for row in latest_halt_versions(rows):
-        event = {**row, "payload": _event_payload(row)}
-        timestamp = _event_timestamp(event)
-        if timestamp is None or timestamp > checked_at:
-            continue
-        if event.get("event_type") == "news_article":
-            if timestamp and timestamp >= checked_at - timedelta(hours=24):
-                key = str(
-                    event.get("source_url")
-                    or event["payload"].get("url")
-                    or (
-                        f"{event.get('source')}:{event.get('event_at')}:"
-                        f"{event['payload'].get('title')}"
-                    )
-                )
-                if key not in news_keys:
-                    news_keys.add(key)
-                    news.append(event)
-        elif event.get("event_type") == "social_spike":
-            if timestamp and timestamp >= checked_at - timedelta(hours=6):
-                source = str(event.get("source") or "unknown")
-                current = social_by_source.get(source)
-                if current is None or str(event.get("event_at") or "") > str(
-                    current.get("event_at") or ""
-                ):
-                    social_by_source[source] = event
-        elif event.get("event_type") == "trading_halt":
-            ticker = str(event.get("ticker") or "")
-            if ticker in seen_halts:
-                continue
-            seen_halts.add(ticker)
-            status = str(event.get("status") or "").lower()
-            resume_at = _event_timestamp({"event_at": event["payload"].get("trade_resume_at")})
-            if (resume_at is not None and resume_at > checked_at) or (
-                resume_at is None and status in {"active", "halted", "pending"}
-            ):
-                active_halt = active_halt or event
-
-    news.sort(key=lambda event: str(event.get("event_at") or ""), reverse=True)
-    social = list(social_by_source.values())
-    social.sort(key=lambda event: str(event.get("event_at") or ""), reverse=True)
-    mention_count = sum(
-        _nonnegative_event_count(event["payload"].get("mention_count")) for event in social
-    )
-    engagement_count = sum(
-        _nonnegative_event_count(event["payload"].get("engagement_count")) for event in social
-    )
-    news_boost = min(6.0, 1.5 * math.sqrt(len(news)))
-    social_boost = min(
-        8.0,
-        math.log2(mention_count + 1) + 0.5 * math.log2(engagement_count + 1),
-    )
-    return {
-        "news_count": len(news),
-        "news_boost": round(news_boost, 2),
-        "latest_news": news[0] if news else None,
-        "social_mentions": mention_count,
-        "social_engagement": engagement_count,
-        "social_search_boost": round(social_boost, 2),
-        "latest_social": social[0] if social else None,
-        "active_halt": active_halt,
-        "safety_penalty": 25.0 if active_halt else 0.0,
-        "normalized_event_count": len(rows),
-    }
-
-
-def _external_event_label(context: dict[str, Any]) -> tuple[str, str, str | None] | None:
-    halt = context.get("active_halt")
-    if halt:
-        return (
-            f"Trading halt · {halt.get('status') or 'active'}",
-            str(halt.get("source") or "nasdaq_trader"),
-            halt.get("source_url"),
-        )
-    latest_news = context.get("latest_news")
-    latest_social = context.get("latest_social")
-    candidates = [event for event in (latest_news, latest_social) if event]
-    if not candidates:
-        return None
-    latest = max(candidates, key=lambda event: str(event.get("event_at") or ""))
-    if latest.get("event_type") == "news_article":
-        title = str(latest.get("payload", {}).get("title") or "New company coverage")
-        return (
-            f"News · {title[:96]}",
-            str(latest.get("source") or "news"),
-            latest.get("source_url"),
-        )
-    mentions = int(context.get("social_mentions") or 0)
-    network = str(latest.get("payload", {}).get("network_label") or "Social")
-    noun = "cashtag mention" if network == "Bluesky" else "mention"
-    return (
-        f"{network} · {mentions} {noun}{'s' if mentions != 1 else ''}",
-        str(latest.get("source") or "social"),
-        latest.get("source_url"),
-    )
+    return pulse_scoring.external_event_context(rows, at=at or now())
 
 
 # How close two deliveries must be to count as the same announcement round, and
@@ -5049,32 +4590,6 @@ def _attach_pulse_entries(rows: list[dict[str, Any]]) -> None:
     for row in rows:
         marker = entries.get(str(row["ticker"]))
         row["entered_at"] = str(marker["time"]) if marker else None
-
-
-def _usable_market_mark(
-    row: dict[str, Any], mark: dict[str, Any] | None, at: datetime
-) -> tuple[float, float, datetime] | None:
-    """Use one observed price and move that were both known by the score time."""
-
-    if not mark or mark.get("status") != "ok":
-        return None
-    price, change = _number(mark.get("price")), _number(mark.get("change_pct"))
-    observed_at = _timestamp(mark.get("observed_at"))
-    collected_at = _timestamp(mark.get("collected_at"))
-    scanned_at = _timestamp(row.get("quote_time"))
-    if (
-        price is None
-        or price <= 0
-        or change is None
-        or observed_at is None
-        or collected_at is None
-        or observed_at > at
-        or collected_at > at
-        or observed_at > collected_at
-        or (scanned_at is not None and observed_at <= scanned_at)
-    ):
-        return None
-    return price, change, observed_at
 
 
 def _apply_market_marks(
@@ -5314,238 +4829,7 @@ def _pulse_scoring_inputs(
 def _pulse_snapshot_score(
     snapshot: dict[str, Any], inputs: dict[str, Any], *, include_trace: bool = False
 ) -> dict[str, Any]:
-    ticker = snapshot["ticker"]
-    catalyst = inputs["filings_by_ticker"].get(ticker)
-    prediction = inputs["predictions"].get(str(snapshot["id"]))
-    facts = attention.forecast_facts(prediction)
-    computed_at = _timestamp(inputs["score_as_of"])
-    quote_at = _timestamp(snapshot.get("quote_time"))
-    quote_mark = (
-        _usable_market_mark(
-            snapshot,
-            inputs.get("quote_marks", {}).get(ticker),
-            computed_at,
-        )
-        if computed_at is not None
-        else None
-    )
-    eligibility_quote_at = quote_mark[2] if quote_mark else quote_at
-    age_minutes = (
-        (computed_at - quote_at).total_seconds() / 60
-        if computed_at is not None and quote_at is not None
-        else None
-    )
-    eligibility_age_minutes = (
-        (computed_at - eligibility_quote_at).total_seconds() / 60
-        if computed_at is not None and eligibility_quote_at is not None
-        else None
-    )
-    captured_at = _timestamp(snapshot.get("captured_at"))
-    assessment_age_minutes = (
-        (computed_at - captured_at).total_seconds() / 60
-        if computed_at is not None and captured_at is not None
-        else None
-    )
-    activity = attention.market_activity({**snapshot, "stale_minutes": age_minutes})
-    custom_score = float(activity["value"])
-    catalyst_score = (attention.finite_number(catalyst.get("score")) or 0.0) if catalyst else 0.0
-    catalyst_sentiment = str(catalyst.get("sentiment") or "") if catalyst else ""
-    # A filing's size moves attention whatever its direction; whether it is
-    # bearish belongs to the forecast and the block, not to notice.
-    event_boost = attention.event_attention(catalyst_score)
-    community_counts = inputs["community"].get(ticker, {"call_count": 0, "comment_count": 0})
-    call_count = community_counts["call_count"]
-    comment_count = community_counts["comment_count"]
-    # Calls and comments remain descriptive; neither rewards the board for exposure.
-    engagement_count = call_count
-    community_boost = attention.community_attention(call_count)
-    external = _external_event_context(
-        inputs["market_events_by_ticker"].get(ticker, []), at=_timestamp(inputs["score_as_of"])
-    )
-    news_boost = float(external["news_boost"])
-    social_search_boost = float(external["social_search_boost"])
-    cluster_summary = inputs.get("cluster_summaries", {}).get(ticker) or {}
-    cluster_value = cluster_summary.get("value")
-    stock_holding = next(
-        (
-            stock.get("value")
-            for stock in cluster_summary.get("stocks", [])
-            if stock["ticker"] == ticker
-        ),
-        None,
-    )
-    cluster_boost = attention.cluster_attention(cluster_value, stock_holding)
-    safety_penalty = float(external["safety_penalty"])
-    raw_rug_score = snapshot.get("rug_score")
-    rug_score = attention.finite_number(raw_rug_score)
-    trade_state = str(snapshot.get("trade_state") or "UNKNOWN").upper()
-    if external.get("active_halt"):
-        rug_score = max(rug_score or 0.0, 90.0)
-        trade_state = "AVOID"
-    rug_penalty = (rug_score or 0.0) * 0.30
-    state_penalty = 25.0 if trade_state == "EXIT" else 20.0 if trade_state == "AVOID" else 0.0
-    # Attention is what deserves a look; the deductions below are policy, and
-    # they are reported through eligibility instead of shrinking the number.
-    pulse_score = attention.attention_score(
-        signal=custom_score,
-        event=event_boost,
-        news=news_boost,
-        social=social_search_boost,
-        cluster=cluster_boost,
-        community=community_boost,
-    )
-    can_act = attention.eligibility(
-        active_halt=bool(external.get("active_halt")),
-        trade_state=trade_state,
-        rug_score=rug_score,
-        rug_level=str(snapshot.get("rug_level") or ""),
-        has_price=(
-            quote_mark[0] if quote_mark else (attention.finite_number(snapshot.get("price")) or 0)
-        )
-        > 0,
-        hard_veto=bool(snapshot.get("hard_veto")),
-        stale_minutes=eligibility_age_minutes,
-        assessment_age_minutes=assessment_age_minutes,
-        require_complete=True,
-    )
-    # Only what moved attention lives here. The deductions are policy, and they
-    # are reported beside the score rather than mixed into it.
-    score_components = {
-        "market": round(custom_score, 2),
-        "sec_event": round(event_boost, 2),
-        "news": news_boost,
-        "social_search": social_search_boost,
-        "cluster": round(cluster_boost, 2),
-        "community": round(community_boost, 2),
-    }
-    policy_components = {
-        "safety": -safety_penalty,
-        "rug": -round(rug_penalty, 2),
-        "state": -state_penalty,
-    }
-    score_trace = {}
-    if include_trace:
-
-        def trace(*rows: tuple[str, Any]) -> list[dict[str, str]]:
-            return [{"label": label, "value": str(value)} for label, value in rows]
-
-        score_trace = {
-            "market": trace(
-                ("Source", "Direction-neutral activity heuristic; not a probability"),
-                ("Input score", f"{custom_score:g}"),
-                ("Calculation", "Capped volume, absolute momentum and absolute move × freshness"),
-            ),
-            "sec_event": trace(
-                ("Filing", catalyst.get("form") or "SEC filing" if catalyst else "SEC filing"),
-                ("Sentiment", catalyst_sentiment or "Neutral"),
-                ("Filing score", f"{catalyst_score:g}"),
-                (
-                    "Calculation",
-                    "12% of filing score, capped at +12 points"
-                    if catalyst
-                    else "No filing: 0 points",
-                ),
-            ),
-            "news": trace(
-                ("Articles in 24 hours", external["news_count"]),
-                ("Calculation", "1.5 × √articles, capped at +6 points"),
-            ),
-            "social_search": trace(
-                ("Mentions in 6 hours", external["social_mentions"]),
-                ("Engagements in 6 hours", external["social_engagement"]),
-                (
-                    "Calculation",
-                    "log₂(mentions + 1) + 0.5 × log₂(engagements + 1), capped at +8 points",
-                ),
-            ),
-            "cluster": trace(
-                (
-                    "Tracked cluster holdings",
-                    f"${cluster_value:,.0f}" if cluster_value is not None else "Unavailable",
-                ),
-                (
-                    "Holding in this stock",
-                    f"${stock_holding:,.0f}" if stock_holding is not None else "Unavailable",
-                ),
-                (
-                    "Calculation",
-                    "2 × log₁₀(1 + cluster holdings / $10,000) × √(stock share), "
-                    "capped at +8 points",
-                ),
-            ),
-            "community": trace(
-                ("Callers with active Calls", call_count),
-                ("Public comments", comment_count),
-                ("Calculation", "Engagement is descriptive only: 0 attention points"),
-            ),
-            "safety": trace(
-                ("Trading halt", "Active" if external.get("active_halt") else "Clear"),
-                ("Calculation", "Reported through eligibility; attention is not reduced"),
-            ),
-            "rug": trace(
-                ("Rug score", f"{rug_score:g}" if rug_score is not None else "0"),
-                ("Calculation", "Reported through eligibility; attention is not reduced"),
-            ),
-            "state": trace(
-                ("Trade state", trade_state),
-                ("Calculation", "Reported through eligibility; attention is not reduced"),
-            ),
-        }
-    return {
-        "baseline_score": attention.finite_number(snapshot.get("score")),
-        "sentiment_counts": inputs.get("sentiment_counts", {}).get(
-            ticker, {"bullish": 0, "bearish": 0}
-        ),
-        "sentiment_basis": FILING_SENTIMENT_BASIS,
-        "rug_score": rug_score,
-        "trade_state": trade_state,
-        "model_score": 100 * facts["probability_up"] if facts else None,
-        "score_policy": attention.POLICY_VERSION,
-        "score_unit": "heuristic_points",
-        "attention_basis": "direction_neutral_activity",
-        "attention_urgent": bool(external.get("active_halt")),
-        "attention_urgency_reason": "Active trading halt" if external.get("active_halt") else None,
-        "activity_inputs": activity,
-        "forecast": facts,
-        "feature_as_of": snapshot.get("captured_at"),
-        "activity_quote_as_of": snapshot.get("quote_time"),
-        "quote_as_of": eligibility_quote_at.isoformat() if eligibility_quote_at else None,
-        "computed_at": inputs["score_as_of"],
-        "model_rank": prediction.get("rank") if prediction else None,
-        "score": pulse_score,
-        "custom_score": pulse_score,
-        "attention_score": pulse_score,
-        "eligibility": can_act,
-        "eligibility_note": attention.risk_note(can_act),
-        "policy_components": policy_components,
-        "score_as_of": inputs["score_as_of"],
-        "score_snapshot_id": snapshot["id"],
-        "runner_probability": facts["probability_up"] if facts else None,
-        "runner_probability_down": facts["probability_down"] if facts else None,
-        "runner_probability_timeout": facts["probability_timeout"] if facts else None,
-        "directional_thesis": _ranker_directional_thesis(prediction) if facts else None,
-        "expected_return_pct": facts["assumed_barrier_payoff_pct"] if facts else None,
-        "call_count": call_count,
-        "comment_count": comment_count,
-        "engagement_count": engagement_count,
-        "event_boost": round(event_boost, 2),
-        "news_boost": news_boost,
-        "social_search_boost": social_search_boost,
-        "cluster_boost": round(cluster_boost, 2),
-        "community_boost": round(community_boost, 2),
-        "safety_penalty": safety_penalty,
-        "rug_penalty": round(rug_penalty, 2),
-        "state_penalty": state_penalty,
-        "active_market_event": external.get("active_halt"),
-        "news_count": external["news_count"],
-        "external_social_mentions": external["social_mentions"],
-        "external_social_engagement": external["social_engagement"],
-        "latest_news": external.get("latest_news"),
-        "score_components": score_components,
-        "score_trace": score_trace,
-        "score_detail": _public_score_detail(score_components, pulse_score),
-        "external_context": external,
-    }
+    return pulse_scoring.score_snapshot(snapshot, inputs, at=now(), include_trace=include_trace)
 
 
 def _pulse_data_uncached() -> dict[str, Any]:
@@ -5641,38 +4925,6 @@ def _pulse_data_uncached() -> dict[str, Any]:
         "kols": predictor_scorecards(),
         "next_offset": len(runner_rows),
         "has_more": False,
-    }
-
-
-PUBLIC_SCORE_DRIVERS = (
-    ("market", "Scan"),
-    ("sec_event", "SEC"),
-    ("news", "News"),
-    ("social_search", "Social"),
-    ("cluster", "Cluster holdings"),
-    ("community", "Community"),
-)
-PUBLIC_SCORE_PENALTIES = (
-    ("safety", "Safety"),
-    ("rug", "Rug"),
-    ("state", "State"),
-)
-
-
-def _public_score_detail(components: dict[str, Any], score: float) -> dict[str, Any]:
-    """Keep the public score breakdown small enough to ship with every row."""
-
-    return {
-        "score": round(float(score), 1),
-        "drivers": [
-            {"key": key, "label": label, "value": round(float(components.get(key) or 0.0), 1)}
-            for key, label in PUBLIC_SCORE_DRIVERS
-        ],
-        "penalties": [
-            {"key": key, "label": label, "value": round(float(components.get(key) or 0.0), 1)}
-            for key, label in PUBLIC_SCORE_PENALTIES
-            if float(components.get(key) or 0.0) != 0.0
-        ],
     }
 
 
