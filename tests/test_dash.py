@@ -842,7 +842,7 @@ def test_recent_actions_reads_dashs_chat_log():
     assert actions and actions[0]["action"] == "reply"
 
 
-def test_the_desk_note_speaks_only_when_something_changed(monkeypatch):
+def test_the_desk_note_waits_for_changes_between_scheduled_reviews(monkeypatch):
     from runner_web import main as web_main
 
     monkeypatch.setattr(web_main, "DASH_DESK_NOTES_ENABLED", True)
@@ -858,6 +858,11 @@ def test_the_desk_note_speaks_only_when_something_changed(monkeypatch):
     )
     monkeypatch.setattr(web_main, "dash_world", lambda *a, **k: {"changes": {"any": True}})
     monkeypatch.setattr(web_main, "_generate_desk_note", lambda world: "Something moved.")
+
+    with connection() as database:
+        web_main.dash_direction.finish(
+            database, web_main.dash_research.research_scope(123), None, NOW, explored=True
+        )
 
     result = web_main.post_dash_desk_note(at=NOW)
 

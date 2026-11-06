@@ -103,7 +103,10 @@ def release(identity, token, at):
         )
 
 
-def finish(identity, token, scope, result, notes, at, *, chat_id=None):
+def finish(
+    identity, token, scope, result, notes, at, *, chat_id=None, direction=None, explored=False
+):
+    from runner_web import dash_direction
     from runner_web.dash_research import store_note
 
     with connection() as database:
@@ -117,6 +120,7 @@ def finish(identity, token, scope, result, notes, at, *, chat_id=None):
             raise RuntimeError("Research lease changed")
         for note in notes.values():
             store_note(database, scope, note, at)
+        dash_direction.finish(database, scope, direction, at, explored=explored)
         if chat_id is not None and result["action"] == "reply":
             enqueue_cards(
                 database,
