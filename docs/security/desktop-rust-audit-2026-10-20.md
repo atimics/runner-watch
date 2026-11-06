@@ -17,7 +17,8 @@ Removing the opener plugin also removes its unused D-Bus dependencies:
 | zvariant 5.15.0 | [RUSTSEC-2026-0370](https://rustsec.org/advisories/RUSTSEC-2026-0370.html) |
 | zvariant_derive 5.15.0 | [RUSTSEC-2026-0372](https://rustsec.org/advisories/RUSTSEC-2026-0372.html) |
 
-Tokio moves from 1.53.1 to 1.53.3. RustSec lists 1.53.3 as a patched release
+Tokio now uses 1.54.1 after the combined dependency update. The initial repair
+used 1.53.3, which RustSec lists as a patched release
 for [RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html).
 Cargo generated the updated lockfile from the package manifests.
 
