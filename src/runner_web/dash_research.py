@@ -395,9 +395,10 @@ def _run_research(
             context["earlier_checks"] = progress.get("evidence", {})
             progress["evidence"] = {}
             progress["notes"] = {}
+            progress["checked_at"] = current.isoformat()
     else:
         progress["request"] = context
-    progress["checked_at"] = current.isoformat()
+    progress.setdefault("checked_at", current.isoformat())
     evidence.update(progress.get("evidence", {}))
     progress["evidence"] = evidence
     staged = progress.setdefault("notes", {})

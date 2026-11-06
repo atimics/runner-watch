@@ -337,9 +337,17 @@ def test_confirmed_reply_handles_rate_limits_and_parse_fallback():
     assert payloads[0]["parse_mode"] == "HTML" and "parse_mode" not in payloads[1]
 
 
-def test_old_checkpoint_keeps_context_and_refreshes_market_evidence():
+@pytest.mark.parametrize("intermediate", [False, True])
+def test_old_checkpoint_keeps_context_and_refreshes_market_evidence(intermediate):
     with pytest.raises(StopIteration):
         run([turn(("expand", {"node": "ticker:TEST"}))], job_key="chat-test")
+    if intermediate:
+        with pytest.raises(StopIteration):
+            run(
+                [turn(("expand", {"node": "ticker:TEST"}))],
+                job_key="chat-test",
+                at_override=NOW + timedelta(minutes=4),
+            )
     reads = []
     result, requests = run(
         [
