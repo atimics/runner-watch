@@ -1234,25 +1234,38 @@ def test_a_desk_note_cut_off_by_the_token_cap_keeps_only_whole_sentences(monkeyp
     from runner_web import main as web_main
 
     cut = "NCPL flying 246 percent on a fresh 8-K. One memecoin, PvgENd3WRfbuuEsMTj"
-    monkeypatch.setattr(
-        web_main,
-        "_telegram_chat_completion",
-        lambda body: {"choices": [{"message": {"content": cut}, "finish_reason": "length"}]},
-    )
+    monkeypatch.setattr(web_main, "dash_expand", lambda node: {"known": True, "price": 2})
+
+    def completion(text, finish):
+        def generate(body):
+            if not any(message["role"] == "tool" for message in body["messages"]):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "id": "lookup",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "expand",
+                                            "arguments": '{"node":"ticker:NCPL"}',
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            return {"choices": [{"message": {"content": text}, "finish_reason": finish}]}
+
+        return generate
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion(cut, "length"))
     assert web_main._generate_desk_note({}) == "NCPL flying 246 percent on a fresh 8-K."
-
-    monkeypatch.setattr(
-        web_main,
-        "_telegram_chat_completion",
-        lambda body: {"choices": [{"message": {"content": "Up 21."}, "finish_reason": "length"}]},
-    )
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion("Up 21.", "length"))
     assert web_main._generate_desk_note({}) == ""
-
-    monkeypatch.setattr(
-        web_main,
-        "_telegram_chat_completion",
-        lambda body: {"choices": [{"message": {"content": cut}, "finish_reason": "stop"}]},
-    )
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion(cut, "stop"))
     assert web_main._generate_desk_note({}) == cut
 
 

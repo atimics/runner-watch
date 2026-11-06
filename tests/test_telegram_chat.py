@@ -796,7 +796,7 @@ def test_a_reply_that_names_an_unlooked_ticker_gets_one_chance_to_correct(monkey
     )
     scripted = [
         _tool_turn("reply", {"text": "MSGM is up 30%."}),
-        _tool_turn("reply", {"text": "I have not looked at MSGM."}, call_id="call-2"),
+        _tool_turn("reply", {"text": "That stock still needs a fresh lookup."}, call_id="call-2"),
     ]
     calls: list[dict[str, Any]] = []
 
@@ -810,7 +810,7 @@ def test_a_reply_that_names_an_unlooked_ticker_gets_one_chance_to_correct(monkey
         _parse(_update("what about that one", mention=True)), []
     )
 
-    assert decision == {"action": "reply", "text": "I have not looked at MSGM."}
+    assert decision == {"action": "reply", "text": "That stock still needs a fresh lookup."}
     assert len(calls) == 2
 
 
@@ -1048,10 +1048,12 @@ def test_a_rerun_turn_does_not_repeat_a_comment(monkeypatch):
         return {"ok": True, "comment_id": f"c{len(made)}"}
 
     monkeypatch.setattr(web_main, "dash_comment", comment)
+    monkeypatch.setattr(web_main, "dash_expand", lambda node: {"known": True, "price": 2})
     message = _parse(_update("say something", mention=True))
 
     for _ in range(2):
         scripted = [
+            _tool_turn("expand", {"node": "ticker:MSGM"}, call_id="lookup"),
             _tool_turn("comment_on_ticker", {"ticker": "MSGM", "body": "hiss"}),
             _tool_turn("react", {"emoji": "x"}, call_id="call-2"),
         ]

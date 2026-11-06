@@ -480,7 +480,7 @@ def room(monkeypatch):
     monkeypatch.setattr(web_main, "_generate_telegram_turn", fallback)
 
     def completion(body):
-        assert "tools" not in body and "tool_choice" not in body
+        assert "tools" in body and body["tool_choice"] == "auto"
         seen.writes.append(body)
         return {"choices": [{"message": {"content": "chirp. quiet tape."}}]}
 
@@ -513,7 +513,7 @@ def _logged() -> list[dict[str, Any]]:
         return [dict(row) for row in database.execute("SELECT * FROM dash_decisions ORDER BY id")]
 
 
-def test_a_reply_decision_writes_once_without_tools(room, monkeypatch):
+def test_a_reply_decision_has_research_tools_and_can_answer_immediately(room, monkeypatch):
     _decide_with(monkeypatch, room, turn_payload())
 
     result = _run()
@@ -622,7 +622,7 @@ def test_the_writer_gets_the_loaded_node(room, monkeypatch):
     assert expanded == ["halts"]
     context = json.loads(room.writes[0]["messages"][1]["content"])
     assert context["loaded"] == {"halts": {"halts": ["MSGM"]}}
-    assert room.writes[0]["messages"][0]["content"] == chat.CHEETAH_PERSONA
+    assert room.writes[0]["messages"][0]["content"].startswith(chat.CHEETAH_PERSONA)
 
 
 def test_an_unbacked_ticker_gets_one_rewrite(room, monkeypatch):
@@ -649,7 +649,7 @@ def test_an_unbacked_ticker_gets_one_rewrite(room, monkeypatch):
     _run("anything moving")
 
     assert len(room.writes) == 2
-    assert "NCPL" in json.loads(room.writes[1]["messages"][1]["content"])["instruction"]
+    assert "NCPL" in room.writes[1]["messages"][-1]["content"]
     assert room.replies == ["I have not looked at that one yet."]
 
 
@@ -672,6 +672,40 @@ def test_an_unlooked_address_gets_one_rewrite_but_a_loaded_one_does_not(room, mo
     _decide_with(monkeypatch, room, turn_payload())
     _run("anything new", update_id=2)
     assert len(room.writes) == 2
+
+
+def _analyst_action_writer(monkeypatch, room, mutation):
+    from runner_web import main as web_main
+
+    def completion(body):
+        room.writes.append(body)
+        tools = {tool["function"]["name"] for tool in body["tools"]}
+        if mutation in tools and not any(m["role"] == "tool" for m in body["messages"]):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "act",
+                                    "type": "function",
+                                    "function": {
+                                        "name": mutation,
+                                        "arguments": json.dumps(
+                                            {"ticker": "MSGM", "body": "Volume supports my view."}
+                                        ),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        return {
+            "choices": [{"message": {"content": "I checked the evidence and recorded my view."}}]
+        }
+
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", completion)
 
 
 def test_a_decided_comment_runs_once_across_a_retried_turn(room, monkeypatch):
@@ -698,6 +732,7 @@ def test_a_decided_comment_runs_once_across_a_retried_turn(room, monkeypatch):
             "looked_up": [{"ticker": "MSGM", "known": True}],
         },
     )
+    _analyst_action_writer(monkeypatch, room, "comment_on_ticker")
     _decide_with(monkeypatch, room, turn_payload(intent=("comment", 0.95)))
     message = chat.parse_update(_update("comment on $MSGM"), bot_username=BOT, bot_id=BOT_ID)
 
@@ -706,11 +741,11 @@ def test_a_decided_comment_runs_once_across_a_retried_turn(room, monkeypatch):
     web_main._decide_telegram_turn(message, [])
 
     assert [ticker for ticker, _ in posted] == ["MSGM"]
-    # First turn: comment body + reply. Retry: the stored comment, so reply only.
+    # Each turn chooses an action and then answers. The stored action runs once.
     assert writes_first == 2
-    assert len(room.writes) == 3
-    context = json.loads(room.writes[-1]["messages"][1]["content"])
-    assert context["your_action"]["result"]["already_done"] is True
+    assert len(room.writes) == 4
+    action_result = json.loads(room.writes[-1]["messages"][-1]["content"])
+    assert action_result["already_done"] is True
 
 
 def test_a_decided_call_runs_once_and_respects_the_budget(room, monkeypatch):
@@ -723,8 +758,12 @@ def test_a_decided_call_runs_once_and_respects_the_budget(room, monkeypatch):
     monkeypatch.setattr(
         web_main,
         "telegram_prefetch_for",
-        lambda message, database: {"resolved_tickers": ["MSGM"], "looked_up": []},
+        lambda message, database: {
+            "resolved_tickers": ["MSGM"],
+            "looked_up": [{"ticker": "MSGM", "known": True}],
+        },
     )
+    _analyst_action_writer(monkeypatch, room, "make_call")
     _decide_with(monkeypatch, room, turn_payload(intent=("open_call", 0.95)))
     message = chat.parse_update(_update("$MSGM call it"), bot_username=BOT, bot_id=BOT_ID)
 
