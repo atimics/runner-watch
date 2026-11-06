@@ -79,6 +79,7 @@ def canonical_node(value: Any) -> str:
     node = str(value or "").strip()
     kind, _, subject = node.partition(":")
     kind = kind.lower()
+    subject = subject.strip()
     if kind == "ticker" and re.fullmatch(r"\$?[A-Za-z]{1,6}", subject):
         return "ticker:" + subject.upper().lstrip("$")
     if kind == "coin" and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", subject):
@@ -125,7 +126,7 @@ def save_thesis(
 ) -> dict[str, Any]:
     node = canonical_node(args.get("node"))
     source = evidence.get(node)
-    if not node or source is None:
+    if not node or not source:
         return {"error": "Expand this node before saving its thesis."}
     if isinstance(source, dict) and (source.get("error") or source.get("known") is False):
         return {"error": "This lookup needs usable evidence before a thesis can be saved."}
@@ -151,13 +152,17 @@ def save_thesis(
     }
     with connection() as database:
         prior = database.execute(
-            "SELECT value FROM worker_state WHERE key=?", (_key(scope, node),)
+            "SELECT value FROM worker_state WHERE key=? AND updated_at>=?",
+            (_key(scope, node), (at - timedelta(days=NOTE_DAYS)).isoformat()),
         ).fetchone()
         if prior:
             previous = json.loads(prior["value"])
-            note["previous_view"] = {
-                key: previous[key] for key in ("thesis", "confidence", "status", "reviewed_at")
-            }
+            if any(note[key] != previous[key] for key in ("thesis", "confidence", "status")):
+                note["previous_view"] = {
+                    key: previous[key] for key in ("thesis", "confidence", "status", "reviewed_at")
+                }
+            elif previous.get("previous_view"):
+                note["previous_view"] = previous["previous_view"]
         # The existing worker-state store supplies durable, per-node upserts.
         database.execute(
             "DELETE FROM worker_state WHERE key LIKE 'dash_thesis:%' AND updated_at<?",
@@ -169,15 +174,29 @@ def save_thesis(
             (_key(scope, node), json.dumps(note, separators=(",", ":")), at.isoformat()),
         )
         database.execute(
-            "DELETE FROM worker_state WHERE key LIKE ? AND key NOT IN "
-            "(SELECT key FROM worker_state WHERE key LIKE ? ORDER BY updated_at DESC,key LIMIT ?)",
-            (_prefix(scope) + "%", _prefix(scope) + "%", MAX_NOTES),
+            "DELETE FROM worker_state WHERE key LIKE ? AND key<>? AND key NOT IN "
+            "(SELECT key FROM worker_state WHERE key LIKE ? AND key<>? "
+            "ORDER BY updated_at DESC,key LIMIT ?)",
+            (
+                _prefix(scope) + "%",
+                _key(scope, node),
+                _prefix(scope) + "%",
+                _key(scope, node),
+                MAX_NOTES - 1,
+            ),
         )
     return {"saved": True, "note": note}
 
 
 def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), default=str)
+
+
+def _bound_reply(text: str) -> str:
+    if len(text) <= 3500:
+        return text
+    boundary = re.search(r"\s+\S*$", text[:3501])
+    return text[: boundary.start()].rstrip() if boundary else ""
 
 
 def run_research(
@@ -219,12 +238,13 @@ def run_research(
         else {"action": "reply", "text": "That check hit a problem. Please try again."}
     )
     for round_number in range(MAX_ROUNDS):
-        final = round_number == MAX_ROUNDS - 1 or tool_count >= MAX_TOOLS
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return fallback
+        final = round_number == MAX_ROUNDS - 1 or tool_count >= MAX_TOOLS or remaining <= 30
         available = [
             tool for name, tool in definitions.items() if not final or name in {"reply", "hold"}
         ]
-        if time.monotonic() >= deadline:
-            return fallback
         if final:
             messages.append(
                 {
@@ -292,7 +312,7 @@ def run_research(
                 output = {"skipped": "Turn complete."}
             elif name in definitions and isinstance(args, dict):
                 if name == "reply":
-                    text = str(args.get("text") or "").strip()
+                    text = _bound_reply(str(args.get("text") or "").strip())
                     missing = unbacked(text, evidence) if text else []
                     if proactive and (len(evidence) <= 1 or due - reviewed):
                         output = {
@@ -309,7 +329,7 @@ def run_research(
                             + " with expand, or use only the supported facts in your reply."
                         }
                     elif text:
-                        terminal = {"action": "reply", "text": text[:3500]}
+                        terminal = {"action": "reply", "text": text}
                         output = {"accepted": True}
                     else:
                         output = {"error": "Write your answer or choose hold."}

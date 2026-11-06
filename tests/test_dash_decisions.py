@@ -779,6 +779,19 @@ def test_a_decided_call_runs_once_and_respects_the_budget(room, monkeypatch):
     assert made == ["MSGM"]
 
 
+def test_dash_can_decline_a_suggested_call_after_forming_his_view(room, monkeypatch):
+    from runner_web import main as web_main
+
+    _decide_with(monkeypatch, room, turn_payload(intent=("open_call", 0.95)))
+    made = []
+    monkeypatch.setattr(web_main, "dash_make_call", lambda ticker: made.append(ticker))
+    message = chat.parse_update(_update("$MSGM call it"), bot_username=BOT, bot_id=BOT_ID)
+    result = web_main._decide_telegram_turn(message, [])
+    assert result["action"] == "reply"
+    assert made == []
+    assert "make_call" in {tool["function"]["name"] for tool in room.writes[0]["tools"]}
+
+
 def test_the_turn_cap_still_holds_on_the_decision_path(room, monkeypatch):
     monkeypatch.setattr(chat, "TURNS_PER_HOUR", 1)
     _decide_with(monkeypatch, room, turn_payload(action=("hold", 0.9)))

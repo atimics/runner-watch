@@ -351,3 +351,51 @@ def test_a_quiet_world_still_reviews_due_room_ideas(monkeypatch):
     assert main.post_dash_desk_note(at=NOW + timedelta(minutes=5))["status"] == "quiet"
     monkeypatch.setattr(main, "telegram_room_chat_id", lambda: -101)
     assert main.post_dash_desk_note(at=NOW + timedelta(hours=2))["status"] == "quiet"
+
+
+def test_same_tick_saves_keep_the_latest_note():
+    for index in range(20):
+        node = f"coin:sameTick{index}"
+        assert research.save_thesis(SCOPE, thesis(node), {node: {"known": True}}, NOW)["saved"]
+        assert node in {note["node"] for note in research.notebook(SCOPE, NOW)}
+    assert len(research.notebook(SCOPE, NOW)) == research.MAX_NOTES
+
+
+def test_an_unchanged_review_preserves_the_last_change_of_mind():
+    source = {"ticker:TEST": {"price": 2}}
+    research.save_thesis(SCOPE, thesis(), source, NOW)
+    revised = thesis(thesis="Fresh volume supports the move.")
+    research.save_thesis(SCOPE, revised, source, NOW + timedelta(hours=1))
+    research.save_thesis(SCOPE, revised, source, NOW + timedelta(hours=2))
+    assert (
+        research.notebook(SCOPE, NOW + timedelta(hours=2))[0]["previous_view"]["thesis"]
+        == thesis()["thesis"]
+    )
+
+
+def test_a_near_deadline_turn_goes_straight_to_its_answer(monkeypatch):
+    clock = iter([0, 50])
+    monkeypatch.setattr(research.time, "monotonic", lambda: next(clock))
+    result, requests = run([turn(("reply", {"text": "The evidence leaves my view tentative."}))])
+    assert result["action"] == "reply"
+    assert {tool["function"]["name"] for tool in requests[0]["tools"]} == {"reply", "hold"}
+
+
+def test_a_long_reply_keeps_whole_addresses():
+    address = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr"
+    prefix = "Evidence. " * 348
+    result, _ = run([turn(("reply", {"text": prefix + address}))])
+    assert result["text"] == prefix.rstrip()
+
+
+def test_bad_tool_arguments_and_unknown_tools_get_feedback():
+    result, requests = run(
+        [
+            turn(("expand", []), ("unknown", {}), ("expand", {"node": "shell:ls"})),
+            turn(("reply", {"text": "My view needs a better source."})),
+        ]
+    )
+    assert result["action"] == "reply"
+    replies = [json.loads(m["content"]) for m in requests[1]["messages"] if m["role"] == "tool"]
+    assert len(replies) == 3
+    assert all("error" in reply for reply in replies)

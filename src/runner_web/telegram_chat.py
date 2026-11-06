@@ -960,7 +960,7 @@ def record_action(
                 message.message_id,
                 message.update_id,
                 action,
-                (detail or "")[:500] or None,
+                (detail or "")[: MAX_TEXT_CHARS if action == "reply" else 500] or None,
                 _utc(now).isoformat(),
             ),
         ).rowcount

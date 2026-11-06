@@ -292,7 +292,7 @@ from `dash_world()`: the session, the board summary, new runners, recent events,
 community activity, Dash's own book, and `changes` — what landed since the last
 look. The one read verb is `expand` (`board`, `runners`, `events`, `halts`,
 `community`, `sector:<name>`, `sports`, `sports:<league>`, `memecoins`,
-`coin:<contract address or id>`, `report:pre`, `report:post`, `ticker:<SYM>`);
+`coin:<contract address or id>`, `report:pre`, `report:post`, `ticker:<SYM>`).
 The research loop also offers `remember_thesis`. The other actions are
 `reply`, `react`, `hold`, `make_call`, `close_call`, `comment_on_ticker`, and
 `my_standing`. His recent chat actions come back in the
@@ -349,8 +349,9 @@ that time.
 context, and an identical note is held.
 
 Each turn has up to eight model calls and twelve tool actions. Repeated reads of
-the same node share a result within the turn. The final model round is reserved
-for an answer. The loop stops starting work after 75 seconds; an active request
+the same node share a result within the turn. The final model round, or a turn
+with 30 seconds left, is reserved for an answer. The loop stops starting work
+after 75 seconds; an active request
 uses the existing 30-second HTTP timeout. Each model response has a 1,600-token
 ceiling. Source errors return to the analyst so he can inspect another source.
 The existing hourly reply and turn caps, daily public-action limits, and once-only

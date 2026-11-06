@@ -599,6 +599,22 @@ def test_being_addressed_earns_a_reply_and_opens_a_run(wired):
     assert run["replies_left"] == chat.ENGAGEMENT_REPLIES - 1
 
 
+def test_a_full_analysis_reaches_the_followup_history(wired):
+    from runner_web import main as web_main
+
+    text = "My take: the move needs stronger volume. " * 35
+    text += "I would change my mind if fresh volume supported the breakout."
+    with connection() as database:
+        chat.record_update(database, _update("Explain your take", mention=True), NOW)
+    result = web_main.run_telegram_chat(
+        lambda message, transcript: {"action": "reply", "text": text}, at=NOW
+    )
+    assert result["replied"] == 1
+    with connection() as database:
+        transcript = chat.recent_transcript(database, CHAT, before_update_id=2)
+    assert transcript[-1]["said"] == text
+
+
 def test_every_mention_in_one_backlog_gets_an_answer(wired):
     """A batch of updates is not one instant.
 
