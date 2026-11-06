@@ -165,8 +165,8 @@ def save_thesis(
                 note["previous_view"] = previous["previous_view"]
         # The existing worker-state store supplies durable, per-node upserts.
         database.execute(
-            "DELETE FROM worker_state WHERE key LIKE 'dash_thesis:%' AND updated_at<?",
-            ((at - timedelta(days=NOTE_DAYS)).isoformat(),),
+            "DELETE FROM worker_state WHERE key LIKE ? AND updated_at<?",
+            ("dash_thesis:%", (at - timedelta(days=NOTE_DAYS)).isoformat()),
         )
         database.execute(
             "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
