@@ -741,9 +741,9 @@ def test_a_decided_comment_runs_once_across_a_retried_turn(room, monkeypatch):
     web_main._decide_telegram_turn(message, [])
 
     assert [ticker for ticker, _ in posted] == ["MSGM"]
-    # Each turn chooses an action and then answers. The stored action runs once.
+    # A retry reuses the saved answer and the stored action.
     assert writes_first == 2
-    assert len(room.writes) == 4
+    assert len(room.writes) == 2
     action_result = json.loads(room.writes[-1]["messages"][-1]["content"])
     assert action_result["already_done"] is True
 
@@ -841,7 +841,7 @@ def desk(monkeypatch):
     sent: list[str] = []
     notes: list[Any] = []
     monkeypatch.setattr(
-        web_main, "send_telegram_reply", lambda config, chat_id, text, **_: sent.append(text)
+        web_main, "send_telegram_reply", lambda config, chat_id, text, **_: sent.append(text) or 42
     )
     monkeypatch.setattr(
         web_main, "dash_world", lambda *a, **k: {"changes": {"any": True, "new_runners": 1}}

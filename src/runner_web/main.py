@@ -43,7 +43,7 @@ from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
-from runner_web import attention, dash_research
+from runner_web import attention, dash_jobs, dash_research
 from runner_web import db as runner_db
 from runner_web import decisions as openrouter_decisions
 from runner_web.account_routes import (
@@ -2152,6 +2152,8 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
                     if generate
                     else {"action": "hold", "why": "no model configured"}
                 )
+            if decision.get("action") == "retry":
+                continue
             with connection() as database:
                 outcome = _act_on_telegram_message(database, config, message, decision, now)
                 telegram_finish_update(database, update_id, "handled", now=now)
@@ -2257,6 +2259,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         unbacked=_dash_research_unbacked,
         evidence=evidence,
         scope=dash_research.research_scope(message.chat_id, message.message_thread_id),
+        job_key=f"telegram:{message.update_id}",
         act=lambda name, args: _dash_research_action(message, name, args),
     )
 
@@ -2411,6 +2414,7 @@ def _write_telegram_reply(
         unbacked=_dash_research_unbacked,
         evidence=evidence,
         scope=dash_research.research_scope(message.chat_id, message.message_thread_id),
+        job_key=f"telegram:{message.update_id}",
         act=act,
         allow_text=True,
         at=now,
@@ -2541,10 +2545,20 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
             "world": {
                 key: value
                 for key, value in world.items()
-                if key not in {"due_theses", "previous_note", "research_scope", "research_time"}
+                if key
+                not in {
+                    "due_theses",
+                    "previous_note",
+                    "research_scope",
+                    "research_time",
+                    "research_job",
+                    "research_chat_id",
+                }
             }
         },
         scope=world.get("research_scope"),
+        job_key=world.get("research_job"),
+        job_chat_id=world.get("research_chat_id"),
         proactive=True,
         allow_text=True,
         at=_stamp(world.get("research_time")),
@@ -2563,7 +2577,32 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     chat_id = telegram_room_chat_id()
     if chat_id is None:
         return {"status": "no_room"}
+    from dataclasses import replace
+
+    from runner_web.telegram_outbox import deliver_outbox, enqueue_cards
+
     current = at or now()
+    room_config = replace(config, chat_id=str(chat_id))
+
+    def deliver():
+        def sender(target, text):
+            with connection() as database:
+                body, preview = _dash_reply_markup(database, text)
+            return send_telegram_reply(
+                target, chat_id, text, html=body, preview_url=preview, confirmed=True
+            )
+
+        result = deliver_outbox(room_config, sender, at=current, kinds=("dash_research",))
+        if result["status"] == "sent":
+            note = result["items"][0]["text"]
+            worker_state("dash_desk_note_last_at", current.isoformat())
+            worker_state("dash_desk_note_last_note", note[:3500])
+        return result
+
+    # Recover frozen findings before considering new research or quiet-time gates.
+    pending = deliver()
+    if pending["status"] != "empty":
+        return pending
     with connection() as database:
         rows = database.execute(
             "SELECT key,value FROM worker_state "
@@ -2571,19 +2610,32 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
         ).fetchall()
     saved = {row["key"]: row["value"] for row in rows}
     last_at = _stamp(saved.get("dash_desk_note_last_at"))
-    if last_at and (current - last_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS:
+    scope = dash_research.research_scope(chat_id)
+    active = dash_jobs.active_desk_key(scope)
+    if (
+        not active
+        and last_at
+        and (current - last_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS
+    ):
         return {"status": "waiting"}
     world = dash_world(current)
-    scope = dash_research.research_scope(chat_id)
     due = dash_research.due_notes(dash_research.notebook(scope, current), current)
-    if not world["changes"]["any"] and not due:
+    if not active and not world["changes"]["any"] and not due:
         return {"status": "quiet"}
-    if not due and DASH_DECISIONS_ENABLED and _desk_note_gate(world, current) is False:
+    if (
+        not active
+        and not due
+        and DASH_DECISIONS_ENABLED
+        and _desk_note_gate(world, current) is False
+    ):
         return {"status": "held", "detail": "not_worth_speaking"}
+    identity = active or "desk:" + uuid.uuid4().hex
     world = {
         **world,
         "research_scope": scope,
         "research_time": current.isoformat(),
+        "research_job": identity,
+        "research_chat_id": chat_id,
         "due_theses": due,
         "previous_note": saved.get("dash_desk_note_last_note", ""),
     }
@@ -2592,13 +2644,23 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     except Exception as exc:
         return {"status": "error", "detail": type(exc).__name__}
     if not note or note == saved.get("dash_desk_note_last_note"):
-        return {"status": "held"}
+        return {"status": "pending" if dash_jobs.active_desk_key(scope) else "held"}
+    # The research completion enqueues atomically. This also accepts alternate generators.
     with connection() as database:
-        body, preview = _dash_reply_markup(database, note)
-    send_telegram_reply(config, chat_id, note, html=body, preview_url=preview)
-    worker_state("dash_desk_note_last_at", current.isoformat())
-    worker_state("dash_desk_note_last_note", note[:3500])
-    return {"status": "sent", "chars": len(note)}
+        enqueue_cards(
+            database,
+            str(chat_id),
+            [
+                {
+                    "kind": "dash_research",
+                    "subject": f"{scope}:{identity}",
+                    "text": note,
+                    "research_job": identity,
+                }
+            ],
+            at=current,
+        )
+    return deliver()
 
 
 async def dash_desk_note_worker() -> None:
@@ -2606,6 +2668,7 @@ async def dash_desk_note_worker() -> None:
         return
     await asyncio.sleep(180)
     while True:
+        result = {"status": "error"}
         try:
             result = await run_in_threadpool(post_dash_desk_note)
             worker_state("dash_desk_note_last_run", json.dumps(result, separators=(",", ":")))
@@ -2613,7 +2676,10 @@ async def dash_desk_note_worker() -> None:
             raise
         except Exception as exc:
             worker_state("dash_desk_note_last_error", str(exc)[:500])
-        await asyncio.sleep(DASH_DESK_NOTE_SECONDS)
+        delay = DASH_DESK_NOTE_SECONDS
+        if result.get("status") in {"pending", "retry", "error", "waiting"}:
+            delay = min(delay, 60)
+        await asyncio.sleep(delay)
 
 
 def _telegram_has_pending() -> bool:

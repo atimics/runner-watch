@@ -76,7 +76,7 @@ def run(script, *, expand=None, evidence=None, **kwargs):
         unbacked=kwargs.pop("unbacked", lambda text, evidence: []),
         evidence=evidence if evidence is not None else {},
         scope=SCOPE,
-        at=NOW,
+        at=kwargs.pop("at_override", NOW),
         **kwargs,
     )
     return result, requests
