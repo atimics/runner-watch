@@ -17,6 +17,15 @@
   <tr><td>History, up to 1,000 records</td><td>25</td></tr>
   <tr><td>Fresh token controls check</td><td>25</td></tr><tr><td>Wallet scan, up to 1,000 transactions</td><td>100</td></tr>
   </tbody></table></section>
+  <section class="plan-card" aria-labelledby="insightsTitle"><h2 id="insightsTitle">More from each report</h2>
+  <p><strong>Token insights · 10 credits.</strong> Read score reasons and changes, saved control checks, sampled activity, and evidence gaps. Look up a report by its Solana mint address.</p>
+  <p><strong>Wallet insights · 10 credits.</strong> See the largest positions, buying-cost coverage, profit by quote currency, and recent sales with known costs. Follow the cursor for more holdings.</p>
+  <p>Each report shows when its evidence was collected. Pending prices and buying costs stay visible alongside the results.</p>
+  <details><summary style="padding:.75rem 0;min-height:44px;cursor:pointer">Example report requests</summary>
+  <pre style="white-space:pre-wrap;overflow-wrap:anywhere">GET /api/v1/tokens/by-mint/SOLANA_MINT/analysis
+GET /api/v1/wallets/SOLANA_WALLET</pre>
+  <p>Both use your API key. Each report includes an <code>insights</code> object. Wallet summaries cover all saved holdings; pages contain up to 100 positions.</p>
+  </details></section>
   <section class="plan-card"><h2>Your API keys</h2>
   {% if user %}
   <p id="apiBalance" role="status">Loading your balance…</p>
