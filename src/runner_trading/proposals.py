@@ -327,12 +327,14 @@ def approve(
                     "UPDATE trading_accounts SET reserved_usdc=reserved_usdc+? WHERE id=?",
                     (amount, ACCOUNT),
                 )
-            db.execute(
+            changed = db.execute(
                 "UPDATE trading_proposals SET "
-                "status='approved',approved_by=?,approved_at=?,order_id=? WHERE "
-                "id=?",
-                (operator, stamp(now), identifier, identifier),
+                "status='approved',approved_by=?,approved_at=?,order_id=? "
+                "WHERE id=? AND status='proposed' AND review_token=?",
+                (operator, stamp(now), identifier, identifier, review_token),
             )
+            if changed.rowcount != 1:
+                raise ValueError("The proposal changed. Review it again")
             ledger.event(
                 db,
                 ACCOUNT,

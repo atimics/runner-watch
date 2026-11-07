@@ -326,3 +326,37 @@ def test_signing_rechecks_approval_after_slow_simulation(trading_db, monkeypatch
     with pytest.raises(ProviderError):
         live.prepare(identifier, token, order, quote, AT)
     assert ledger.rows("trading_orders", identifier)[0]["signed_transaction"] is None
+
+
+def test_postgres_dismissal_during_approval_rolls_back_the_order(trading_db, monkeypatch):
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    if not os.getenv("TRADING_TEST_DATABASE_URL"):
+        pytest.skip("Requires the PostgreSQL transaction check")
+    now, _ = fund(monkeypatch)
+    p = idea(now)
+    q = review(p["id"], now)
+    checked, proceed = Event(), Event()
+    original = proposals.check
+
+    def wait_after_check(*args):
+        row = original(*args)
+        checked.set()
+        assert proceed.wait(10)
+        return row
+
+    monkeypatch.setattr(proposals, "check", wait_after_check)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(proposals.approve, p["id"], q["review_token"], "operator", at=now)
+        try:
+            assert checked.wait(10)
+            proposals.reject(p["id"], "operator")
+        finally:
+            proceed.set()
+        with pytest.raises(ValueError, match="proposal changed"):
+            result.result(timeout=10)
+    assert proposals.get(p["id"])["status"] == "rejected"
+    assert ledger.rows("trading_orders", proposals.ACCOUNT) == []
+    assert ledger.account(proposals.ACCOUNT)["reserved_usdc"] == 0
