@@ -51,6 +51,26 @@ def test_desk_note_counts_halt_entries_in_the_dated_context(items):
     assert state["halts_today"] == len(items)
 
 
+def test_desk_note_separates_carried_over_halts_from_todays_starts():
+    state = desk_note_state(
+        {
+            "halts": {
+                "items": [{"ticker": "OLD"}],
+                "halts_today": 0,
+                "carried_over_count": 3,
+                "unresolved_count": 2,
+                "resolved_count": 1,
+            }
+        },
+        last_note="",
+        minutes_since=None,
+    )
+    assert state["halts_today"] == 0
+    assert state["carried_over_halts"] == 3
+    assert state["unresolved_halts"] == 2
+    assert state["resolved_halts"] == 1
+
+
 @pytest.fixture(autouse=True)
 def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "decisions.db")

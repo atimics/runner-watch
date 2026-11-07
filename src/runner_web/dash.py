@@ -747,44 +747,69 @@ def _after_reopen(
         "last_vs_reopen_pct": _pct(last, first),
         "bars": len(after),
         "as_of": _eastern(after[-1]["at"]),
+        "reopen_observed_at": after[0]["at"].isoformat(),
+        "last_observed_at": after[-1]["at"].isoformat(),
     }
 
 
 def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, Any]]:
-    """Today's halts, one entry per ticker, newest first.
+    """Seven calendar days of halts, plus older unresolved/scheduled events.
 
-    Each entry carries why it stopped, when it reopens or reopened, and how it
-    traded after. A halt whose resume is announced stays in view here: that is
-    when it gets interesting. Tickers halted more than once today show every
-    halt, so four halts in forty minutes read as four, not as one.
+    Source event time and collection time have separate fields. An old halt
+    without a source resume remains unresolved, even if it leaves the feed.
+    Latest versions and first sightings are selected before the history limit.
     """
 
     from runner_web.nasdaq_halts import latest_halt_versions
 
-    current = at or datetime.now(UTC)
-    day_start = (
-        current.astimezone(EASTERN)
-        .replace(hour=0, minute=0, second=0, microsecond=0)
-        .astimezone(UTC)
-    )
+    current = (at or datetime.now(UTC)).astimezone(UTC)
+    local_start = current.astimezone(EASTERN).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start = local_start.astimezone(UTC)
+    history_start = (local_start - timedelta(days=6)).astimezone(UTC)
     with connection() as database:
+        # Ingestion writes valid JSON on both backends. SQLite also tolerates
+        # a malformed legacy payload as an unresolved event.
+        resume_time = (
+            "payload_json::jsonb ->> 'trade_resume_at'"
+            if database.backend == "postgres"
+            else "CASE WHEN json_valid(payload_json) "
+            "THEN json_extract(payload_json,'$.trade_resume_at') END"
+        )
         rows = database.execute(
-            """
-            SELECT source,ticker,event_type,status,event_at,payload_json,
-                   first_collected_at,last_collected_at
-            FROM public_market_events
-            WHERE event_type='trading_halt' AND event_at>=? AND event_at<=?
-            ORDER BY event_at DESC,last_collected_at DESC LIMIT 200
+            f"""
+            WITH versions AS (
+                SELECT source,ticker,event_type,status,event_at,published_at,source_url,
+                       payload_json,first_collected_at,last_collected_at,
+                       MIN(first_collected_at) OVER (
+                           PARTITION BY source,ticker,event_at
+                       ) AS first_seen_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY source,ticker,event_at
+                           ORDER BY last_collected_at DESC,first_collected_at DESC
+                       ) AS version_rank
+                FROM public_market_events
+                WHERE event_type='trading_halt' AND event_at<=?
+            ), current_halts AS (
+                SELECT *,{resume_time} AS resume_at FROM versions WHERE version_rank=1
+            )
+            SELECT * FROM current_halts
+            WHERE event_at>=? OR resume_at IS NULL OR resume_at>=?
+            ORDER BY CASE WHEN resume_at IS NULL OR resume_at>? THEN 0 ELSE 1 END,
+                     event_at DESC,last_collected_at DESC
+            LIMIT 200
             """,
-            (day_start.isoformat(), current.isoformat()),
+            (
+                current.isoformat(),
+                history_start.isoformat(),
+                history_start.isoformat(),
+                current.isoformat(),
+            ),
         ).fetchall()
         by_ticker: dict[str, list[dict[str, Any]]] = {}
         for row in latest_halt_versions([dict(row) for row in rows]):
             ticker = str(row["ticker"] or "").upper()
             halted_at = _when(row["event_at"])
             if not ticker or halted_at is None:
-                continue
-            if ticker not in by_ticker and len(by_ticker) >= max(1, min(int(limit), 20)):
                 continue
             payload = _payload(row["payload_json"])
             by_ticker.setdefault(ticker, []).append(
@@ -794,24 +819,53 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
                     "reason_code": str(payload.get("reason_code") or "") or None,
                     "issue_name": payload.get("issue_name"),
                     "pause_price": payload.get("pause_threshold_price"),
+                    "source": row["source"],
+                    "source_url": row["source_url"],
+                    "source_published_at": row["published_at"],
+                    "first_seen_at": row["first_seen_at"],
+                    "last_seen_at": row["last_collected_at"],
                 }
             )
         if not by_ticker:
             return []
-        tickers = list(by_ticker)
-        earliest = min(halt["halted_at"] for halts in by_ticker.values() for halt in halts)
-        placeholders = ",".join("?" for _ in tickers)
-        bar_rows = database.execute(
-            f"""
-            SELECT ticker,bar_time,open,high,low,close FROM market_bars
-            WHERE source='yahoo' AND interval='5m' AND ticker IN ({placeholders})
-              AND bar_time>=? AND bar_time<=? AND close IS NOT NULL
-            ORDER BY ticker,bar_time
-            """,
-            (*tickers, (earliest - timedelta(minutes=30)).isoformat(), current.isoformat()),
-        ).fetchall()
+        by_ticker = dict(
+            sorted(
+                by_ticker.items(),
+                key=lambda item: (
+                    any(
+                        halt["resumed_at"] is None or halt["resumed_at"] > current
+                        for halt in item[1]
+                    ),
+                    item[1][0]["halted_at"],
+                ),
+                reverse=True,
+            )[: max(1, min(int(limit), 20))]
+        )
+        # An unresolved halt can be months old. Price history stays within the
+        # seven-day display window, with at most 20 tickers and 42,000 bars.
+        tickers = [
+            ticker
+            for ticker, halts in by_ticker.items()
+            if any(halt["resumed_at"] and halt["resumed_at"] <= current for halt in halts)
+        ]
+        bar_rows = []
+        if tickers:
+            placeholders = ",".join("?" for _ in tickers)
+            bar_rows = database.execute(
+                f"""
+                SELECT ticker,bar_time,open,high,low,close FROM market_bars
+                WHERE source='yahoo' AND interval='5m' AND ticker IN ({placeholders})
+                  AND bar_time>=? AND bar_time<=? AND close IS NOT NULL
+                ORDER BY bar_time DESC LIMIT 42000
+                """,
+                (
+                    *tickers,
+                    (history_start - timedelta(minutes=30)).isoformat(),
+                    current.isoformat(),
+                ),
+            ).fetchall()
     bars: dict[str, list[dict[str, Any]]] = {}
-    for row in bar_rows:
+    for row in reversed(bar_rows):
         moment = _when(row["bar_time"])
         if moment is None:
             continue
@@ -830,22 +884,52 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
         described = []
         for halt in halts:
             resumed_at = halt["resumed_at"]
+            carried_over = halt["halted_at"] < day_start
             if resumed_at is None:
-                state = "halted, no resume time yet"
+                resolution = "unresolved"
+                state = (
+                    "resolution unknown, no resume recorded"
+                    if carried_over
+                    else "halted, no resume time yet"
+                )
             elif resumed_at > current:
+                resolution = "scheduled"
                 state = "resume scheduled"
             else:
+                resolution = "resumed"
                 state = "reopened"
             described.append(
                 {
                     "halted_at": _eastern(halt["halted_at"]),
+                    "source_halted_at": halt["halted_at"].isoformat(),
+                    "source_published_at": halt["source_published_at"],
+                    "first_seen_at": halt["first_seen_at"],
+                    "last_seen_at": halt["last_seen_at"],
+                    "source": halt["source"],
+                    "source_url": halt["source_url"],
+                    "carried_over": carried_over,
                     "reason": halt_reason(halt["reason_code"]),
                     "reason_code": halt["reason_code"],
                     "state": state,
                     "resumes_at": _eastern(resumed_at),
-                    "minutes_halted": round(
-                        (min(resumed_at or current, current) - halt["halted_at"]).total_seconds()
-                        / 60
+                    "resolution": {
+                        "status": resolution,
+                        "resume_at": resumed_at.isoformat() if resumed_at else None,
+                        "evidence": (
+                            "source_trade_resume_time" if resumed_at else "no_source_resume"
+                        ),
+                    },
+                    "minutes_halted": (
+                        None
+                        if carried_over and resumed_at is None
+                        else round(
+                            (min(resumed_at or current, current) - halt["halted_at"])
+                            .total_seconds()
+                            / 60
+                        )
+                    ),
+                    "minutes_since_halt": round(
+                        (current - halt["halted_at"]).total_seconds() / 60
                     ),
                     "pause_price": halt["pause_price"],
                     "after_reopen": _after_reopen(
@@ -861,7 +945,8 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
             {
                 "ticker": ticker,
                 "name": halts[0]["issue_name"],
-                "halts_today": len(halts),
+                "halts_today": sum(halt["halted_at"] >= day_start for halt in halts),
+                "carried_over_count": sum(halt["halted_at"] < day_start for halt in halts),
                 "span_minutes": round((latest - first).total_seconds() / 60),
                 "halts": described,
             }
@@ -876,15 +961,41 @@ def halt_context(limit: int = 8, at: datetime | None = None) -> dict[str, Any]:
 
     current = at or datetime.now(UTC)
     start = current.astimezone(EASTERN).replace(hour=0, minute=0, second=0, microsecond=0)
+    history_start = start - timedelta(days=6)
     entries = recent_halts(limit=limit, at=current)
     return {
         "items": entries,
         "ticker_count": len(entries),
-        "window_start": start.isoformat(),
+        "halts_today": sum(entry["halts_today"] for entry in entries),
+        "carried_over_count": sum(entry["carried_over_count"] for entry in entries),
+        "unresolved_count": sum(
+            halt["resolution"]["status"] == "unresolved"
+            for entry in entries
+            for halt in entry["halts"]
+        ),
+        "resolved_count": sum(
+            halt["resolution"]["status"] == "resumed"
+            for entry in entries
+            for halt in entry["halts"]
+        ),
+        "scheduled_count": sum(
+            halt["resolution"]["status"] == "scheduled"
+            for entry in entries
+            for halt in entry["halts"]
+        ),
+        "today_start": start.isoformat(),
+        "window_start": history_start.isoformat(),
         "window_end": current.astimezone(EASTERN).isoformat(),
+        "history_calendar_days": 7,
         "session": market_clock(current)["label"],
-        "scope": "Stored events whose halt began in this Eastern calendar day",
+        "scope": (
+            "Seven Eastern calendar days of starts/resumes plus older unresolved/scheduled halts"
+        ),
         "coverage": "stored_events_only",
+        "counts_scope": "displayed_items",
+        "history_limit": 200,
+        "ticker_limit": max(1, min(int(limit), 20)),
+        "resolution_policy": "A missing feed entry is not a recorded resume",
     }
 
 
