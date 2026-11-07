@@ -120,6 +120,8 @@ def create(
 
 def check(proposal: dict, acc: dict, rules: Policy, now: datetime) -> dict:
     amount = positive_int(proposal["input_raw"])
+    if acc["wallet"] != os.getenv("TRADING_WALLET"):
+        raise ValueError("Use the wallet saved for this account")
     if not 0 <= age(acc["heartbeat_at"], now) <= rules.cycle_seconds * 4:
         raise ValueError("Wait for a fresh live wallet balance")
     health = json.loads(acc["health_json"])
@@ -256,6 +258,7 @@ def approve(
             if duplicate:
                 raise ValueError("Wait for the current order for this token")
             buying, amount = p["side"] == "buy", int(p["input_raw"])
+            signal_id = identifier if buying else None
             if buying:
                 held = db.execute(
                     "SELECT mint FROM trading_positions WHERE account_id=? AND status='open'",
@@ -274,7 +277,7 @@ def approve(
                     "INSERT INTO "
                     "trading_signals(id,account_id,mint,coin_id,observed_at,state,reason,"
                     "evidence_json,outcome_due_at) "
-                    "VALUES(?,?,?,?,?,'ordered',?,?,?)",
+                    "VALUES(?,?,?,?,?,'ordered',?,?,?) ON CONFLICT DO NOTHING",
                     (
                         identifier,
                         ACCOUNT,
@@ -286,6 +289,19 @@ def approve(
                         stamp(now + timedelta(hours=6)),
                     ),
                 )
+                signal_id = db.execute(
+                    "SELECT id FROM trading_signals "
+                    "WHERE account_id=? AND mint=? AND observed_at=?",
+                    (ACCOUNT, p["mint"], stamp(now)),
+                ).fetchone()["id"]
+                if db.execute(
+                    "SELECT 1 FROM trading_orders WHERE signal_id=? AND side='buy'", (signal_id,)
+                ).fetchone():
+                    raise ValueError("Wait for a new entry review")
+                db.execute(
+                    "UPDATE trading_signals SET state='ordered',reason=? WHERE id=?",
+                    (p["thesis"], signal_id),
+                )
             db.execute(
                 "INSERT INTO "
                 "trading_orders(id,account_id,signal_id,position_id,mint,side,status,input_raw,"
@@ -294,7 +310,7 @@ def approve(
                 (
                     identifier,
                     ACCOUNT,
-                    identifier if buying else None,
+                    signal_id,
                     p["position_id"],
                     p["mint"],
                     p["side"],

@@ -99,3 +99,40 @@ def test_operator_can_pause_and_resume_the_paper_account(page: Page, client):
     page.get_by_role("button", name="Resume entries").click()
     expect(page.get_by_role("button", name="Pause entries")).to_be_visible()
     assert ledger.account(trader.identifier)["paused"] == 0
+
+
+@pytest.mark.parametrize("width", [320, 1440])
+def test_dash_trade_preview_and_approval_fit_and_work_with_keyboard(
+    page: Page, client, monkeypatch, width
+):
+    from runner_trading import proposals
+    from tests.test_dash_trading import fund, idea, review
+
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    open_desk(page, client, width)
+    now, wallet = fund(monkeypatch)
+    p = idea(now)
+    quote = review(p["id"], now)
+    monkeypatch.setattr(proposals, "preview", lambda _: quote)
+    page.goto("http://testserver/trading?mode=live")
+    page.get_by_role("button", name="Review trade").click()
+    dialog = page.get_by_role("dialog", name="Review real-funds trade")
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_role("button", name="Keep reviewing")).to_be_focused()
+    expect(dialog).to_contain_text("Spend 250.000000 USDC")
+    expect(dialog).to_contain_text(wallet)
+    expect(dialog).to_contain_text("Maximum network cost: 0.005 SOL")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    evidence = Path(os.getenv("TRADING_SCREENSHOT_DIR", tempfile.gettempdir()))
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(evidence / f"dash-trade-review-{width}.png"), full_page=True)
+    page.keyboard.press("Escape")
+    expect(dialog).not_to_be_visible()
+    expect(page.get_by_role("button", name="Review trade")).to_be_focused()
+    page.get_by_role("button", name="Review trade").click()
+    dialog.get_by_role("button", name="Approve trade").click()
+    expect(dialog).not_to_be_visible()
+    assert ledger.account(proposals.ACCOUNT)["reserved_usdc"] == 250_000_000
+    assert len(ledger.rows("trading_orders", proposals.ACCOUNT)) == 1
+    assert errors == []

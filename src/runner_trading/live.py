@@ -278,24 +278,35 @@ class Live:
         current = self.rpc("getBlockHeight", [{"commitment": "confirmed"}])
         if not current < height <= current + 200:
             raise ProviderError("Use a current block-height expiry")
-        proposals.require_approval(order, quote, self.wallet, self.policy, self.provider.clock())
-        signed = VersionedTransaction.populate(
-            transaction.message, [self.signer.sign_message(to_bytes_versioned(transaction.message))]
-        )
+        sol_price = self.provider.sol_price_usdc()
         with ledger.locked(identifier, token, self.provider.clock()) as db:
             acc = db.execute(
-                "SELECT paused FROM trading_accounts WHERE id=?", (identifier,)
+                "SELECT paused,wallet FROM trading_accounts WHERE id=?", (identifier,)
             ).fetchone()
+            if acc["wallet"] != self.wallet:
+                raise ProviderError("Use the wallet saved for this account")
             if order["side"] == "buy" and acc["paused"]:
                 raise ProviderError("Entries paused")
+            current_order = db.execute(
+                "SELECT status FROM trading_orders WHERE id=? AND account_id=?",
+                (order["id"], identifier),
+            ).fetchone()
+            if current_order is None or current_order["status"] != "queued":
+                raise ProviderError("Use the current queued order")
+            proposals.require_approval(
+                order, quote, self.wallet, self.policy, self.provider.clock()
+            )
+            quote.require_fresh(self.policy, self.provider.clock())
+            signed = VersionedTransaction.populate(
+                transaction.message,
+                [self.signer.sign_message(to_bytes_versioned(transaction.message))],
+            )
             db.execute(
                 "UPDATE trading_orders SET status='prepared',quote_json=?,signature=?,"
                 "signed_transaction=?,last_valid_height=?,updated_at=? "
                 "WHERE id=? AND status='queued'",
                 (
-                    ledger.encode(
-                        {**quote.receipt(), "sol_price_usdc": self.provider.sol_price_usdc()}
-                    ),
+                    ledger.encode({**quote.receipt(), "sol_price_usdc": sol_price}),
                     str(signed.signatures[0]),
                     base64.b64encode(bytes(signed)).decode(),
                     height,

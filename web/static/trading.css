@@ -11,3 +11,5 @@
 @media(max-width:420px){.trade-heading{gap:20px}.trade-mode{padding:8px 11px}.trade-status{gap:10px}.trade-status button{margin-left:0}.trade-stats{gap:8px}.trade-stats section{padding:13px}.trade-stats strong{font-size:22px}.trade-limits div{font-size:11px}.trade-decisions time{margin-left:0}.trade-table-wrap td{min-width:100px}}
 
 .trade-address{overflow-wrap:anywhere}.trade-approval{width:min(450px,calc(100vw - 48px));box-sizing:border-box}.trade-approval button:disabled{opacity:.6;cursor:wait}
+
+@media(max-width:360px){.trade-stats{grid-template-columns:1fr}.topbar .markets{flex-wrap:wrap;justify-content:center;gap:4px}.topbar .markets a{flex:none;padding:7px 9px}.trade-stats strong{overflow-wrap:normal}}

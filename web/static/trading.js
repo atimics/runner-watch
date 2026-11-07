@@ -65,7 +65,7 @@
       approval.querySelector('[data-approval-address]').textContent = `Token: ${data.mint}. Wallet: ${data.wallet}.`;
       approval.querySelector('[data-approval-reason]').textContent = `${data.thesis} View changes if: ${data.invalidation}`;
       approval.querySelector('[data-approval-expiry]').textContent =
-        `These limits expire at ${new Date(data.expires_at).toLocaleTimeString()}. Each sale has its own approval.`;
+        `The order must be prepared by ${new Date(data.expires_at).toLocaleTimeString()}. Network confirmation may arrive later. Each sale has its own approval.`;
       approvalStatus.textContent = '';
       approveButton.disabled = false;
       status.textContent = '';

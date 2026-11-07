@@ -26,8 +26,8 @@ def fund(monkeypatch):
         db.execute(
             "UPDATE trading_accounts SET cash_usdc=1000000000,sol_lamports=50000000,"
             "peak_equity_usdc=1000000000,day_equity_usdc=1000000000,heartbeat_at=?,"
-            "health_json=? WHERE id=?",
-            (stamp(now), '{"state":"ok"}', proposals.ACCOUNT),
+            "health_json=?,wallet=? WHERE id=?",
+            (stamp(now), '{"state":"ok"}', wallet, proposals.ACCOUNT),
         )
         db.execute(
             "INSERT INTO worker_state(key,value,updated_at) VALUES('memecoins_snapshot',?,?)",
@@ -241,3 +241,88 @@ def test_wallet_setup_keeps_secret_private_and_preserves_existing_file(tmp_path)
     with pytest.raises(FileExistsError):
         create_wallet(linked)
     assert path.read_bytes() == original
+
+
+def test_sale_needs_its_own_review_and_keeps_full_quantity(trading_db, monkeypatch):
+    from runner_trading.engine import Trader
+
+    now, wallet = fund(monkeypatch)
+    p = idea(now, amount=25_000_000)
+    q = review(p["id"], now)
+    buy = proposals.approve(p["id"], q["review_token"], "operator", at=now)
+    token = ledger.acquire(proposals.ACCOUNT, now)
+    ledger.fill(
+        proposals.ACCOUNT,
+        token,
+        buy,
+        input_raw=25_000_000,
+        output_raw=100_000_000,
+        fee_lamports=100_000,
+        gas_usdc=10_000,
+        receipt={"test": True},
+        at=now,
+    )
+    ledger.release(proposals.ACCOUNT, token)
+    trader = Trader(
+        Policy(),
+        mode="live",
+        live=SimpleNamespace(wallet=wallet),
+        provider=FakeJupiter(lambda: now),
+        clock=lambda: now,
+        source=lambda: [],
+    )
+    trader.token = ledger.acquire(proposals.ACCOUNT, now)
+    # A risk exit records a reviewable proposal before a sale order exists.
+    trader.monitor({MINT: {"early": {"state": "avoid"}}})
+    ledger.release(proposals.ACCOUNT, trader.token)
+    sales = [p for p in proposals.listing() if p["side"] == "sell"]
+    assert len(sales) == 1
+    assert len(ledger.rows("trading_orders", proposals.ACCOUNT)) == 1
+    q = review(sales[0]["id"], now)
+    assert q["input_amount"] == "100.000000"
+    sell = proposals.approve(sales[0]["id"], q["review_token"], "operator", at=now)
+    order = next(o for o in ledger.rows("trading_orders", proposals.ACCOUNT) if o["id"] == sell)
+    assert order["input_raw"] == "100000000"
+    assert order["side"] == "sell"
+    assert order["position_id"] == buy
+
+
+def test_live_scanner_waits_for_an_approved_proposal(trading_db, monkeypatch):
+    from runner_trading.engine import Trader
+
+    now, wallet = fund(monkeypatch)
+    adapter = SimpleNamespace(wallet=wallet, reconcile=lambda *_: None)
+    trader = Trader(
+        Policy(),
+        mode="live",
+        live=adapter,
+        provider=FakeJupiter(lambda: now),
+        clock=lambda: now,
+        source=lambda: [candidate(now)],
+    )
+    assert trader.cycle()["state"] == "ok"
+    assert ledger.rows("trading_orders", proposals.ACCOUNT) == []
+    assert "operator review" in ledger.rows("trading_signals", proposals.ACCOUNT)[0]["reason"]
+    p = idea(now, amount=25_000_000)
+    q = review(p["id"], now)
+    proposals.approve(p["id"], q["review_token"], "operator", at=now)
+    assert len(ledger.rows("trading_orders", proposals.ACCOUNT)) == 1
+    assert ledger.rows("trading_signals", proposals.ACCOUNT)[0]["state"] == "ordered"
+
+
+def test_signing_rechecks_approval_after_slow_simulation(trading_db, monkeypatch):
+    from tests.test_trading import AT
+
+    live, quote, _, wire = execution()
+    identifier, token, order = reserve(live)
+    validate = live.validate
+
+    def slow_validate(q):
+        transaction = validate(q)
+        wire.clock = lambda: AT + timedelta(minutes=2)
+        return transaction
+
+    monkeypatch.setattr(live, "validate", slow_validate)
+    with pytest.raises(ProviderError):
+        live.prepare(identifier, token, order, quote, AT)
+    assert ledger.rows("trading_orders", identifier)[0]["signed_transaction"] is None

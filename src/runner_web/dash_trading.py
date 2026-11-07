@@ -59,7 +59,6 @@ def act(message, name: str, args: dict) -> dict:
             return {
                 **snapshot("live"),
                 "proposals": proposals.listing(),
-                "wallet": os.getenv("TRADING_WALLET", ""),
                 "approval": "Each buy and sale needs approval on the trading desk.",
             }
         amount = None
