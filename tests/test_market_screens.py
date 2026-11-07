@@ -13,6 +13,52 @@ from runner_web.market_screens import detail, listing, series
 SENTINEL = "operator-only-secret"
 
 
+def test_stock_rows_show_quote_age_and_saved_weekend_context():
+    now = datetime(2026, 11, 7, 16, tzinfo=UTC)
+    quote = now - timedelta(seconds=54143)
+    screen = listing(
+        "stocks",
+        [
+            {**sample("stocks"), "quote_time": quote.isoformat()},
+            {
+                **sample("stocks"),
+                "ticker": "NONE",
+                "quote_time": None,
+                "event_at": now.isoformat(),
+                "quote_as_of": now.isoformat(),
+            },
+        ],
+        at=now,
+        updated_at=now.isoformat(),
+    )
+    old, unknown = screen["rows"]
+    assert old["quote_age_seconds"] == 54143
+    assert old["quote_age_label"] == "Stale · 15h 2m old"
+    assert old["quote_time_label"] == "Quote Nov 06 · 19:57:37 ET"
+    assert old["quote_stale"] is True
+    assert unknown["quote_at"] is None
+    assert unknown["quote_age_label"] == "Age unknown"
+    html = render(screen)
+    assert html.count("data-quote-time ") == 2
+    assert "Quote time unavailable" in html
+    assert "Stock scanner off · showing saved quotes from the last scan." in html
+    assert f'datetime="{quote.isoformat()}"' in html
+
+
+@pytest.mark.parametrize("seconds,stale", [(0, False), (900, False), (901, True), (-60, True)])
+def test_stock_row_freshness_uses_quote_time_not_board_refresh(seconds, stale):
+    now = datetime(2026, 11, 6, 16, tzinfo=UTC)
+    screen = listing(
+        "stocks",
+        [{**sample("stocks"), "quote_time": (now - timedelta(seconds=seconds)).isoformat()}],
+        at=now,
+        updated_at=now.isoformat(),
+    )
+    assert screen["rows"][0]["quote_stale"] is stale
+    assert screen["session_note"] == ""
+    assert listing("memecoins", [sample("memecoins")], at=now)["session_note"] == ""
+
+
 @pytest.mark.parametrize(
     "market_chance,tag,side", [(0.7, "ABOVE", "NYK"), (0.5, "ABOVE", "BOS"), (0.6, "LEVEL", "BOS")]
 )

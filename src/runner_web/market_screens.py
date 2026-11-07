@@ -8,7 +8,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
+from runner_web.attention import MAX_QUOTE_AGE_MINUTES
 from runner_web.market_assessments import assessment
+from runner_web.market_clock import EASTERN, market_clock
 from runner_web.memecoin_chain_parser import coin_search_rank, display_claim, short_address
 from runner_web.prediction_tickers import ticker as prediction_ticker
 from runner_web.sports_identity import participants_ready
@@ -67,6 +69,46 @@ def ago(value: Any) -> str:
     if seconds < 129600:
         return f"{round(seconds / 3600)}h ago"
     return f"{round(seconds / 86400)}d ago"
+
+
+def stock_quote_time(item: dict[str, Any], now: datetime) -> dict[str, Any]:
+    """Date the displayed price, independently of scan and assessment timestamps."""
+    maximum_age = int(MAX_QUOTE_AGE_MINUTES * 60)
+    result = {
+        "quote_at": None,
+        "quote_time_label": "Quote time unavailable",
+        "quote_age_label": "Age unknown",
+        "quote_age_seconds": None,
+        "quote_stale": True,
+        "quote_max_age_seconds": maximum_age,
+    }
+    try:
+        quoted = datetime.fromisoformat(str(item.get("quote_time")).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return result
+    quoted = quoted.replace(tzinfo=UTC) if quoted.tzinfo is None else quoted.astimezone(UTC)
+    seconds = int((now - quoted).total_seconds())
+    minutes = seconds // 60
+    age = (
+        "less than 1m old"
+        if minutes < 1
+        else f"{minutes}m old"
+        if minutes < 60
+        else f"{minutes // 60}h {minutes % 60}m old"
+    )
+    stale = seconds > maximum_age or seconds < 0
+    return {
+        **result,
+        "quote_at": quoted.isoformat(),
+        "quote_time_label": quoted.astimezone(EASTERN).strftime("Quote %b %d · %H:%M:%S ET"),
+        "quote_age_seconds": seconds,
+        "quote_stale": stale,
+        "quote_age_label": "Quote time ahead of clock"
+        if seconds < 0
+        else f"Stale · {age}"
+        if stale
+        else age,
+    }
 
 
 def sports_state(item: dict[str, Any]) -> dict[str, Any]:
@@ -311,7 +353,12 @@ def _outcome_tag(ticker: dict[str, Any]) -> dict[str, str]:
 
 
 def row(
-    market: str, item: dict[str, Any], *, outcome: str = "", contract: str = ""
+    market: str,
+    item: dict[str, Any],
+    *,
+    outcome: str = "",
+    contract: str = "",
+    at: datetime | None = None,
 ) -> dict[str, Any]:
     if market == "sports" and str(item.get("id", "")).startswith("golf:"):
         from runner_web.sports import _golf_display_status
@@ -472,6 +519,7 @@ def row(
     )
     assessment_quote = stamp(item.get("quote_as_of")) if market == "stocks" else ""
     return {
+        **(stock_quote_time(item, at or datetime.now(UTC)) if market == "stocks" else {}),
         **({"indicator": indicator} if indicator else {}),
         **({"verified": indicator["verification"]["verified"]} if market == "stocks" else {}),
         # Ratified shows only on a current reading: a stale quote proves nothing now.
@@ -621,11 +669,13 @@ def listing(
     updated_at: str = "",
     stories: dict[str, dict[str, Any]] | None = None,
     stock_calls: list[dict[str, Any]] | None = None,
+    at: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the tight list screen. The market-wide map view is retired."""
 
     _ = view, graph  # Kept so saved links keep working; the map lives on the ticker page now.
-    pairs = [(item, row(market, item)) for item in items]
+    now = at or datetime.now(UTC)
+    pairs = [(item, row(market, item, at=now)) for item in items]
     if market in {"stocks", "memecoins"}:
         for index, (_, display) in enumerate(pairs):
             display["chart_offset"] = (index // 50) * 50
@@ -646,7 +696,6 @@ def listing(
             for source, display in pairs
             if query.casefold() in _search_text(market, source, display).casefold()
         ]
-    now = datetime.now(UTC)
     target_day = ""
     calls_by_ticker: dict[str, dict[str, Any]] = {}
     if market == "stocks":
@@ -742,6 +791,12 @@ def listing(
         "market": market,
         "label": LABELS[market],
         "rows": rows,
+        "session_note": (
+            "Stock scanner off · showing saved quotes from the last scan. "
+            "Each row shows its own quote time."
+            if market == "stocks" and not market_clock(now)["scanner_active"]
+            else ""
+        ),
         "ranking_status": (
             {
                 "stocks": "Stock ranking pending · current eligible call needed.",

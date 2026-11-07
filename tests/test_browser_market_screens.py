@@ -38,6 +38,39 @@ def open_screen(page, screen, user=None):
     page.goto("http://app.test/")
 
 
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_stock_quote_times_stay_visible_and_age_with_focus(page: Page, width, tmp_path):
+    now = datetime(2026, 11, 7, 16, tzinfo=UTC)
+    page.clock.install(time=now)
+    page.set_viewport_size({"width": width, "height": 844})
+    screen = listing(
+        "stocks",
+        [
+            {
+                **fixtures.sample("stocks"),
+                "quote_time": (now - timedelta(seconds=54143)).isoformat(),
+            },
+            {**fixtures.sample("stocks"), "ticker": "NONE", "quote_time": None},
+        ],
+        at=now,
+    )
+    open_screen(page, screen)
+    expect(page.locator(".stock-session-note")).to_contain_text("Stock scanner off")
+    old, unknown = page.locator("[data-quote-time]").all()
+    expect(old).to_contain_text("Quote Nov 06 · 19:57:37 ET")
+    expect(old).to_contain_text("Stale · 15h 2m old")
+    expect(unknown).to_contain_text("Quote time unavailable")
+    expect(unknown).to_contain_text("Age unknown")
+    assert old.bounding_box()["height"] >= 16
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    ticker = page.locator("a.ticker").first
+    ticker.focus()
+    page.clock.fast_forward(120000)
+    expect(ticker).to_be_focused()
+    expect(old).to_contain_text("Stale · 15h 4m old")
+    page.screenshot(path=str(tmp_path / f"stock-quote-times-{width}.png"), full_page=True)
+
+
 @pytest.mark.parametrize("width", [390, 1280])
 def test_first_token_search_fills_the_existing_detail_facts(page: Page, width, tmp_path):
     address = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"

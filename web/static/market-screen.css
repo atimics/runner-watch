@@ -454,6 +454,9 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
    Desktop retains its original chip and chart column. One SVG serves both. */
 :is(.market-stocks,.market-memecoins) .ticker-trend{display:block;width:64px;min-width:0}
 .stock-freshness-note{margin:0 0 16px;padding:10px 12px;border-left:2px solid var(--muted);background:var(--panel);color:var(--text);font-size:12px}
+.stock-session-note{margin:0 0 16px;padding:12px;border-left:2px solid var(--amber);background:var(--panel);color:var(--text);font-size:13px;line-height:1.5}
+.market-stocks .ticker-quote-time{grid-column:2/-1;grid-row:2;display:flex;flex-wrap:wrap;gap:2px 12px;min-width:0;font-size:11px;line-height:1.5;color:var(--muted)}
+.market-stocks .ticker-quote-time.is-stale [data-quote-age]{color:var(--amber)}
 /* The run state sits beside the price as one small chip; its reasons live in the tooltip. */
 .state-chip,.asset-value>.state-chip{position:relative;display:inline-flex;align-items:center;gap:5px;align-self:center;padding:3px 9px;border:1px solid var(--line);border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.04em;cursor:help}
 .state-chip i{width:6px;height:6px;border-radius:50%;background:currentColor}
