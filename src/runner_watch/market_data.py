@@ -403,24 +403,31 @@ class YahooQuoteAdapter:
         except Exception as exc:
             warnings.append(f"Could not record {fetch.source} {fetch.feed} fetch: {exc}")
 
-    def _previous_close(self, handle: Any, warnings: list[str]) -> float | None:
+    def _previous_close(
+        self, handle: Any, observed_at: datetime, warnings: list[str]
+    ) -> float | None:
+        """Anchor the move to the regular close before the quote's Eastern date."""
 
-        info = getattr(handle, "fast_info", None)
-        if info is None:
-            return None
-        readers = (
-            lambda: info.previous_close,
-            lambda: info.get("previousClose"),
-            lambda: info["previousClose"],
-        )
-        for reader in readers:
-            try:
-                value = _quote_number(reader())
-            except Exception:
-                continue
-            if value is not None:
-                return value
-        warnings.append("Yahoo did not report a previous close")
+        try:
+            daily = handle.history(
+                period="1mo",
+                interval="1d",
+                prepost=False,
+                auto_adjust=False,
+                timeout=self.timeout,
+            )
+            if daily is not None and not daily.empty and "Close" in daily:
+                dates = pd.to_datetime(daily.index)
+                if dates.tz is not None:
+                    dates = dates.tz_convert(EASTERN)
+                prior = daily[dates.date < observed_at.astimezone(EASTERN).date()]
+                if not prior.empty:
+                    value = _quote_number(prior.sort_index()["Close"].iloc[-1])
+                    if value is not None and value > 0:
+                        return value
+        except Exception as exc:
+            warnings.append(f"Yahoo regular close lookup failed: {type(exc).__name__}")
+        warnings.append("Yahoo did not report a previous regular close")
         return None
 
     def fetch(
@@ -459,7 +466,7 @@ class YahooQuoteAdapter:
                 Quote(
                     symbol=symbol,
                     observed_at=observed_at,
-                    previous_close=self._previous_close(handle, warnings),
+                    previous_close=self._previous_close(handle, observed_at, warnings),
                     session=session_label(observed_at.astimezone(EASTERN)),
                     **values,
                 )
