@@ -409,6 +409,27 @@ class YahooQuoteAdapter:
         """Anchor the move to the regular close before the quote's Eastern date."""
 
         try:
+            metadata = handle.get_history_metadata()
+            start = metadata.get("currentTradingPeriod", {}).get("regular", {}).get("start")
+            session_start = (
+                pd.Timestamp(start, unit="s", tz=UTC)
+                if isinstance(start, (int, float))
+                else pd.Timestamp(start)
+            )
+            value = _quote_number(metadata.get("chartPreviousClose"))
+            if (
+                metadata.get("range") == QUOTE_PERIOD
+                and metadata.get("dataGranularity") == QUOTE_INTERVAL
+                and session_start.tzinfo is not None
+                and session_start.tz_convert(EASTERN).date()
+                == observed_at.astimezone(EASTERN).date()
+                and value is not None
+                and value > 0
+            ):
+                return value
+        except Exception:
+            pass
+        try:
             daily = handle.history(
                 period="1mo",
                 interval="1d",

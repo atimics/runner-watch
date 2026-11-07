@@ -77,6 +77,7 @@ def _save_quote(database: Any, ticker: str, values: dict[str, Any]) -> None:
         "observed_at",
         "session",
         "previous_close",
+        "previous_close_basis",
         "change_pct",
         "day_high",
         "day_low",
@@ -120,6 +121,7 @@ def _public_quote(row: dict[str, Any] | None, now: datetime) -> dict[str, Any] |
         "observed_at": row.get("observed_at"),
         "session": row.get("session"),
         "previous_close": row.get("previous_close"),
+        "previous_close_basis": row.get("previous_close_basis"),
         "change_pct": row.get("change_pct"),
         "day_high": row.get("day_high"),
         "day_low": row.get("day_low"),
@@ -154,6 +156,7 @@ def _fetch_quote(ticker: str, now: datetime) -> dict[str, Any]:
         observed_at=quote.observed_at.isoformat(),
         session=quote.session,
         previous_close=quote.previous_close,
+        previous_close_basis="regular_session" if quote.previous_close is not None else None,
         change_pct=_change_pct(quote.last, quote.previous_close),
         day_high=quote.day_high,
         day_low=quote.day_low,
@@ -273,6 +276,7 @@ def refresh_hot_quotes(tickers: list[str], at: datetime | None = None) -> dict[s
                     "observed_at": observed_at.isoformat(),
                     "session": session_label(observed_at.astimezone(EASTERN)),
                     "previous_close": previous,
+                    "previous_close_basis": "regular_session" if previous is not None else None,
                     "change_pct": _change_pct(values["last"], previous),
                     "day_high": values["day_high"],
                     "day_low": values["day_low"],
@@ -295,27 +299,41 @@ def refresh_hot_quotes(tickers: list[str], at: datetime | None = None) -> dict[s
 def _previous_close_for(database: Any, ticker: str, session_day: date) -> float | None:
     """The prior session's close, so a batched mark can carry a move as well as a price.
 
-    Prefer the last daily bar before the quote's session. A cached reference can
-    also be used when its quote belongs to that same session date.
+    Preserve a verified regular-close reference for the same quote date. Otherwise
+    use the daily bar for the immediately preceding trading session.
     """
 
-    bar = database.execute(
-        """
-        SELECT close FROM market_bars
-        WHERE ticker=? AND source='yahoo' AND interval='1d' AND bar_time<?
-        ORDER BY bar_time DESC LIMIT 1
-        """,
-        (ticker, session_day.isoformat()),
-    ).fetchone()
-    if bar:
-        return _positive_price(bar["close"])
+    from runner_web.data_health import stock_session_open_for_day
+
     row = database.execute(
-        "SELECT previous_close,observed_at FROM ticker_quotes WHERE ticker=? AND status='ok'",
+        "SELECT previous_close,previous_close_basis,observed_at FROM ticker_quotes "
+        "WHERE ticker=? AND status='ok'",
         (ticker,),
     ).fetchone()
     observed_at = _stamp(row["observed_at"]) if row else None
-    if observed_at and observed_at.astimezone(EASTERN).date() == session_day:
-        return _positive_price(row["previous_close"])
+    if (
+        observed_at
+        and observed_at.astimezone(EASTERN).date() == session_day
+        and row["previous_close_basis"] == "regular_session"
+    ):
+        stored = _positive_price(row["previous_close"])
+        if stored is not None:
+            return stored
+    previous_day = session_day - timedelta(days=1)
+    for _ in range(16):
+        if stock_session_open_for_day(previous_day.isoformat()) is not None:
+            break
+        previous_day -= timedelta(days=1)
+    bar = database.execute(
+        """
+        SELECT close FROM market_bars
+        WHERE ticker=? AND source='yahoo' AND interval='1d' AND bar_time>=? AND bar_time<?
+        ORDER BY bar_time DESC LIMIT 1
+        """,
+        (ticker, previous_day.isoformat(), (previous_day + timedelta(days=1)).isoformat()),
+    ).fetchone()
+    if bar:
+        return _positive_price(bar["close"])
     return None
 
 

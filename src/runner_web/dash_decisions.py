@@ -164,6 +164,7 @@ def desk_note_state(world: Mapping[str, Any], *, last_note: str, minutes_since: 
 
     board = world.get("board") or {}
     runners = world.get("runners") or {}
+    halts = world.get("halts") or {}
     return {
         "changes": world.get("changes") or {},
         "market_session": (world.get("session") or {}).get("label"),
@@ -181,7 +182,7 @@ def desk_note_state(world: Mapping[str, Any], *, last_note: str, minutes_since: 
             {"kind": row.get("kind"), "ticker": row.get("ticker")}
             for row in (world.get("events") or [])[:4]
         ],
-        "halts_today": len(world.get("halts") or []),
+        "halts_today": len(halts.get("items") or []) if isinstance(halts, Mapping) else len(halts),
         "last_note": last_note[:300],
         "minutes_since_last_note": minutes_since,
     }

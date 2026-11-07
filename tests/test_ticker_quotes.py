@@ -94,6 +94,7 @@ def test_a_fetched_quote_is_stored_with_the_change_against_the_previous_close(mo
     assert adapter.calls == 1
     assert quote["price"] == 1.5
     assert quote["previous_close"] == 1.2
+    assert quote["previous_close_basis"] == "regular_session"
     assert quote["change_pct"] == 25.0
     assert quote["session"] == "REGULAR"
     assert quote["fresh"] is True
@@ -251,6 +252,10 @@ class FakeTicker:
         self.daily = daily if daily is not None else pd.DataFrame()
         self._error = error
         self.requests = []
+        self.metadata = {}
+
+    def get_history_metadata(self):
+        return self.metadata
 
     def history(self, **kwargs):
         self.requests.append(kwargs)
@@ -400,6 +405,93 @@ def test_a_failed_regular_close_lookup_keeps_the_observed_price(monkeypatch):
     assert values["status"] == "ok"
     assert values["price"] == 1.15
     assert values["change_pct"] is None
+
+
+@pytest.mark.parametrize(
+    ("reference", "rounded", "price", "expected"),
+    [
+        (0.9511, 0.951, 1.28, 34.58),
+        (0.8165, 0.817, 0.9312, 14.05),
+    ],
+)
+@pytest.mark.parametrize("numeric_time", [False, True])
+def test_chart_metadata_preserves_the_regular_close_precision(
+    monkeypatch, reference, rounded, price, expected, numeric_time
+):
+    from runner_watch import market_data
+
+    observed = datetime(2026, 11, 6, 19, 59, tzinfo=EASTERN)
+    start = datetime(2026, 11, 6, 9, 30, tzinfo=EASTERN)
+    handle = FakeTicker(
+        pd.DataFrame({"Close": [price]}, index=pd.DatetimeIndex([observed])),
+        pd.DataFrame({"Close": [rounded]}, index=pd.date_range("2026-11-05", periods=1)),
+    )
+    handle.metadata = {
+        "range": "1d",
+        "dataGranularity": "1m",
+        "chartPreviousClose": reference,
+        "currentTradingPeriod": {
+            "regular": {"start": start.timestamp() if numeric_time else start}
+        },
+    }
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda _: handle)
+    result = quotes._fetch_quote("AAA", datetime(2026, 11, 7, 11, tzinfo=UTC))
+
+    assert result["previous_close"] == reference
+    assert result["change_pct"] == expected
+    assert len(handle.requests) == 1
+
+    with connection() as database:
+        quotes._save_quote(database, "AAA", result)
+        database.execute(
+            "INSERT INTO market_bars(source,ticker,interval,bar_time,close,"
+            "first_collected_at,last_collected_at) VALUES('yahoo','AAA','1d',?,?,?,?)",
+            ("2026-11-05T05:00:00+00:00", rounded, NOW.isoformat(), NOW.isoformat()),
+        )
+    monkeypatch.setattr(
+        market_data.YahooMarketData,
+        "minutes",
+        lambda self, symbols: market_data.DownloadResult(
+            frames={"AAA": handle._frame}, failed=[], warnings=[]
+        ),
+    )
+    refreshed = quotes.refresh_hot_quotes(["AAA"], at=datetime(2026, 11, 7, 11, 1, tzinfo=UTC))
+    assert refreshed["stored"] == 1
+    saved = quotes.fresh_quotes(["AAA"])["AAA"]
+    assert saved["previous_close"] == reference
+    assert saved["change_pct"] == expected
+
+
+@pytest.mark.parametrize("wrong_date", [False, True])
+def test_chart_reference_requires_a_matching_session_and_one_day_range(monkeypatch, wrong_date):
+    from runner_watch import market_data
+
+    handle = FakeTicker(
+        _minute_frame(),
+        pd.DataFrame(
+            {"Close": [1.0]},
+            index=pd.date_range("2026-09-01", periods=1),
+        ),
+    )
+    handle.metadata = {
+        "range": "1d" if wrong_date else "5d",
+        "dataGranularity": "1m",
+        "chartPreviousClose": 2.0,
+        "currentTradingPeriod": {
+            "regular": {
+                "start": datetime(
+                    2026,
+                    9,
+                    3 if wrong_date else 2,
+                    9,
+                    30,
+                    tzinfo=EASTERN,
+                )
+            }
+        },
+    }
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda _: handle)
+    assert quotes._fetch_quote("AAA", NOW)["previous_close"] == 1.0
 
 
 def test_the_shared_resolver_prefers_the_freshest_lane(monkeypatch):

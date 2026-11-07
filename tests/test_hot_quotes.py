@@ -208,6 +208,7 @@ def test_cached_previous_close_is_scoped_to_its_quote_day():
             {
                 "price": 1.5,
                 "previous_close": 1.0,
+                "previous_close_basis": "regular_session",
                 "observed_at": NOW.isoformat(),
                 "requested_at": NOW.isoformat(),
                 "status": "ok",
@@ -216,6 +217,41 @@ def test_cached_previous_close_is_scoped_to_its_quote_day():
         )
         assert quotes._previous_close_for(database, "AAA", NOW.date()) == 1.0
         assert quotes._previous_close_for(database, "AAA", (NOW + timedelta(days=1)).date()) is None
+
+
+def test_an_older_daily_bar_preserves_the_same_session_reference():
+    with connection() as database:
+        quotes._save_quote(
+            database,
+            "AAA",
+            {
+                "price": 1.5,
+                "previous_close": 1.0,
+                "previous_close_basis": "regular_session",
+                "observed_at": NOW.isoformat(),
+                "requested_at": NOW.isoformat(),
+                "status": "ok",
+                "source": "yahoo",
+            },
+        )
+        database.execute(
+            "INSERT INTO market_bars(source,ticker,interval,bar_time,close,"
+            "first_collected_at,last_collected_at) VALUES('yahoo','AAA','1d',?,?,?,?)",
+            ("2026-08-31T04:00:00+00:00", 1.1, NOW.isoformat(), NOW.isoformat()),
+        )
+        assert quotes._previous_close_for(database, "AAA", NOW.date()) == 1.0
+        database.execute("DELETE FROM ticker_quotes WHERE ticker='AAA'")
+        assert quotes._previous_close_for(database, "AAA", NOW.date()) is None
+
+
+def test_previous_close_uses_the_last_session_across_a_holiday_weekend():
+    with connection() as database:
+        database.execute(
+            "INSERT INTO market_bars(source,ticker,interval,bar_time,close,"
+            "first_collected_at,last_collected_at) VALUES('yahoo','AAA','1d',?,?,?,?)",
+            ("2026-09-04T04:00:00+00:00", 1.1, NOW.isoformat(), NOW.isoformat()),
+        )
+        assert quotes._previous_close_for(database, "AAA", datetime(2026, 9, 8).date()) == 1.1
 
 
 def test_a_missing_frame_counts_as_missing(monkeypatch):

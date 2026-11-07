@@ -29,6 +29,26 @@ class _LockResult:
         return (1,)
 
 
+def test_quote_reference_migration_preserves_legacy_values_as_unverified(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "reference.db")
+    migrations = db.MIGRATIONS
+    monkeypatch.setattr(db, "MIGRATIONS", migrations[:-1])
+    init_db()
+    with connection() as database:
+        database.execute(
+            "INSERT INTO ticker_quotes(ticker,price,previous_close,source,status,requested_at) "
+            "VALUES('KDK',1.28,1.0501,'yahoo','ok','2026-11-07T11:06:00+00:00')"
+        )
+    monkeypatch.setattr(db, "MIGRATIONS", migrations)
+    init_db()
+    init_db()
+    with connection() as database:
+        quote = database.execute("SELECT * FROM ticker_quotes WHERE ticker='KDK'").fetchone()
+    assert quote["price"] == 1.28
+    assert quote["previous_close"] == 1.0501
+    assert quote["previous_close_basis"] is None
+
+
 class _PostgresLockDatabase:
     backend = "postgres"
 

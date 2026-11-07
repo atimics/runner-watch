@@ -21,6 +21,7 @@ from runner_web.dash_decisions import (
     DESK_NOTE_QUESTIONS,
     TURN_QUESTIONS,
     choose_turn,
+    desk_note_state,
     desk_note_worth_it,
     turn_state,
 )
@@ -32,6 +33,22 @@ ALICE = 4242
 BOT_ID = 7849797828
 BOT = "DashRATiBot"
 CA = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr"
+
+
+@pytest.mark.parametrize("items", [[], [{"ticker": "AAA"}]])
+def test_desk_note_counts_halt_entries_in_the_dated_context(items):
+    state = desk_note_state(
+        {
+            "halts": {
+                "items": items,
+                "window_start": NOW.isoformat(),
+                "coverage": "stored_events_only",
+            }
+        },
+        last_note="",
+        minutes_since=None,
+    )
+    assert state["halts_today"] == len(items)
 
 
 @pytest.fixture(autouse=True)
