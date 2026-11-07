@@ -207,6 +207,8 @@ def _complete_group_times() -> list[datetime]:
             FROM ranker_training_examples
             WHERE feature_schema_version=?
               AND barrier_label IN ('down','timeout','up')
+              AND COALESCE(barrier_resolution,'resolved')='resolved'
+              AND outcome_return_bp IS NOT NULL
             GROUP BY scan_run_id
             HAVING COUNT(*)=MAX(expected_candidates) AND COUNT(*)>=2
             ORDER BY captured_at
@@ -220,6 +222,21 @@ def _complete_group_times() -> list[datetime]:
         except ValueError:
             continue
     return output
+
+
+def _usable_group_count(times: list[datetime]) -> int:
+    """Count the latest training groups after the trainer's overlap checks."""
+    from runner_web.replay import purged_chronological_split
+
+    selected = sorted(times)[-RANKER_TRAINING.maximum_groups :]
+    if len(selected) < 3:
+        return 0
+    split = purged_chronological_split(
+        [[{"run_captured_at": moment.isoformat()}] for moment in selected]
+    )
+    if not all(split[key] for key in ("train", "validation", "test")):
+        return 0
+    return sum(len(split[key]) for key in ("train", "validation", "test"))
 
 
 def _replay_times(
@@ -418,6 +435,7 @@ def backfill_historical_training(
     days: int = DEFAULT_DAYS,
     cadence_minutes: int = DEFAULT_CADENCE_MINUTES,
     target_groups: int = RANKER_TRAINING.maximum_groups,
+    minimum_usable_groups: int = 0,
     source: str = DEFAULT_SOURCE,
     start_at: datetime | None = None,
     end_at: datetime | None = None,
@@ -432,6 +450,8 @@ def backfill_historical_training(
         raise ValueError("cadence_minutes must be between 5 and 240")
     if target_groups < 1:
         raise ValueError("target_groups must be at least 1")
+    if not 0 <= minimum_usable_groups <= RANKER_TRAINING.maximum_groups:
+        raise ValueError("minimum_usable_groups must fit within the training window")
     end = _as_utc(end_at or datetime.now(UTC) - BARRIER_HORIZON)
     start = _as_utc(start_at or end - timedelta(days=days))
     if start > end:
@@ -440,7 +460,15 @@ def backfill_historical_training(
     selected_source = _select_source(start, end + BARRIER_HORIZON, source)
     existing_times = _complete_group_times()
     existing_groups = len(existing_times)
-    if existing_groups >= target_groups:
+    usable_before = _usable_group_count(existing_times) if minimum_usable_groups else None
+
+    def target_met() -> bool:
+        return len(existing_times) >= target_groups and (
+            not minimum_usable_groups
+            or _usable_group_count(existing_times) >= minimum_usable_groups
+        )
+
+    if target_met():
         return {
             "enabled": True,
             "source": selected_source,
@@ -449,6 +477,9 @@ def backfill_historical_training(
             "rows_written": 0,
             "groups_after": existing_groups,
             "reason": "target_already_met",
+            "usable_groups_before": usable_before,
+            "usable_groups_after": usable_before,
+            "minimum_usable_groups": minimum_usable_groups,
             "dry_run": dry_run,
         }
     if selected_source is None:
@@ -574,8 +605,12 @@ def backfill_historical_training(
         )
         groups_written += 1
         rows_written += written
-        existing_times.append(replay_at)
-        if existing_groups + groups_written >= target_groups:
+        if all(
+            row["barrier_resolution"] == "resolved" and row["outcome_return_pct"] is not None
+            for row in labeled
+        ):
+            existing_times.append(replay_at)
+        if target_met():
             break
 
     return {
@@ -588,7 +623,12 @@ def backfill_historical_training(
         "groups_before": existing_groups,
         "groups_written": groups_written,
         "rows_written": rows_written,
-        "groups_after": existing_groups + groups_written,
+        "groups_after": len(existing_times),
+        "usable_groups_before": usable_before,
+        "usable_groups_after": (
+            _usable_group_count(existing_times) if minimum_usable_groups else None
+        ),
+        "minimum_usable_groups": minimum_usable_groups,
         "points_considered": len(points),
         "skipped_near_live": skipped_near_live,
         "skipped_incomplete": skipped_incomplete,

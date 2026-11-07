@@ -320,10 +320,16 @@ which lists no supported parameters) may fail these options, so try any new
 
 Chat replies and proactive desk notes share the research loop in
 `src/runner_web/dash_research.py`. Dash chooses the evidence to inspect with
-`expand`, weighs a competing explanation, and forms his own view. His prompt asks
-for a take, confidence, the strongest reason, the main doubt, and the fact that
-would change his mind. He can disagree with the scanner or the room and explain
-why. Short questions can get short answers. Analysis has room for 100 to 220 words.
+`expand`, weighs a competing explanation, and forms his own view. Dash chooses
+his voice, answer structure, and depth. He can challenge the room, follow a hunch,
+or change his mind. Evidence quality guides his confidence.
+
+`set_direction` lets Dash write his own voice, research focus, next question, and
+review time from 30 minutes to one day. These notes carry across turns within the
+same chat and topic. Dash can revise them as his interests change. They enter the
+conversation as working context; system instructions and tool permissions govern
+each turn. Voice, focus, and question fields have limits of 500, 700, and 500
+characters. Notes live under `dash_direction:` keys in `worker_state`.
 
 `remember_thesis` saves a view against an evidence node. It records the thesis,
 confidence, counter-evidence, what would change his mind, the next check, and a
@@ -337,8 +343,11 @@ the next save removes expired rows. The full reply, up to 3,500 characters, rema
 in the conversation history for follow-up questions.
 
 `dash_desk_note_worker` runs every `DASH_DESK_NOTE_SECONDS` (3600) when
-`TELEGRAM_DESK_NOTES=1`. A market change or a due thesis starts research. The main
-room's notebook supplies up to three due ideas per tick. Dash refreshes the evidence
+`TELEGRAM_DESK_NOTES=1`. A market change, due thesis, or Dash's own scheduled
+question starts research. The first quiet tick gives him time to choose an interest.
+After a completed desk visit, a six-hour fallback opens another exploration window
+when his own agenda has run its course. The main room's notebook supplies up to
+three due ideas per tick. Dash refreshes the evidence
 and updates or closes each due thesis. He shares material findings and changes of
 mind. An unchanged view can finish with `hold`. Other chats and topics use their
 notes in later replies. A review time means the first eligible worker tick after
@@ -367,7 +376,9 @@ A resumed job reuses evidence for five minutes; older checks become historical
 context and the analyst refreshes them. Waiting jobs leave space for new chat
 updates. Completed chat replies are reused on a delivery retry.
 
-The final review saves its notes, result, and desk outbox card in one transaction.
+The final review saves its notes, personal direction, desk review time, result,
+and desk outbox card in one transaction. A resumed job keeps its proposed direction;
+a newer completed direction takes precedence over an older saved proposal.
 Each view has an outcome: `finding_ready`, `reviewed_quiet`, `deferred_source`,
 `retired`, or `incomplete`. A source failure can receive its own later check.
 An unfinished revision keeps the prior view open and saves the proposed view for

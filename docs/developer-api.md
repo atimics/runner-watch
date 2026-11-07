@@ -20,8 +20,9 @@ purchased balance is positive. A failed request returns its reserved credits.
 | --- | --- | --- |
 | `GET /api/v1/tokens/{id}` | 1 | One saved token snapshot |
 | `GET /api/v1/tokens` | 5 | Up to 50 tokens, ranked within a saved revision |
-| `GET /api/v1/tokens/{id}/analysis` | 10 | Saved controls, findings, and evidence links |
-| `GET /api/v1/wallets/{address}` | 10 | Saved PnL, up to 100 holdings |
+| `GET /api/v1/tokens/{id}/analysis` | 10 | Token insights, controls, findings, and evidence links |
+| `GET /api/v1/tokens/by-mint/{mint}/analysis` | 10 | The same report by Solana mint address |
+| `GET /api/v1/wallets/{address}` | 10 | Wallet insights, saved PnL, up to 100 holdings per page |
 | `GET /api/v1/tokens/{id}/history` | 25 | Up to 1,000 saved analysis observations |
 | `POST /api/v1/jobs/token_check` | 25 | One mint and metadata account read |
 | `POST /api/v1/jobs/wallet_scan` | 100 | Up to 1,000 transactions and current holdings |
@@ -44,6 +45,64 @@ Each account supports five active keys. Stored key hashes support lookup and
 revocation. The creation response shows the new key once. Account export includes
 key labels, balances, and purchase receipts. Account deletion removes keys and
 usage data. Settlement identifiers remain as anonymous payment replay records.
+
+## Token and wallet insights
+
+The 10-credit reports include an `insights` object with version `api-insights-v1`.
+Existing response fields stay available. Summaries use saved evidence. The report
+adds a bounded history read and computes its summaries in memory.
+
+A token report includes:
+
+- Momentum score, model version, state, and the reasons behind the saved score.
+- Score change since the previous observation, with its timestamp and elapsed
+  seconds. A change is calculated when both observations use the same model.
+  `model_changed` or `pending` keeps `score_delta` null.
+- Each of the nine saved RATi checks as `met`, `flagged`, `pending`, or `skipped`.
+  `review` means a check was flagged; `incomplete` means evidence is pending.
+  Holder checks carry the basis `Largest token account sample`.
+- Sampled swaps and buying/selling wallet counts, their time window, collection
+  gaps, risk factors, and open checks. The saved report's scope stays visible.
+- Mint/metadata facts and the latest saved control settings when available.
+
+For an address from a launch or wallet, use the mint route directly:
+
+```sh
+curl "https://runners.rati.chat/api/v1/tokens/by-mint/SOLANA_MINT/analysis" \
+  -H 'Authorization: Bearer YOUR_API_KEY'
+```
+
+This route resolves the saved Solana chain record. A mint awaiting its first
+saved record returns 404 and returns any reserved credits.
+
+A wallet report includes:
+
+- History coverage (`complete`, `partial`, or `unknown`), observed transaction
+  range, excluded transactions, and positions with known buying costs.
+- The largest five token positions, their share of priced token holdings, and
+  the number of holdings with prices. Native SOL balance has its own field.
+- Realized and unrealized PnL grouped by SOL or USDC, with sale cost coverage.
+  Each currency keeps its unit. Fees are reported separately in SOL.
+- Wins, losses, flat sales, and win rate among sales with known costs in the
+  latest 200 recorded trades. The sample size, time range, and sales with unknown
+  costs accompany each result. A win rate uses `wins / known_cost_sales`.
+
+Position cost coverage uses token positions other than SOL and USDC. Portfolio
+shares use the priced token subtotal. Prices and cost data that are still pending
+remain null. Partial history and unknown costs qualify the displayed PnL.
+
+Wallet insights cover the whole saved snapshot, including holdings beyond the
+first page. Pass `next_cursor` as `?cursor=...` to get the next 100 holdings for
+10 credits. The cursor binds to that wallet and snapshot. A changed snapshot
+returns 409 and returns the reserved credits. Start again with a new request key.
+Fresh wallet scan results also include the same summaries for their covered data.
+
+Every freshness object includes `as_of`, `evaluated_at`, `fresh_until`, and
+`age_seconds`. Token observations, chain samples, and wallets use a 15-minute
+freshness window; saved control lookups use five minutes. Missing or invalid
+timestamps produce `unknown`. Each source has its own timestamp. Cached retries
+preserve the original report; compare `fresh_until` with the current time when
+using a replayed response.
 
 ## Safe retries
 

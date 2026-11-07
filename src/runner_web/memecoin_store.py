@@ -165,7 +165,12 @@ def save_memecoin_snapshot(
             points,
         )
         mark("rows")
-        database.execute("DELETE FROM memecoin_quote_history WHERE observed_at<?", (oldest,))
+        keep_active = (
+            " AND coin_id NOT IN (SELECT coin_id FROM memecoin_calls WHERE status='active')"
+        )
+        database.execute(
+            "DELETE FROM memecoin_quote_history WHERE observed_at<?" + keep_active, (oldest,)
+        )
         mark("prune_old")
         # Find the newest point past the cap, then delete everything older than it. This
         # reads the time index once; a NOT IN over every kept row did not finish in minutes.
@@ -176,7 +181,7 @@ def save_memecoin_snapshot(
         ).fetchone()
         if past_cap is not None:
             database.execute(
-                "DELETE FROM memecoin_quote_history WHERE observed_at<=?",
+                "DELETE FROM memecoin_quote_history WHERE observed_at<=?" + keep_active,
                 (past_cap["observed_at"],),
             )
         mark("prune_cap")

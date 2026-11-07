@@ -578,6 +578,15 @@ def memecoins_quiet(at: datetime) -> bool:
     With no view recorded yet (a new install) the worker samples in full.
     """
 
+    with connection() as database:
+        active = database.execute(
+            "SELECT heartbeat_at FROM trading_accounts WHERE paused=0"
+        ).fetchall()
+    if any(
+        (checked := _time(row["heartbeat_at"])) and 0 <= (at - checked).total_seconds() <= 180
+        for row in active
+    ):
+        return False
     seen = _time(_market_states(keys=("memecoin_last_view",)).get("memecoin_last_view"))
     return seen is not None and (at - seen).total_seconds() > QUIET_AFTER_SECONDS
 
