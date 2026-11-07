@@ -159,6 +159,65 @@ def test_a_hot_refresh_without_a_previous_close_still_stores_a_price(monkeypatch
     assert mark["change_pct"] is None
 
 
+def test_weekend_refresh_anchors_to_the_quotes_session_and_replaces_cached_baseline(monkeypatch):
+    friday = datetime(2026, 11, 6, 19, 59, tzinfo=EASTERN)
+    saturday = datetime(2026, 11, 7, 11, 6, tzinfo=UTC)
+    _install_client(
+        monkeypatch,
+        {
+            "KDK": pd.DataFrame(
+                {"Close": [1.28]},
+                index=pd.DatetimeIndex([friday]),
+            )
+        },
+    )
+    with connection() as database:
+        quotes._save_quote(
+            database,
+            "KDK",
+            {
+                "price": 1.28,
+                "previous_close": 1.0501,
+                "change_pct": 21.89,
+                "observed_at": friday.isoformat(),
+                "requested_at": saturday.isoformat(),
+                "status": "ok",
+                "source": "yahoo",
+            },
+        )
+        for day, close in (("2026-11-05", 0.9511), ("2026-11-06", 1.28)):
+            database.execute(
+                "INSERT INTO market_bars(source,ticker,interval,bar_time,close,"
+                "first_collected_at,last_collected_at) VALUES('yahoo','KDK','1d',?,?,?,?)",
+                (f"{day}T05:00:00+00:00", close, saturday.isoformat(), saturday.isoformat()),
+            )
+
+    result = quotes.refresh_hot_quotes(["KDK"], at=saturday)
+
+    assert result["stored"] == 1
+    quote = quotes.fresh_quotes(["KDK"])["KDK"]
+    assert quote["previous_close"] == 0.9511
+    assert quote["change_pct"] == 34.58
+
+
+def test_cached_previous_close_is_scoped_to_its_quote_day():
+    with connection() as database:
+        quotes._save_quote(
+            database,
+            "AAA",
+            {
+                "price": 1.5,
+                "previous_close": 1.0,
+                "observed_at": NOW.isoformat(),
+                "requested_at": NOW.isoformat(),
+                "status": "ok",
+                "source": "yahoo",
+            },
+        )
+        assert quotes._previous_close_for(database, "AAA", NOW.date()) == 1.0
+        assert quotes._previous_close_for(database, "AAA", (NOW + timedelta(days=1)).date()) is None
+
+
 def test_a_missing_frame_counts_as_missing(monkeypatch):
     _install_client(monkeypatch, {"AAA": _minute_frame([1.0])})
 

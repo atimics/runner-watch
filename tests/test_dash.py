@@ -673,6 +673,46 @@ def test_a_locked_report_is_reported_but_not_read_out(monkeypatch):
     assert "secret" not in str(report)
 
 
+@pytest.mark.parametrize("change", [14.05, None])
+def test_lookup_keeps_the_quote_fields_together_and_updates_age_text(monkeypatch, change):
+    from runner_web import main as web_main
+    from runner_web import quotes, telegram_chat
+
+    current = {
+        "price": 0.94,
+        "change_pct": 15.125536,
+        "quote_time": "2026-11-07T00:55:00+00:00",
+        "captured_at": "2026-11-07T01:00:00+00:00",
+        "risks": ["quote is about 187m old", "Thin float"],
+    }
+    monkeypatch.setattr(web_main, "_public_ticker_detail_data", lambda _: {"current": current})
+    monkeypatch.setattr(
+        quotes,
+        "market_mark",
+        lambda _: {
+            "price": 0.9312,
+            "change_pct": change,
+            "previous_close": 0.8165,
+            "observed_at": "2026-11-07T00:59:00+00:00",
+            "age_seconds": 36300,
+            "source": "quote",
+            "session": "AFTER-HOURS",
+        },
+    )
+    monkeypatch.setattr(telegram_chat, "_research_report", lambda _: None)
+    monkeypatch.setattr(telegram_chat, "_avatar_comments", lambda _: [])
+
+    looked = telegram_chat.look_up_ticker("OCGN")
+
+    assert (looked["price"], looked["change_pct"]) == (0.9312, change)
+    assert looked["previous_close"] == 0.8165
+    assert looked["price_as_of"] == "2026-11-07T00:59:00+00:00"
+    assert looked["price_age_seconds"] == 36300
+    assert looked["risks"] == ["quote is about 605m old", "Thin float"]
+    assert looked["assessment_as_of"] == current["captured_at"]
+    assert current["risks"][0] == "quote is about 187m old"
+
+
 def test_a_saved_target_comes_back_with_its_result():
     from runner_web.telegram_chat import _todays_target
 
@@ -701,6 +741,9 @@ def test_a_saved_target_comes_back_with_its_result():
     assert target["target_price"] == 1.85
     assert target["status"] == "hit"
     assert target["close_price"] == 1.98
+    assert target["report_day"] == "2026-09-11"
+    assert target["reference_at"] == NOW.isoformat()
+    assert target["forecast_at"] == NOW.isoformat()
     assert _todays_target("NONE") is None
 
 
@@ -788,6 +831,36 @@ def test_market_now_carries_the_next_open(monkeypatch):
     assert payload["scanner_active"] is False
     assert "ET" in payload["next_open"]
     assert payload["eastern_now"].endswith(" ET")
+    assert payload["next_open"] == "Overnight venues at 20:00 ET"
+    assert payload["data_state"] == "stored_session"
+
+
+def test_closed_board_carries_each_quotes_time_and_age(monkeypatch):
+    closed = datetime(2026, 11, 7, 11, 6, tzinfo=UTC)
+    quoted_at = "2026-11-07T00:59:00+00:00"
+    monkeypatch.setattr(
+        "runner_web.main._public_pulse_data",
+        lambda **_: {
+            "rows": [
+                {
+                    "ticker": "KDK",
+                    "price": 1.28,
+                    "change_pct": 34.58,
+                    "quote_time": quoted_at,
+                    "mark_source": "quote",
+                }
+            ],
+            "updated_at": quoted_at,
+        },
+    )
+
+    board = dash.market_now(at=closed)
+
+    assert board["data_state"] == "stored_session"
+    assert board["updated_at"] == quoted_at
+    assert board["generated_at"] == closed.isoformat()
+    assert board["leaders"][0]["quote_as_of"] == quoted_at
+    assert board["leaders"][0]["price_age_seconds"] == 36420
 
 
 def test_the_world_is_one_snapshot_of_everything():
@@ -1013,6 +1086,21 @@ def test_a_scheduled_resume_is_not_read_as_a_reopen():
     assert halt["after_reopen"] is None
 
 
+def test_empty_weekend_halts_carry_the_calendar_day_window():
+    _seed_halts(_halt_item("TDIC", "10:50:00", "T1"))
+    saturday = NOW + timedelta(days=1)
+
+    result = dash.halt_context(at=saturday)
+
+    assert dash.recent_halts(at=NOW)[0]["ticker"] == "TDIC"
+    assert result["items"] == []
+    assert result["ticker_count"] == 0
+    assert result["window_start"] == "2026-09-12T00:00:00-04:00"
+    assert result["window_end"] == "2026-09-12T11:00:00-04:00"
+    assert result["session"] == "Weekend closed"
+    assert result["coverage"] == "stored_events_only"
+
+
 def test_an_unknown_halt_code_is_passed_through_rather_than_guessed():
     assert dash.halt_reason("ZZ9") == "ZZ9"
     assert dash.halt_reason("") is None
@@ -1030,8 +1118,8 @@ def test_recent_events_read_the_stored_payload():
 def test_the_world_and_expand_include_halts():
     _seed_halts(_halt_item("TDIC", "10:50:00", "T1"))
 
-    assert dash.dash_world(at=NOW)["halts"][0]["ticker"] == "TDIC"
-    assert isinstance(dash.dash_expand("halts"), list)
+    assert dash.dash_world(at=NOW)["halts"]["items"][0]["ticker"] == "TDIC"
+    assert isinstance(dash.dash_expand("halts")["items"], list)
 
 
 def _seed_game(event_id, status, start, away_score=None, home_score=None, detail="Scheduled"):

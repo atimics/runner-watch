@@ -111,7 +111,8 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
     from runner_web.market_clock import market_clock
     from runner_web.market_reports import market_reports_overview
 
-    clock = market_clock(at)
+    current = at or datetime.now(UTC)
+    clock = market_clock(current)
     board = _public_pulse_data(limit=20)
     rows = list(board.get("rows") or [])
     changes = [
@@ -128,8 +129,15 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
         "session": clock["label"],
         "session_note": clock["data_note"],
         "eastern_now": clock["eastern_now"][11:16] + " ET",
-        "next_open": f"{clock['next_label']} at {clock['next_at'][11:16]} ET",
+        "next_open": f"{clock['next_label']} at {_eastern(_when(clock['next_at']))}",
         "scanner_active": clock["scanner_active"],
+        "generated_at": current.isoformat(),
+        "data_state": "stored_session" if not clock["scanner_active"] else "delayed",
+        "data_note": (
+            "Saved session board; each row carries its quote time."
+            if not clock["scanner_active"]
+            else clock["data_note"]
+        ),
         "board_size": len(rows),
         "green": sum(value > 0 for value in changes),
         "red": sum(value < 0 for value in changes),
@@ -142,6 +150,13 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
                 "change_pct": row.get("change_pct"),
                 "relative_volume": row.get("relative_volume"),
                 "price": row.get("price"),
+                "quote_as_of": row.get("quote_time"),
+                "price_age_seconds": (
+                    max(0, int((current - stamp).total_seconds()))
+                    if (stamp := _when(row.get("quote_time")))
+                    else None
+                ),
+                "price_source": row.get("mark_source", "scan"),
                 "pulse_label": row.get("pulse_label"),
             }
             for row in movers[:5]
@@ -854,6 +869,25 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
     return entries
 
 
+def halt_context(limit: int = 8, at: datetime | None = None) -> dict[str, Any]:
+    """Describe the date window alongside the stored halt results."""
+
+    from runner_web.market_clock import market_clock
+
+    current = at or datetime.now(UTC)
+    start = current.astimezone(EASTERN).replace(hour=0, minute=0, second=0, microsecond=0)
+    entries = recent_halts(limit=limit, at=current)
+    return {
+        "items": entries,
+        "ticker_count": len(entries),
+        "window_start": start.isoformat(),
+        "window_end": current.astimezone(EASTERN).isoformat(),
+        "session": market_clock(current)["label"],
+        "scope": "Stored events whose halt began in this Eastern calendar day",
+        "coverage": "stored_events_only",
+    }
+
+
 def _eastern_time(value: Any) -> str | None:
     moment = _when(value)
     return moment.astimezone(EASTERN).strftime("%a %H:%M ET") if moment else None
@@ -1215,7 +1249,7 @@ def dash_world(at: datetime | None = None) -> dict[str, Any]:
         "board": market_now(current),
         "runners": recent_runners(limit=6, at=current),
         "events": recent_events(limit=6, at=current),
-        "halts": recent_halts(limit=6, at=current),
+        "halts": halt_context(limit=6, at=current),
         "sports": sports_now(limit=4, at=current),
         "memecoins": memecoins_now(limit=5, at=current),
         "community": community_now(limit=6),
@@ -1242,7 +1276,7 @@ def dash_expand(node: str | None) -> dict[str, Any]:
     if key in {"events", "news"}:
         return recent_events(limit=20)
     if key in {"halts", "halt"}:
-        return recent_halts(limit=20)
+        return halt_context(limit=20)
     if key.startswith("sports"):
         asked = key.split(":", 1)[1].strip() if ":" in key else None
         return sports_now(limit=12, league=asked or None)

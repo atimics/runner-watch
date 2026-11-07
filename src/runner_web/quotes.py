@@ -255,7 +255,6 @@ def refresh_hot_quotes(tickers: list[str], at: datetime | None = None) -> dict[s
         return {"requested": len(symbols), "stored": 0, "missing": len(symbols)}
     stored = 0
     timestamp = now.isoformat()
-    session_day = now.astimezone(EASTERN).date()
     with connection() as database:
         for symbol in symbols:
             frame = result.frames.get(symbol)
@@ -265,7 +264,7 @@ def refresh_hot_quotes(tickers: list[str], at: datetime | None = None) -> dict[s
             observed_at, values = print_row
             if not observed_at <= now:
                 continue
-            previous = _previous_close_for(database, symbol, session_day)
+            previous = _previous_close_for(database, symbol, observed_at.astimezone(EASTERN).date())
             _save_quote(
                 database,
                 symbol,
@@ -296,27 +295,28 @@ def refresh_hot_quotes(tickers: list[str], at: datetime | None = None) -> dict[s
 def _previous_close_for(database: Any, ticker: str, session_day: date) -> float | None:
     """The prior session's close, so a batched mark can carry a move as well as a price.
 
-    A one-minute batch only covers today, so the anchor comes from whatever the rest of
-    the system already collected: a previous close the per-ticker lane recorded, or the
-    last daily bar before this session.
+    Prefer the last daily bar before the quote's session. A cached reference can
+    also be used when its quote belongs to that same session date.
     """
 
-    row = database.execute(
-        "SELECT previous_close FROM ticker_quotes WHERE ticker=?",
-        (ticker,),
-    ).fetchone()
-    stored = _positive_price(row["previous_close"]) if row else None
-    if stored is not None:
-        return stored
     bar = database.execute(
         """
         SELECT close FROM market_bars
-        WHERE ticker=? AND interval='1d' AND bar_time<?
+        WHERE ticker=? AND source='yahoo' AND interval='1d' AND bar_time<?
         ORDER BY bar_time DESC LIMIT 1
         """,
         (ticker, session_day.isoformat()),
     ).fetchone()
-    return _positive_price(bar["close"]) if bar else None
+    if bar:
+        return _positive_price(bar["close"])
+    row = database.execute(
+        "SELECT previous_close,observed_at FROM ticker_quotes WHERE ticker=? AND status='ok'",
+        (ticker,),
+    ).fetchone()
+    observed_at = _stamp(row["observed_at"]) if row else None
+    if observed_at and observed_at.astimezone(EASTERN).date() == session_day:
+        return _positive_price(row["previous_close"])
+    return None
 
 
 def _positive_price(value: Any) -> float | None:
@@ -343,12 +343,27 @@ def price_marks(
     reaching for one lane, so a Call, a saved target and the page all agree.
     """
 
+    return [
+        (mark["observed_at"], mark["price"], mark["source"])
+        for mark in _price_observations(database, ticker, since=since, until=until)
+    ]
+
+
+def _price_observations(
+    database: Any,
+    ticker: str,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Keep each price, change and reference from the same stored observation."""
+
     symbol = str(ticker).strip().upper()
     if not symbol:
         return []
-    marks: list[tuple[datetime, float, str]] = []
+    marks: list[dict[str, Any]] = []
 
-    def offer(raw_price: Any, raw_stamp: Any, source: str) -> None:
+    def offer(raw_price: Any, raw_stamp: Any, source: str, row: Any) -> None:
         price, observed_at = _positive_price(raw_price), _stamp(raw_stamp)
         if price is None or observed_at is None:
             return
@@ -356,24 +371,35 @@ def price_marks(
             return
         if until is not None and observed_at > until:
             return
-        marks.append((observed_at, price, source))
+        marks.append(
+            {
+                "observed_at": observed_at,
+                "price": price,
+                "source": source,
+                "change_pct": row["change_pct"],
+                "previous_close": row["previous_close"],
+            }
+        )
 
     quote = database.execute(
-        "SELECT price,observed_at FROM ticker_quotes WHERE ticker=? AND status='ok'",
+        "SELECT price,observed_at,change_pct,previous_close FROM ticker_quotes "
+        "WHERE ticker=? AND status='ok'",
         (symbol,),
     ).fetchone()
     if quote:
-        offer(quote["price"], quote["observed_at"], "quote")
+        offer(quote["price"], quote["observed_at"], "quote", quote)
     snapshot = database.execute(
         """
-        SELECT price,quote_time FROM scan_snapshots
+        SELECT price,quote_time,change_pct,NULL AS previous_close FROM scan_snapshots
         WHERE ticker=? ORDER BY captured_at DESC LIMIT 1
         """,
         (symbol,),
     ).fetchone()
     if snapshot:
-        offer(snapshot["price"], snapshot["quote_time"], "scan")
-    return sorted(marks, reverse=True)
+        offer(snapshot["price"], snapshot["quote_time"], "scan", snapshot)
+    return sorted(
+        marks, key=lambda mark: (mark["observed_at"], mark["price"], mark["source"]), reverse=True
+    )
 
 
 def market_mark(
@@ -394,15 +420,15 @@ def market_mark(
         except Exception:
             LOG.debug("Quote refresh failed for %s", symbol, exc_info=True)
     with connection() as database:
-        marks = price_marks(database, symbol, until=now)
+        marks = _price_observations(database, symbol, until=now)
     if not marks:
         return None
-    observed_at, price, source = marks[0]
+    mark = marks[0]
+    observed_at = mark["observed_at"]
     return {
+        **mark,
         "ticker": symbol,
-        "price": price,
         "observed_at": observed_at.isoformat(),
-        "source": source,
         "age_seconds": max(0, int((now - observed_at).total_seconds())),
         "session": session_label(observed_at.astimezone(EASTERN)),
     }
