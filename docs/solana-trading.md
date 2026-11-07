@@ -30,7 +30,8 @@ estimate from the largest token accounts; the full ownership graph can differ.
 | Worker cycle | 30 seconds after each cycle finishes |
 
 Stops use a fresh quote for the whole position. AVOID, a chain risk finding,
-the time limit, or an operator exit request also queues an exit. Price gaps,
+the time limit, or an operator exit request also triggers an exit. Paper mode
+queues the exit. Live mode saves a proposal for the operator to review. Price gaps,
 provider delays, congestion, and lost liquidity can change the realized loss.
 An unavailable route leaves the quantity open and schedules another attempt.
 Pausing entries preserves exit monitoring and transaction recovery.
@@ -101,6 +102,46 @@ and recent authentication. Requests are recorded in the event journal.
 Live pages and APIs also require operator access. Signed transaction bytes stay
 inside the execution database.
 
+## Dash's private trading desk
+
+Set `DASH_TRADING_TELEGRAM_IDS` to the owner's numeric Telegram user ID. Set
+`TRADING_OPERATOR_IDS` to that owner's application user ID. The web process
+needs the public `TRADING_WALLET`, `TRADING_RPC_URL` and `JUPITER_API_KEY` for
+quote previews. The separate live process owns the signer file.
+
+In the owner's private chat, Dash can use `trading_status` and `propose_trade`.
+He names the full Solana token address, a buy amount in USDC or a full-position
+sale, his thesis, and what would change his view. The proposal returns the
+private `/trading?mode=live` review link. A repeated Telegram update returns the
+same saved proposal. Public Calls continue to use Flash.
+
+The owner chooses **Review trade** to see a fresh quote, exact input, minimum
+output, maximum SOL fees, wallet, balance share and reasoning. **Approve trade**
+requires a recent passkey login and the current review token. Approval reserves
+the order once. Its limits last two minutes. Each purchase and sale needs its
+own approval, including exits from stop, profit and holding-time rules.
+
+The worker rechecks market evidence and quotes before signing. The token,
+amount, wallet, minimum output, fee cap, policy and approval deadline must match
+the saved review. A changed price or expired approval closes the queued order;
+Dash can create a new proposal for review. A signed order keeps its saved bytes
+through finality checks and recovery.
+
+### Create Dash's wallet
+
+The owner runs the setup command on the dedicated live host:
+
+```sh
+uv run stonks-trading-wallet /data/dash-wallet/signer.json
+```
+
+It creates a new Solana signer in a private directory and prints the public
+funding address. The signer file has mode `0600`. Existing files are preserved.
+Store a backup through the host's secret storage. Put the printed public address
+in `TRADING_WALLET` and the file path in `TRADING_KEY_FILE`. Send USDC for the
+trading budget and SOL for network fees. Keep these settings on the dedicated
+live process and share its database with the web process.
+
 ## Running live mode
 
 Use a dedicated process and an operator-funded wallet. Keep the signer file on
@@ -113,15 +154,21 @@ TRADING_LIVE_ENABLED=1
 TRADING_WALLET=<dedicated public key>
 TRADING_KEY_FILE=<absolute secret file path>
 TRADING_RPC_URL=<dedicated HTTPS Solana RPC>
-TRADING_POLICY_JSON=<policy matching the funded balances>
+TRADING_POLICY_JSON=<reviewed risk and fee limits>
 JUPITER_API_KEY=<provider key>
 ```
 
-The live worker uses the shared database and its own account lease. Its initial
-USDC and SOL balances must match the policy exactly. Each cycle compares saved
-cash and held token quantities with finalized chain balances. A difference
-pauses entries for operator review. Keep account reconciliation in the ledger
-when changing the wallet's funding.
+The live worker uses the shared database and its own account lease. A new live
+account starts at zero. Each cycle reads finalized balances. USDC and SOL
+deposits enter the funding ledger once. USDC deposits increase the spending
+budget and adjust the loss anchors by the same amount. SOL pays network fees.
+A withdrawal or a change to a held token balance pauses entries for review.
+The account binds to its wallet on its first balance check.
+
+For live orders, available funded USDC is the entry and exposure budget. The
+operator approves the amount of each order. Pool-size checks, position limits,
+price impact, fees and loss checks still apply. The initial capital, fixed entry
+size and fixed exposure fields describe the paper strategy.
 
 The first live adapter accepts plain SPL mints and reviewed Jupiter v6 `route`
 and `shared_accounts_route` instructions. It parses known swap variants 0–38
@@ -146,7 +193,7 @@ transaction receipts. This release's deployment configuration starts paper mode.
 
 ```sh
 uv run pytest tests/test_trading.py tests/test_trading_live.py \
-  tests/test_trading_routes.py tests/test_trading_holders.py
+  tests/test_trading_routes.py tests/test_trading_holders.py tests/test_dash_trading.py
 uv run pytest -o addopts= -m browser tests/test_browser_trading.py
 ```
 

@@ -177,6 +177,7 @@ def execution():
 def reserve(live):
     identifier = ledger.ensure_account("live", Policy(), AT)["id"]
     token = ledger.acquire(identifier, AT)
+    live.reconcile(identifier, token, AT)
     with connection() as db:
         db.execute(
             "INSERT INTO trading_signals(id,account_id,mint,coin_id,observed_at,state,reason,"
@@ -192,7 +193,32 @@ def reserve(live):
             ),
         )
     ledger.reserve_buy(identifier, token, {"id": "signal", "mint": MINT}, Policy(), AT)
-    return identifier, token, ledger.rows("trading_orders", identifier)[0]
+    order = ledger.rows("trading_orders", identifier)[0]
+    with connection() as db:
+        db.execute(
+            "INSERT INTO trading_proposals(id,account_id,mint,side,input_raw,thesis,"
+            "invalidation,created_at,status,review_json,review_until,order_id) "
+            "VALUES('approved',?,?,'buy','25000000','Test view','Test risk',?,'approved',?,?,?)",
+            (
+                identifier,
+                MINT,
+                stamp(AT),
+                json.dumps(
+                    {
+                        "wallet": live.wallet,
+                        "policy_hash": Policy().fingerprint,
+                        "input_mint": USDC,
+                        "output_mint": MINT,
+                        "input_raw": "25000000",
+                        "minimum_raw": "99000000",
+                        "max_fee_lamports": 5_000_000,
+                    }
+                ),
+                stamp(AT + timedelta(minutes=2)),
+                order["id"],
+            ),
+        )
+    return identifier, token, order
 
 
 def finalized(order, live, *, error=None, output=100_000_000):

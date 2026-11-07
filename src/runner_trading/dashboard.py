@@ -101,6 +101,7 @@ def snapshot(mode: str, *, at: datetime | None = None) -> dict:
     healthy = 0 <= age(account["heartbeat_at"], now) <= policy["cycle_seconds"] * 4
     return {
         "mode": mode,
+        "wallet": account["wallet"] if mode == "live" else None,
         "state": health.get("state", "preparing") if healthy else "stale",
         "paused": bool(account["paused"]),
         "pause_reason": account["pause_reason"],

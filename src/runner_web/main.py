@@ -43,7 +43,14 @@ from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
-from runner_web import attention, dash_direction, dash_jobs, dash_research, pulse_scoring
+from runner_web import (
+    attention,
+    dash_direction,
+    dash_jobs,
+    dash_research,
+    dash_trading,
+    pulse_scoring,
+)
 from runner_web import db as runner_db
 from runner_web import decisions as openrouter_decisions
 from runner_web.account_routes import (
@@ -2247,6 +2254,8 @@ def _dash_research_unbacked(text: str, evidence: dict[str, Any]) -> list[str]:
 
 
 def _dash_research_action(message: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    if name in dash_trading.NAMES:
+        return dash_trading.act(message, name, args)
     if name == "my_standing":
         return {"budget": dash_budget(), "open_calls": dash_open_calls()}
     ticker = str(args.get("ticker") or "").strip().upper().lstrip("$")
@@ -2429,12 +2438,12 @@ def _write_telegram_reply(
             "recent": transcript[-6:],
         },
     }
-    allowed = {"reply", "expand", "my_standing"}
+    allowed = {"reply", "expand", "my_standing"} | dash_trading.NAMES
     if plan.mutation:
         allowed.add(plan.mutation)
 
     def act(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        if name != "my_standing":
+        if name not in {"my_standing"} | dash_trading.NAMES:
             ticker = str(args.get("ticker") or "").strip().upper().lstrip("$")
             if name != plan.mutation or ticker != str(plan.ticker).upper():
                 return {"error": "This action is scoped to the planned ticker."}

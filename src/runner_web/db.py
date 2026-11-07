@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from runner_trading.schema import migrate as migrate_trading
+from runner_trading.schema import migrate_proposals
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web.ai_kol import (
     DEFAULT_FLASH_MODEL,
@@ -4221,6 +4222,7 @@ MIGRATIONS = (
     Migration(104, "api_credits", _migration_104_api_credits),
     Migration(105, "dash_research_jobs", _migration_105_dash_research_jobs),
     Migration(106, "solana_trading", migrate_trading),
+    Migration(107, "dash_trade_proposals", migrate_proposals),
 )
 
 

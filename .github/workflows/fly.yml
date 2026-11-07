@@ -107,7 +107,7 @@ jobs:
       - run: uv sync --locked --extra dev
       - run: >-
           uv run pytest -q --no-cov tests/test_trading.py
-          tests/test_trading_live.py tests/test_trading_routes.py
+          tests/test_trading_live.py tests/test_trading_routes.py tests/test_dash_trading.py
         env:
           TRADING_TEST_DATABASE_URL: postgresql://postgres:trading-test@127.0.0.1:5432/postgres
 

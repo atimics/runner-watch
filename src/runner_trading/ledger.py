@@ -21,6 +21,8 @@ def key(*parts: str) -> str:
 
 def ensure_account(mode: str, policy: Policy, at: datetime) -> dict[str, Any]:
     identifier = account_id(mode)
+    cash = policy.initial_usdc if mode == "paper" else 0
+    sol = policy.initial_sol if mode == "paper" else 0
     with connection() as db:
         db.execute(
             """INSERT INTO trading_accounts(id,mode,policy_json,policy_hash,cash_usdc,
@@ -31,11 +33,11 @@ def ensure_account(mode: str, policy: Policy, at: datetime) -> dict[str, Any]:
                 mode,
                 policy.json(),
                 policy.fingerprint,
-                policy.initial_usdc,
-                policy.initial_sol,
-                policy.initial_usdc,
+                cash,
+                sol,
+                cash,
                 at.date().isoformat(),
-                policy.initial_usdc,
+                cash,
                 stamp(at),
             ),
         )
@@ -46,8 +48,8 @@ def ensure_account(mode: str, policy: Policy, at: datetime) -> dict[str, Any]:
             (
                 key(identifier, "capital"),
                 identifier,
-                policy.initial_usdc,
-                policy.initial_sol,
+                cash,
+                sol,
                 stamp(at),
                 encode({"mode": mode, "policy": policy.fingerprint}),
             ),

@@ -36,6 +36,7 @@ def test_trading_upgrade_preserves_existing_dash_research(tmp_path, monkeypatch)
         ).fetchone()
     assert versions[105] == "dash_research_jobs"
     assert versions[106] == "solana_trading"
+    assert versions[107] == "dash_trade_proposals"
     assert saved["lease_token"] == claim["token"]
     assert ledger.ensure_account("paper", Policy(), AT)["mode"] == "paper"
 

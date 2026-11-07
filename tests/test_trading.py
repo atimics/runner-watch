@@ -261,6 +261,16 @@ def test_live_submission_error_keeps_the_saved_signature_and_reservation(trading
         source=lambda: [candidate()],
     )
     trader.cycle()
+    with db.connection() as database:
+        database.execute(
+            "UPDATE trading_accounts SET cash_usdc=1000000000,sol_lamports=50000000,"
+            "peak_equity_usdc=1000000000,day_equity_usdc=1000000000 WHERE id=?",
+            (trader.identifier,),
+        )
+    token = ledger.acquire(trader.identifier, AT)
+    signal = ledger.rows("trading_signals", trader.identifier)[0]
+    ledger.reserve_buy(trader.identifier, token, signal, Policy(), AT)
+    ledger.release(trader.identifier, token)
     clock["at"] += timedelta(seconds=30)
     trader.cycle()
     assert adapter.submissions == 1  # Same cycle as preparation.

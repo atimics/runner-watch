@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from runner_web.dash_trading import TOOLS as TRADING_TOOLS
+
 LOG = logging.getLogger(__name__)
 
 ENGAGEMENT_REPLIES = max(1, int(os.getenv("TELEGRAM_ENGAGEMENT_REPLIES", "3")))
@@ -477,6 +479,10 @@ CHEETAH_PERSONA = (
     "reply target. Keep the conversation's people and topics clear. "
     "Use sourced numbers and explain internal scanner states in everyday words. "
     "Offer market analysis; leave personal investment decisions with the reader. "
+    "In the owner's private chat, trading_status shows your funded live wallet. "
+    "Use propose_trade for a researched Solana buy or sale. Explain your thesis and "
+    "what would change it. The owner reviews and approves each order on the trading desk. "
+    "Describe a proposal as awaiting approval and use the order record for fill claims. "
     "Your public Calls use your Flash allowance and are scored beside everyone "
     "else's. Open one when your research and conviction support it. Scanner rules "
     "govern Call eligibility; your judgment can explore the wider question. "
@@ -493,7 +499,7 @@ CHEETAH_PERSONA = (
 
 REACTION_EMOJI = ("🐆", "👀", "🔥", "⚡", "🤔", "😼")
 
-TOOL_SCHEMA = (
+TOOL_SCHEMA = TRADING_TOOLS + (
     {
         "name": "reply",
         "description": "Say something in the room, threaded onto the message.",

@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from runner_trading import ledger
+from runner_trading import ledger, proposals
 from runner_trading.config import USDC, Policy, age, stamp
 from runner_trading.providers import Jupiter, ProviderError
 from runner_trading.strategy import entry_reasons, exit_reason
@@ -116,7 +116,18 @@ class Trader:
             ledger.save_mark(self.identifier, self.token, pos["id"], net, receipt, self.clock())
             reason = exit_reason(pos, board.get(pos["mint"]), net, self.policy, self.clock())
             if reason:
-                ledger.queue_exit(self.identifier, self.token, pos, reason, self.clock())
+                if self.live:
+                    proposals.create(
+                        source=f"exit:{pos['id']}:{reason}",
+                        mint=pos["mint"],
+                        side="sell",
+                        amount=None,
+                        thesis=reason,
+                        invalidation="Review the current position and market evidence.",
+                        at=self.clock(),
+                    )
+                else:
+                    ledger.queue_exit(self.identifier, self.token, pos, reason, self.clock())
 
     def risk_limits(self) -> None:
         at = self.clock()
@@ -145,7 +156,7 @@ class Trader:
             reason = ""
             if day_equity - equity >= self.policy.daily_loss_usdc:
                 reason = "Daily loss limit reached"
-            if equity * 10_000 <= peak * (10_000 - self.policy.max_drawdown_bps):
+            if peak > 0 and equity * 10_000 <= peak * (10_000 - self.policy.max_drawdown_bps):
                 reason = "Account drawdown limit reached"
             db.execute(
                 "UPDATE trading_accounts SET day=?,day_equity_usdc=?,peak_equity_usdc=? WHERE id=?",
@@ -259,6 +270,8 @@ class Trader:
                 except (ProviderError, ValueError) as exc:
                     reasons.append(str(exc))
                     self.issues.append(str(exc))
+            if self.live:
+                reasons.append("Dash can propose this entry for operator review")
             if not reasons and ledger.reserve_buy(
                 self.identifier, self.token, signal, self.policy, self.clock()
             ):
@@ -285,7 +298,12 @@ class Trader:
             if recover_only or age(order["ready_at"], self.clock()) < 0:
                 continue
             if order["side"] == "buy":
-                reasons = entry_reasons(board.get(order["mint"], {}), self.policy, self.clock())
+                reasons = entry_reasons(
+                    board.get(order["mint"], {}),
+                    self.policy,
+                    self.clock(),
+                    amount=int(order["input_raw"]),
+                )
                 reasons += self.entry_health()
                 if age(order["created_at"], self.clock()) > self.policy.entry_timeout_seconds:
                     reasons.append("Entry time window ended")
@@ -365,7 +383,7 @@ class Trader:
                         )
             except (ProviderError, ValueError) as exc:
                 self.issues.append(str(exc))
-                if order["side"] == "buy":
+                if self.live or order["side"] == "buy":
                     ledger.fail_order(
                         self.identifier, self.token, order["id"], str(exc), self.clock()
                     )

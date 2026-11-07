@@ -3,6 +3,26 @@ from __future__ import annotations
 from typing import Any
 
 
+def migrate_proposals(db) -> None:
+    db.executescript(
+        """
+        ALTER TABLE trading_accounts ADD COLUMN wallet TEXT;
+        CREATE TABLE trading_proposals (
+            id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES trading_accounts(id),
+            mint TEXT NOT NULL, side TEXT NOT NULL CHECK(side IN ('buy','sell')),
+            input_raw TEXT NOT NULL, position_id TEXT, thesis TEXT NOT NULL,
+            invalidation TEXT NOT NULL, created_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'proposed'
+                CHECK(status IN ('proposed','approved','rejected')),
+            review_token TEXT, review_json TEXT, review_until TEXT,
+            approved_by TEXT, approved_at TEXT,
+            order_id TEXT UNIQUE REFERENCES trading_orders(id)
+        );
+        CREATE INDEX trading_proposals_desk ON trading_proposals(account_id,status,created_at);
+        """
+    )
+
+
 def migrate(db: Any) -> None:
     db.executescript("""
         CREATE TABLE trading_accounts (
