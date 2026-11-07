@@ -87,7 +87,7 @@ def stock_quote_time(item: dict[str, Any], now: datetime) -> dict[str, Any]:
     except (ValueError, TypeError):
         return result
     quoted = quoted.replace(tzinfo=UTC) if quoted.tzinfo is None else quoted.astimezone(UTC)
-    seconds = int((now - quoted).total_seconds())
+    seconds = math.floor((now - quoted).total_seconds())
     minutes = seconds // 60
     age = (
         "less than 1m old"
@@ -792,8 +792,7 @@ def listing(
         "label": LABELS[market],
         "rows": rows,
         "session_note": (
-            "Stock scanner off · showing saved quotes from the last scan. "
-            "Each row shows its own quote time."
+            "Stock scanner off · showing saved quotes. Each row shows its own quote time."
             if market == "stocks" and not market_clock(now)["scanner_active"]
             else ""
         ),

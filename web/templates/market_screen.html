@@ -88,9 +88,9 @@
       {% for key,label,url in [('stocks','Stocks',runners_origin ~ '/'),('memecoins','Memecoins',runners_origin ~ '/memecoins'),('sports','Sports',sports_origin ~ '/'),('reports','Reports',runners_origin ~ '/reports'),('trading','Trading',runners_origin ~ '/trading')] %}<a href="{{ url }}"{% if screen.market == key %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
     </nav>
     {% if market_clock and screen.market == 'stocks' %}
-    <span class="clock" title="{{ market_clock.label }} · {{ market_clock.data_note }}"><i class="{{ 'live' if market_clock.scanner_active else 'idle' }}"></i><b>{{ {'pre':'PRE','regular':'REG','after':'AH','overnight':'OVN'}.get(market_clock.session, 'CLOSED') }}</b><span>{{ market_clock.eastern_now[11:16] }} ET</span></span>
+    <span class="clock" title="{{ market_clock.label }} · {{ market_clock.data_note }}"><i class="{{ 'live' if market_clock.scanner_active else 'idle' }}"></i><b>{{ {'pre':'PRE','regular':'REG','after':'AH','overnight':'OVN'}.get(market_clock.session, 'CLOSED') }}</b><span>Now {{ market_clock.eastern_now[11:16] }} ET</span></span>
     {% endif %}
-    {% if screen.updated_label %}<span class="fresh">Updated {{ screen.updated_label }}</span>{% endif %}
+    {% if screen.updated_label %}<span class="fresh">{{ 'Board refreshed' if screen.market == 'stocks' else 'Updated' }} {{ screen.updated_label }}</span>{% endif %}
     {% if screen.counts or ratified_available %}<div class="tag-filters" data-tag-filters aria-label="Filter results">
       {% if ratified_available %}<button type="button" class="chip chip-ratified" data-ratified-filter aria-pressed="{{ 'true' if ratified_only else 'false' }}"><span data-ratified-count>{{ screen.ratified_count }}</span> Ratified</button>{% endif %}
       {% for tone in ['running','setup','extended','avoid','watch','paused','lean','pass','model-only','above','below','level','model','pending'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i><span data-tag-count>{{ screen.counts[tone] }}</span> {{ tone|replace('-', ' ') }}</button>{% endif %}{% endfor %}

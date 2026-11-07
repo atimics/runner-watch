@@ -41,11 +41,13 @@ def test_stock_rows_show_quote_age_and_saved_weekend_context():
     html = render(screen)
     assert html.count("data-quote-time ") == 2
     assert "Quote time unavailable" in html
-    assert "Stock scanner off · showing saved quotes from the last scan." in html
+    assert "Stock scanner off · showing saved quotes." in html
     assert f'datetime="{quote.isoformat()}"' in html
 
 
-@pytest.mark.parametrize("seconds,stale", [(0, False), (900, False), (901, True), (-60, True)])
+@pytest.mark.parametrize(
+    "seconds,stale", [(0, False), (900, False), (901, True), (-60, True), (-0.5, True)]
+)
 def test_stock_row_freshness_uses_quote_time_not_board_refresh(seconds, stale):
     now = datetime(2026, 11, 6, 16, tzinfo=UTC)
     screen = listing(

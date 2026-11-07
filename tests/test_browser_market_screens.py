@@ -68,6 +68,16 @@ def test_stock_quote_times_stay_visible_and_age_with_focus(page: Page, width, tm
     page.clock.fast_forward(120000)
     expect(ticker).to_be_focused()
     expect(old).to_contain_text("Stale · 15h 4m old")
+    page.route("http://app.test/", lambda route: route.abort())
+    ticker.evaluate("el => el.blur()")
+    page.clock.fast_forward(60000)
+    expect(old).to_contain_text("Stale · 15h 5m old")
+    links = page.get_by_role("navigation", name="Market").get_by_role("link").all()
+    boxes = [link.bounding_box() for link in links]
+    assert all(
+        left["x"] + left["width"] <= right["x"]
+        for left, right in zip(boxes, boxes[1:], strict=False)
+    )
     page.screenshot(path=str(tmp_path / f"stock-quote-times-{width}.png"), full_page=True)
 
 
@@ -450,18 +460,20 @@ def test_cup_full_page_refresh_keeps_outcome_when_value_moves_to_other_side(page
     expect(page.get_by_role("region", name="International probability history")).to_be_visible()
 
 
-def test_narrow_stock_rows_are_single_line(page: Page):
+def test_narrow_stock_rows_align_values_above_the_quote_time(page: Page):
     page.set_viewport_size({"width": 390, "height": 844})
     open_screen(page, listing("stocks", [fixtures.scored_stock()]))
     row = page.locator(".ticker").first
     expect(row).to_be_visible()
     box = row.bounding_box()
-    assert box is not None and box["height"] <= 62
+    assert box is not None and box["height"] <= 96
     selectors = (".ticker-trend", ".ticker-name", ".ticker-value", ".ticker-score")
     children = [row.locator(selector).bounding_box() for selector in selectors]
     children = [item for item in children if item is not None]
     centers = [item["y"] + item["height"] / 2 for item in children]
     assert max(centers) - min(centers) <= 4
+    timestamp = row.locator("[data-quote-time]").bounding_box()
+    assert timestamp["y"] >= max(item["y"] + item["height"] for item in children)
 
 
 def test_chart_renders_real_points_and_empty_history(page: Page):

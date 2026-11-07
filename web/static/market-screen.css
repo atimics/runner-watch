@@ -479,6 +479,7 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 :is(.market-stocks,.market-memecoins) .pulse-entry-dot{fill:var(--amber);stroke:var(--bg);stroke-width:.8}
 @media(max-width:760px){
   :is(.market-stocks,.market-memecoins) .ticker{grid-template-columns:64px minmax(0,1fr) auto 30px;min-height:62px;gap:8px;padding:8px 0}
+  .markets a{flex:0 0 auto}
   :is(.market-stocks,.market-memecoins) .ticker>.tag,:is(.market-stocks,.market-memecoins) .ticker>.ticker-mark{display:none}
   :is(.market-stocks,.market-memecoins) .ticker-trend{grid-column:1;grid-row:1;display:flex;flex-direction:column;justify-content:center;gap:3px}
   :is(.market-stocks,.market-memecoins) .ticker .mini-chart{display:block;width:64px;height:22px}
