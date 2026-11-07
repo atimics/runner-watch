@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from runner_trading import ledger
+from runner_trading import ledger, proposals
 from runner_trading.config import account_id
 from runner_trading.dashboard import snapshot
 from runner_web.db import connection
@@ -20,6 +20,11 @@ from runner_web.db import connection
 def operator(user: dict | None) -> bool:
     allowed = {i.strip() for i in os.getenv("TRADING_OPERATOR_IDS", "").split(",") if i.strip()}
     return bool(user and user["id"] in allowed)
+
+
+class ProposalAction(BaseModel):
+    action: Literal["preview", "approve", "reject"]
+    review_token: str = Field(default="", max_length=64)
 
 
 class TradingAction(BaseModel):
@@ -59,6 +64,7 @@ def create_trading_routes(deps: TradingDependencies) -> APIRouter:
         context.update(
             trading=snapshot(mode),
             can_control=operator(context.get("user")),
+            proposals=proposals.listing() if mode == "live" else [],
             screen={"market": "trading", "kind": "trading", "label": "Trading"},
         )
         return deps.templates.TemplateResponse(
@@ -118,6 +124,29 @@ def create_trading_routes(deps: TradingDependencies) -> APIRouter:
         return JSONResponse(
             {"ok": True, "action": body.action}, headers={"Cache-Control": "private, no-store"}
         )
+
+    @router.post("/api/trading/proposals/{proposal_id}")
+    def trade_proposal(
+        proposal_id: str,
+        body: ProposalAction,
+        request: Request,
+        runner_session: str | None = Cookie(default=None),
+    ):
+        deps.require_origin(request)
+        user = require_operator(runner_session)
+        deps.require_recent_auth(runner_session)
+        deps.enforce_rate(request, "trading-proposal", limit=20, seconds=60)
+        try:
+            if body.action == "preview":
+                result = proposals.preview(proposal_id)
+            elif body.action == "approve":
+                result = {"order_id": proposals.approve(proposal_id, body.review_token, user["id"])}
+            else:
+                proposals.reject(proposal_id, user["id"])
+                result = {"state": "rejected"}
+        except (ValueError, LookupError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return JSONResponse(result, headers={"Cache-Control": "private, no-store"})
 
     @router.get("/health/trading")
     def trading_health():

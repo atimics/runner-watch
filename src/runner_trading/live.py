@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import os
+import secrets
 import stat
 import struct
 from datetime import datetime
@@ -21,7 +22,7 @@ from solders.message import MessageV0, to_bytes_versioned
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
-from runner_trading import ledger
+from runner_trading import ledger, proposals
 from runner_trading.config import USDC, Policy, stamp
 from runner_trading.providers import Jupiter, ProviderError, Quote, SolanaRPC, positive_int
 from runner_web.solana_keys import ASSOCIATED_TOKEN_PROGRAM, TOKEN_PROGRAM, token_account
@@ -270,12 +271,14 @@ class Live:
         return transaction
 
     def prepare(self, identifier: str, token: str, order: dict, quote: Quote, at: datetime) -> None:
+        proposals.require_approval(order, quote, self.wallet, self.policy, self.provider.clock())
         transaction = self.validate(quote)
         quote.require_fresh(self.policy, self.provider.clock())
         height = positive_int(quote.raw.get("lastValidBlockHeight"))
         current = self.rpc("getBlockHeight", [{"commitment": "confirmed"}])
         if not current < height <= current + 200:
             raise ProviderError("Use a current block-height expiry")
+        proposals.require_approval(order, quote, self.wallet, self.policy, self.provider.clock())
         signed = VersionedTransaction.populate(
             transaction.message, [self.signer.sign_message(to_bytes_versioned(transaction.message))]
         )
@@ -466,6 +469,13 @@ class Live:
         ):
             return
         acc = ledger.account(identifier)
+        if acc["wallet"] and acc["wallet"] != self.wallet:
+            raise ProviderError("Use the wallet saved for this account")
+        if not acc["wallet"]:
+            with ledger.locked(identifier, token, at) as db:
+                db.execute(
+                    "UPDATE trading_accounts SET wallet=? WHERE id=?", (self.wallet, identifier)
+                )
         amounts = {}
         result = self.rpc(
             "getTokenAccountsByOwner",
@@ -488,10 +498,45 @@ class Live:
             }
         )
         sol = self.rpc("getBalance", [self.wallet, {"commitment": "finalized"}])["value"]
-        if sol != acc["sol_lamports"] or any(
-            amounts.get(mint, 0) != amount for mint, amount in expected.items()
+        cash = amounts.get(USDC, 0)
+        if (
+            cash < acc["cash_usdc"]
+            or sol < acc["sol_lamports"]
+            or cash > 2**63 - 1
+            or sol > 2**63 - 1
+            or any(
+                amounts.get(mint, 0) != amount for mint, amount in expected.items() if mint != USDC
+            )
         ):
             if not acc["paused"]:
-                ledger.pause(
-                    identifier, "Match the dedicated wallet to the saved account balances", at
+                ledger.pause(identifier, "Review the wallet balance change", at)
+            return
+        cash_added, sol_added = cash - acc["cash_usdc"], sol - acc["sol_lamports"]
+        if cash_added or sol_added:
+            with ledger.locked(identifier, token, at) as db:
+                db.execute(
+                    "UPDATE trading_accounts SET cash_usdc=?,sol_lamports=?,"
+                    "peak_equity_usdc=peak_equity_usdc+?,day_equity_usdc=day_equity_usdc+? "
+                    "WHERE id=?",
+                    (cash, sol, cash_added, cash_added, identifier),
+                )
+                db.execute(
+                    "INSERT INTO trading_ledger(id,account_id,kind,cash_delta_usdc,"
+                    "sol_delta_lamports,gas_usdc,recorded_at,receipt_json) "
+                    "VALUES(?,?,'funding',?,?,0,?,?)",
+                    (
+                        secrets.token_hex(16),
+                        identifier,
+                        cash_added,
+                        sol_added,
+                        stamp(at),
+                        ledger.encode({"wallet": self.wallet, "commitment": "finalized"}),
+                    ),
+                )
+                ledger.event(
+                    db,
+                    identifier,
+                    "funding",
+                    {"usdc_added": cash_added, "sol_added": sol_added},
+                    at,
                 )

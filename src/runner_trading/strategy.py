@@ -6,7 +6,9 @@ from typing import Any
 from runner_trading.config import Policy, age, number
 
 
-def entry_reasons(row: dict[str, Any], policy: Policy, at: datetime) -> list[str]:
+def entry_reasons(
+    row: dict[str, Any], policy: Policy, at: datetime, *, amount: int | None = None
+) -> list[str]:
     """All entry gates use dated evidence. Exit decisions have their own rules."""
     reasons = []
     if row.get("network") != "solana" or row.get("venue") != "pool":
@@ -42,7 +44,7 @@ def entry_reasons(row: dict[str, Any], policy: Policy, at: datetime) -> list[str
         liquidity = number(row.get("real_liquidity_usd")) * 1_000_000
         if liquidity < policy.min_real_liquidity_usdc:
             reasons.append("Real liquidity is below the strategy limit")
-        if policy.entry_usdc * 10_000 > liquidity * policy.max_entry_pool_bps:
+        if (amount or policy.entry_usdc) * 10_000 > liquidity * policy.max_entry_pool_bps:
             reasons.append("Entry is too large for the pool")
     except ValueError:
         reasons.append("Read real pool liquidity")
