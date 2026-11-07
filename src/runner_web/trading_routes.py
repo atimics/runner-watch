@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from runner_trading import ledger, proposals
-from runner_trading.config import account_id
+from runner_trading.config import account_id, stamp
 from runner_trading.dashboard import snapshot
 from runner_web.db import connection
 
@@ -105,6 +105,41 @@ def create_trading_routes(deps: TradingDependencies) -> APIRouter:
                 at,
                 paused=body.action == "pause",
             )
+        elif mode == "live":
+            with connection() as db:
+                pos = db.execute(
+                    "SELECT mint FROM trading_positions "
+                    "WHERE id=? AND account_id=? AND status='open'",
+                    (body.position_id, identifier),
+                ).fetchone()
+                pending = db.execute(
+                    "SELECT id FROM trading_proposals WHERE account_id=? AND position_id=? "
+                    "AND status='proposed' LIMIT 1",
+                    (identifier, body.position_id),
+                ).fetchone()
+            if pos is None:
+                raise HTTPException(404, "Open position required")
+            if pending is None:
+                try:
+                    proposals.create(
+                        source=f"operator-exit:{body.position_id}:{stamp(at)}",
+                        mint=pos["mint"],
+                        side="sell",
+                        amount=None,
+                        thesis="Operator requested a position exit.",
+                        invalidation="Review the current position and exit quote.",
+                        at=at,
+                    )
+                except (ValueError, LookupError) as exc:
+                    raise HTTPException(409, str(exc)) from exc
+            with connection() as db:
+                ledger.event(
+                    db,
+                    identifier,
+                    "exit_request",
+                    {"position_id": body.position_id, "operator_id": user["id"]},
+                    at,
+                )
         else:
             with connection() as db:
                 changed = db.execute(

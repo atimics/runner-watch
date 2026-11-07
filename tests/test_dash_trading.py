@@ -360,3 +360,41 @@ def test_postgres_dismissal_during_approval_rolls_back_the_order(trading_db, mon
     assert proposals.get(p["id"])["status"] == "rejected"
     assert ledger.rows("trading_orders", proposals.ACCOUNT) == []
     assert ledger.account(proposals.ACCOUNT)["reserved_usdc"] == 0
+
+
+def test_operator_can_review_a_sale_again_after_dismissing_it(client, monkeypatch):
+    now, _ = fund(monkeypatch)
+    p = idea(now, amount=25_000_000)
+    q = review(p["id"], now)
+    buy = proposals.approve(p["id"], q["review_token"], "operator", at=now)
+    token = ledger.acquire(proposals.ACCOUNT, now)
+    ledger.fill(
+        proposals.ACCOUNT,
+        token,
+        buy,
+        input_raw=25_000_000,
+        output_raw=100_000_000,
+        fee_lamports=100_000,
+        gas_usdc=10_000,
+        receipt={"test": True},
+        at=now,
+    )
+    ledger.release(proposals.ACCOUNT, token)
+    client.cookies.set("runner_session", "operator")
+
+    def request_exit():
+        return client.post(
+            "/api/trading/control?mode=live",
+            json={"action": "exit", "position_id": buy},
+            headers={"Origin": "http://testserver"},
+        )
+
+    assert request_exit().status_code == 200
+    assert request_exit().status_code == 200
+    sales = [p for p in proposals.listing() if p["side"] == "sell"]
+    assert len(sales) == 1
+    proposals.reject(sales[0]["id"], "operator")
+    assert request_exit().status_code == 200
+    sales = [p for p in proposals.listing() if p["side"] == "sell"]
+    assert sorted(p["status"] for p in sales) == ["proposed", "rejected"]
+    assert len(ledger.rows("trading_orders", proposals.ACCOUNT)) == 1
