@@ -923,14 +923,13 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
                         None
                         if carried_over and resumed_at is None
                         else round(
-                            (min(resumed_at or current, current) - halt["halted_at"])
-                            .total_seconds()
+                            (
+                                min(resumed_at or current, current) - halt["halted_at"]
+                            ).total_seconds()
                             / 60
                         )
                     ),
-                    "minutes_since_halt": round(
-                        (current - halt["halted_at"]).total_seconds() / 60
-                    ),
+                    "minutes_since_halt": round((current - halt["halted_at"]).total_seconds() / 60),
                     "pause_price": halt["pause_price"],
                     "after_reopen": _after_reopen(
                         bars.get(ticker, []),

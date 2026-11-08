@@ -1171,9 +1171,7 @@ def test_halt_first_seen_survives_reason_and_resume_updates():
 
 
 def test_prior_day_halt_stays_visible_through_its_recorded_resume_day():
-    _seed_halts(
-        _halt_item("OLD", "10:50:00", "T3", "10:30:00", resume_date="09/12/2026")
-    )
+    _seed_halts(_halt_item("OLD", "10:50:00", "T3", "10:30:00", resume_date="09/12/2026"))
     saturday = NOW + timedelta(days=1)
 
     scheduled = dash.halt_context(at=saturday - timedelta(hours=1))
