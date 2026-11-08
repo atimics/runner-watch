@@ -427,6 +427,21 @@
     } catch (_) { return null; }
   }
   let surfaceRequestNumber = 0;
+  function updateQuoteAges() {
+    document.querySelectorAll('[data-quote-time]').forEach(el => {
+      const quoted = Date.parse(el.dataset.quoteAt);
+      const seconds = Math.floor((Date.now() - quoted) / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const stale = !Number.isFinite(seconds) || seconds < 0 || seconds > Number(el.dataset.quoteMaxAge);
+      const age = minutes < 1 ? 'less than 1m old' : minutes < 60 ? `${minutes}m old` : `${Math.floor(minutes / 60)}h ${minutes % 60}m old`;
+      el.querySelector('[data-quote-age]').textContent = !Number.isFinite(seconds) ? 'Age unknown' : seconds < 0 ? 'Quote time ahead of clock' : `${stale ? 'Stale · ' : ''}${age}`;
+      el.classList.toggle('is-stale', stale);
+    });
+  }
+  updateQuoteAges();
+  // Keep aging the visible quote even when a refresh fails or keyboard focus
+  // deliberately prevents the board from being replaced.
+  setInterval(updateQuoteAges, 30000);
   async function refreshSurface() {
     if (document.hidden) return;
     if (screen?.refresh_url) { await refreshDetail(); return; }
@@ -447,6 +462,7 @@
         content.querySelectorAll('[data-connection]').forEach(el => { if (opened.has(el.dataset.connection)) { el.open = true; const more = el.querySelector('.more-connections'); if (more) more.open = opened.get(el.dataset.connection); } });
         surface.replaceWith(content);
       }
+      updateQuoteAges();
       refreshTagFilters(next);
       applyTagFilter();
       // Surface replacement contains fresh SVG shells. Repaint saved histories

@@ -673,6 +673,46 @@ def test_a_locked_report_is_reported_but_not_read_out(monkeypatch):
     assert "secret" not in str(report)
 
 
+@pytest.mark.parametrize("change", [14.05, None])
+def test_lookup_keeps_the_quote_fields_together_and_updates_age_text(monkeypatch, change):
+    from runner_web import main as web_main
+    from runner_web import quotes, telegram_chat
+
+    current = {
+        "price": 0.94,
+        "change_pct": 15.125536,
+        "quote_time": "2026-11-07T00:55:00+00:00",
+        "captured_at": "2026-11-07T01:00:00+00:00",
+        "risks": ["quote is about 187m old", "Thin float"],
+    }
+    monkeypatch.setattr(web_main, "_public_ticker_detail_data", lambda _: {"current": current})
+    monkeypatch.setattr(
+        quotes,
+        "market_mark",
+        lambda _: {
+            "price": 0.9312,
+            "change_pct": change,
+            "previous_close": 0.8165,
+            "observed_at": "2026-11-07T00:59:00+00:00",
+            "age_seconds": 36300,
+            "source": "quote",
+            "session": "AFTER-HOURS",
+        },
+    )
+    monkeypatch.setattr(telegram_chat, "_research_report", lambda _: None)
+    monkeypatch.setattr(telegram_chat, "_avatar_comments", lambda _: [])
+
+    looked = telegram_chat.look_up_ticker("OCGN")
+
+    assert (looked["price"], looked["change_pct"]) == (0.9312, change)
+    assert looked["previous_close"] == 0.8165
+    assert looked["price_as_of"] == "2026-11-07T00:59:00+00:00"
+    assert looked["price_age_seconds"] == 36300
+    assert looked["risks"] == ["quote is about 605m old", "Thin float"]
+    assert looked["assessment_as_of"] == current["captured_at"]
+    assert current["risks"][0] == "quote is about 187m old"
+
+
 def test_a_saved_target_comes_back_with_its_result():
     from runner_web.telegram_chat import _todays_target
 
@@ -701,6 +741,9 @@ def test_a_saved_target_comes_back_with_its_result():
     assert target["target_price"] == 1.85
     assert target["status"] == "hit"
     assert target["close_price"] == 1.98
+    assert target["report_day"] == "2026-09-11"
+    assert target["reference_at"] == NOW.isoformat()
+    assert target["forecast_at"] == NOW.isoformat()
     assert _todays_target("NONE") is None
 
 
@@ -788,6 +831,36 @@ def test_market_now_carries_the_next_open(monkeypatch):
     assert payload["scanner_active"] is False
     assert "ET" in payload["next_open"]
     assert payload["eastern_now"].endswith(" ET")
+    assert payload["next_open"] == "Overnight venues at 20:00 ET"
+    assert payload["data_state"] == "stored_session"
+
+
+def test_closed_board_carries_each_quotes_time_and_age(monkeypatch):
+    closed = datetime(2026, 11, 7, 11, 6, tzinfo=UTC)
+    quoted_at = "2026-11-07T00:59:00+00:00"
+    monkeypatch.setattr(
+        "runner_web.main._public_pulse_data",
+        lambda **_: {
+            "rows": [
+                {
+                    "ticker": "KDK",
+                    "price": 1.28,
+                    "change_pct": 34.58,
+                    "quote_time": quoted_at,
+                    "mark_source": "quote",
+                }
+            ],
+            "updated_at": quoted_at,
+        },
+    )
+
+    board = dash.market_now(at=closed)
+
+    assert board["data_state"] == "stored_session"
+    assert board["updated_at"] == quoted_at
+    assert board["generated_at"] == closed.isoformat()
+    assert board["leaders"][0]["quote_as_of"] == quoted_at
+    assert board["leaders"][0]["price_age_seconds"] == 36420
 
 
 def test_the_world_is_one_snapshot_of_everything():
@@ -875,9 +948,17 @@ def test_the_desk_note_waits_for_changes_between_scheduled_reviews(monkeypatch):
     assert sent == []
 
 
-def _halt_item(ticker: str, halt: str, reason: str, resume: str = "") -> str:
+def _halt_item(
+    ticker: str,
+    halt: str,
+    reason: str,
+    resume: str = "",
+    *,
+    date: str = "09/11/2026",
+    resume_date: str | None = None,
+) -> str:
     resume_tags = (
-        f"<ndaq:ResumptionDate>09/11/2026</ndaq:ResumptionDate>"
+        f"<ndaq:ResumptionDate>{resume_date or date}</ndaq:ResumptionDate>"
         f"<ndaq:ResumptionQuoteTime>{resume}</ndaq:ResumptionQuoteTime>"
         f"<ndaq:ResumptionTradeTime>{resume}</ndaq:ResumptionTradeTime>"
         if resume
@@ -885,7 +966,7 @@ def _halt_item(ticker: str, halt: str, reason: str, resume: str = "") -> str:
     )
     return (
         f"<item><title>{ticker} Corp</title>"
-        f"<ndaq:HaltDate>09/11/2026</ndaq:HaltDate><ndaq:HaltTime>{halt}</ndaq:HaltTime>"
+        f"<ndaq:HaltDate>{date}</ndaq:HaltDate><ndaq:HaltTime>{halt}</ndaq:HaltTime>"
         f"<ndaq:IssueSymbol>{ticker}</ndaq:IssueSymbol>"
         f"<ndaq:IssueName>{ticker} Corp Common Stock</ndaq:IssueName>"
         f"<ndaq:Market>NASDAQ</ndaq:Market><ndaq:ReasonCode>{reason}</ndaq:ReasonCode>"
@@ -1013,6 +1094,160 @@ def test_a_scheduled_resume_is_not_read_as_a_reopen():
     assert halt["after_reopen"] is None
 
 
+def test_unresolved_halts_survive_an_empty_feed_and_the_weekend():
+    _seed_halts(_halt_item("TDIC", "10:50:00", "T1"))
+    with connection() as database:
+        database.execute(
+            "UPDATE market_events SET first_collected_at=?,last_collected_at=?",
+            ("2026-09-11T14:52:00+00:00", "2026-09-11T23:50:00+00:00"),
+        )
+    _seed_halts()
+    saturday = NOW + timedelta(days=1)
+
+    result = dash.halt_context(at=saturday)
+
+    assert dash.recent_halts(at=NOW)[0]["ticker"] == "TDIC"
+    assert result["ticker_count"] == 1
+    assert result["halts_today"] == 0
+    assert result["carried_over_count"] == result["unresolved_count"] == 1
+    (entry,) = result["items"]
+    assert entry["halts_today"] == 0
+    (halt,) = entry["halts"]
+    assert halt["source_halted_at"] == "2026-09-11T14:50:00+00:00"
+    assert halt["first_seen_at"] == "2026-09-11T14:52:00+00:00"
+    assert halt["last_seen_at"] == "2026-09-11T23:50:00+00:00"
+    assert halt["state"] == "resolution unknown, no resume recorded"
+    assert halt["resolution"] == {
+        "status": "unresolved",
+        "resume_at": None,
+        "evidence": "no_source_resume",
+    }
+    assert halt["carried_over"] is True
+    assert halt["minutes_halted"] is None
+    assert halt["minutes_since_halt"] == 1450
+    assert halt["after_reopen"] is None
+    assert result["today_start"] == "2026-09-12T00:00:00-04:00"
+    assert result["window_start"] == "2026-09-06T00:00:00-04:00"
+    assert result["window_end"] == "2026-09-12T11:00:00-04:00"
+    assert result["session"] == "Weekend closed"
+    assert result["coverage"] == "stored_events_only"
+    assert result["resolution_policy"] == "A missing feed entry is not a recorded resume"
+
+
+def test_halt_first_seen_survives_reason_and_resume_updates():
+    for reason, resume, collected_at in (
+        ("T1", "", "2026-09-11T14:01:00+00:00"),
+        ("T2", "", "2026-09-11T14:15:00+00:00"),
+        ("T3", "10:40:00", "2026-09-11T14:35:00+00:00"),
+    ):
+        _seed_halts(
+            _halt_item("EYPT", "10:00:00", reason, resume).replace(
+                "<item>", "<item><pubDate>Fri, 11 Sep 2026 14:00:10 GMT</pubDate>"
+            )
+        )
+        with connection() as database:
+            database.execute(
+                "UPDATE market_events SET first_collected_at=?,last_collected_at=? "
+                "WHERE payload_json LIKE ?",
+                (collected_at, collected_at, f'%"reason_code":"{reason}"%'),
+            )
+
+    (entry,) = dash.recent_halts(at=NOW)
+    (halt,) = entry["halts"]
+
+    assert entry["halts_today"] == 1
+    assert halt["reason_code"] == "T3"
+    assert halt["source_halted_at"] == "2026-09-11T14:00:00+00:00"
+    assert halt["source_published_at"] == "2026-09-11T14:00:10+00:00"
+    assert halt["first_seen_at"] == "2026-09-11T14:01:00+00:00"
+    assert halt["last_seen_at"] == "2026-09-11T14:35:00+00:00"
+    assert halt["resolution"] == {
+        "status": "resumed",
+        "resume_at": "2026-09-11T14:40:00+00:00",
+        "evidence": "source_trade_resume_time",
+    }
+    assert halt["source"] == "nasdaq_trader"
+    assert halt["source_url"].startswith("https://www.nasdaqtrader.com/")
+
+
+def test_prior_day_halt_stays_visible_through_its_recorded_resume_day():
+    _seed_halts(_halt_item("OLD", "10:50:00", "T3", "10:30:00", resume_date="09/12/2026"))
+    saturday = NOW + timedelta(days=1)
+
+    scheduled = dash.halt_context(at=saturday - timedelta(hours=1))
+    assert scheduled["items"][0]["halts"][0]["resolution"]["status"] == "scheduled"
+    resumed = dash.halt_context(at=saturday)
+    assert resumed["halts_today"] == resumed["unresolved_count"] == 0
+    assert resumed["carried_over_count"] == 1
+    halt = resumed["items"][0]["halts"][0]
+    assert halt["resolution"]["status"] == "resumed"
+    assert halt["resolution"]["resume_at"] == "2026-09-12T14:30:00+00:00"
+    assert dash.halt_context(at=saturday + timedelta(days=1))["resolved_count"] == 1
+    assert dash.halt_context(at=saturday + timedelta(days=7))["items"] == []
+
+
+def test_friday_resolved_halts_remain_visible_on_saturday():
+    _seed_halts(_halt_item("DONE", "10:00:00", "T3", "10:30:00"))
+    _seed_bar("DONE", "13:55", 1.9, 2.0, 1.9, 2.0)
+    _seed_bar("DONE", "14:30", 2.2, 2.3, 2.1, 2.2)
+    _seed_halts()
+
+    context = dash.halt_context(at=NOW + timedelta(days=1))
+
+    assert context["halts_today"] == context["unresolved_count"] == 0
+    assert context["carried_over_count"] == context["resolved_count"] == 1
+    assert context["scheduled_count"] == 0
+    assert context["history_calendar_days"] == 7
+    assert context["today_start"] == "2026-09-12T00:00:00-04:00"
+    assert context["window_start"] == "2026-09-06T00:00:00-04:00"
+    (entry,) = context["items"]
+    (halt,) = entry["halts"]
+    assert halt["resolution"] == {
+        "status": "resumed",
+        "resume_at": "2026-09-11T14:30:00+00:00",
+        "evidence": "source_trade_resume_time",
+    }
+    assert halt["after_reopen"]["reopen"] == 2.2
+    assert halt["after_reopen"]["before_halt"] == 2.0
+    assert halt["after_reopen"]["reopen_observed_at"] == "2026-09-11T14:30:00+00:00"
+    assert halt["after_reopen"]["last_observed_at"] == "2026-09-11T14:30:00+00:00"
+
+
+def test_history_expires_resolved_events_but_keeps_older_unresolved_halts():
+    _seed_halts(
+        _halt_item("DONE", "10:00:00", "T3", "10:30:00"),
+        _halt_item("OPEN", "10:00:00", "T1"),
+    )
+
+    assert dash.halt_context(at=NOW + timedelta(days=6))["resolved_count"] == 1
+    context = dash.halt_context(at=NOW + timedelta(days=7))
+
+    assert [entry["ticker"] for entry in context["items"]] == ["OPEN"]
+    assert context["window_start"] == "2026-09-12T00:00:00-04:00"
+    assert context["unresolved_count"] == 1
+    assert context["resolved_count"] == context["halts_today"] == 0
+
+
+def test_halt_history_uses_calendar_dates_across_daylight_saving_change():
+    context = dash.halt_context(at=datetime(2026, 11, 7, 16, tzinfo=UTC))
+
+    assert context["window_start"] == "2026-11-01T00:00:00-04:00"
+    assert context["today_start"] == "2026-11-07T00:00:00-05:00"
+
+
+def test_resolved_history_cannot_crowd_an_older_unresolved_halt_out_of_the_limit():
+    _seed_halts(
+        _halt_item("OLD", "19:50:00", "T1", date="09/10/2026"),
+        *(_halt_item(f"DONE{number}", "10:00:00", "T3", "10:30:00") for number in range(205)),
+    )
+
+    (entry,) = dash.recent_halts(limit=1, at=NOW)
+
+    assert entry["ticker"] == "OLD"
+    assert entry["halts_today"] == 0
+    assert entry["halts"][0]["resolution"]["status"] == "unresolved"
+
+
 def test_an_unknown_halt_code_is_passed_through_rather_than_guessed():
     assert dash.halt_reason("ZZ9") == "ZZ9"
     assert dash.halt_reason("") is None
@@ -1030,8 +1265,8 @@ def test_recent_events_read_the_stored_payload():
 def test_the_world_and_expand_include_halts():
     _seed_halts(_halt_item("TDIC", "10:50:00", "T1"))
 
-    assert dash.dash_world(at=NOW)["halts"][0]["ticker"] == "TDIC"
-    assert isinstance(dash.dash_expand("halts"), list)
+    assert dash.dash_world(at=NOW)["halts"]["items"][0]["ticker"] == "TDIC"
+    assert isinstance(dash.dash_expand("halts")["items"], list)
 
 
 def _seed_game(event_id, status, start, away_score=None, home_score=None, detail="Scheduled"):

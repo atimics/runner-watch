@@ -184,7 +184,12 @@ def test_mobile_replaces_chip_and_preserves_exact_terms_palette_and_checks(page,
         assert all(
             a["x"] + a["width"] <= b["x"] + 1 for a, b in zip(bounds, bounds[1:], strict=False)
         )
-        assert row.bounding_box()["height"] <= 64
+        quote_time = row.locator("[data-quote-time]")
+        expect(quote_time).to_be_visible()
+        assert quote_time.bounding_box()["y"] >= max(b["y"] + b["height"] for b in bounds)
+        # A dated quote and its age have their own wrapping line below the
+        # compact price/chart row, including at the narrowest viewport.
+        assert row.bounding_box()["height"] <= 108
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     expect(page.locator(".indicator-glyph")).to_have_count(6)
     expect(page.locator(".ticker-verified")).to_have_count(1)

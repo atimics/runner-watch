@@ -1001,7 +1001,9 @@ def test_repeated_missing_actions_keep_research_pending(monkeypatch):
 
     result = web_main._generate_telegram_turn(_parse(_update("$EYPT", mention=True)), [])
 
-    assert result == {"action": "retry", "why": "research_pending"}
+    assert result["action"] == "retry" and result["why"] == "research_pending"
+    assert result["research"]["stop_reason"] == "empty_response"
+    assert result["research"]["failures"][0]["tool"] == "complete"
     assert len(calls) == 2
 
 
