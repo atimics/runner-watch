@@ -67,7 +67,7 @@ def run(script, *, expand=None, evidence=None, **kwargs):
         return next(responses)
 
     result = research.run_research(
-        context={},
+        context=kwargs.pop("context", {}),
         persona="Dash",
         tools=list(TOOL_SCHEMA),
         complete=complete,
