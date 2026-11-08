@@ -455,6 +455,19 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 :is(.market-stocks,.market-memecoins) .ticker-trend{display:block;width:64px;min-width:0}
 .stock-freshness-note{margin:0 0 16px;padding:10px 12px;border-left:2px solid var(--muted);background:var(--panel);color:var(--text);font-size:12px}
 .stock-session-note{margin:0 0 16px;padding:12px;border-left:2px solid var(--amber);background:var(--panel);color:var(--text);font-size:13px;line-height:1.5}
+.detail .coin-overview{display:grid;grid-template-columns:40px minmax(0,1fr);column-gap:12px;row-gap:4px;align-items:start}
+.coin-overview .asset-heading,.coin-overview .asset-quote{display:contents}
+.detail .coin-overview .ticker-mark{grid-column:1;grid-row:1/4;width:40px;height:40px;font-size:13px}
+.coin-overview .asset-heading>div{grid-column:2;grid-row:2;min-width:0}
+.detail .coin-overview .coin-contract{display:flex;align-items:baseline;gap:6px;margin:0;font-size:12px;font-weight:400;line-height:1.5;letter-spacing:0;color:var(--muted)}
+.coin-contract>span:not(.coin-contract-label){min-width:0;font-family:ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere;user-select:all}
+.coin-contract-label{font-size:10px;flex-shrink:0}
+.detail .coin-overview .asset-value{grid-column:2;grid-row:1;min-width:0;flex-wrap:wrap;gap:4px 12px;margin:0;align-items:center}
+.detail .coin-overview .asset-value>strong{font-size:30px;line-height:1.15;letter-spacing:-.8px}
+.coin-overview .asset-value>[data-change]{font-size:13px}
+.coin-overview .quote-scope{grid-column:2;grid-row:3;margin:0;line-height:1.4}
+.coin-overview .quote-time{font-size:11px}
+@media(max-width:420px){.detail .coin-overview{grid-template-columns:32px minmax(0,1fr);column-gap:10px}.detail .coin-overview .ticker-mark{width:32px;height:32px;font-size:11px}.detail .coin-overview .asset-value>strong{font-size:26px}.coin-overview .asset-value{gap:4px 8px}}
 .market-stocks .ticker-quote-time{grid-column:2/-1;grid-row:2;display:flex;flex-wrap:wrap;gap:2px 12px;min-width:0;font-size:11px;line-height:1.5;color:var(--muted)}
 .market-stocks .ticker-quote-time.is-stale [data-quote-age]{color:var(--amber)}
 /* The run state sits beside the price as one small chip; its reasons live in the tooltip. */
