@@ -10,11 +10,13 @@
   let mark = null, owner = null, dismissed = null, hideTimer;
   let pointerFocus = false;
   const find = target => target instanceof Element ? target.closest(selector) : null;
-  const focusMark = target => find(target) || (target instanceof Element ? target.querySelector(selector) : null);
+  const focusMark = target => find(target) || (target instanceof Element && target.matches('a.ticker')
+    ? target.querySelector(selector) : null);
 
   function position() {
     if (!mark?.isConnected || tip.hidden) return;
-    const rect = mark.getBoundingClientRect(), bounds = tip.getBoundingClientRect(), gap = 10, margin = 12;
+    const anchor = mark.closest('.map-glyph') || mark;
+    const rect = anchor.getBoundingClientRect(), bounds = tip.getBoundingClientRect(), gap = 10, margin = 12;
     // Prefer the side, like a label on the mark; move above when neither side fits.
     let left = rect.right + gap, top = rect.top + (rect.height - bounds.height) / 2;
     if (left + bounds.width > innerWidth - margin) left = rect.left - bounds.width - gap;
@@ -42,6 +44,9 @@
     if (!next || next === dismissed || !next.dataset.sigilHint) return;
     if (mark !== next || owner !== trigger) hide();
     mark = next; owner = trigger;
+    // Other pages keep the native fallback. Suppress it only once this preview runs.
+    mark.removeAttribute('title');
+    mark.querySelectorAll('title').forEach(title => title.remove());
     mark.setAttribute('data-sigil-lit', '');
     tip.textContent = mark.dataset.sigilHint;
     const ids = new Set((owner.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean));
@@ -73,12 +78,18 @@
   document.addEventListener('pointerdown', () => { pointerFocus = true; hide(); }, true);
   document.addEventListener('keydown', event => {
     pointerFocus = false;
+    if (['Enter', ' '].includes(event.key) && focusMark(event.target)) {
+      // Activation opens the existing evidence view. Its Escape action stays intact.
+      pointerFocus = true;
+      hide();
+    }
     if (event.key === 'Escape' && !tip.hidden) {
       dismissed = mark;
       hide();
       // Dismiss the preview without changing an existing map selection or focus.
       event.preventDefault(); event.stopImmediatePropagation();
     }
+    if (event.key === 'Escape') pointerFocus = true;
   }, true);
   document.addEventListener('focusin', event => {
     if (!pointerFocus) show(focusMark(event.target), event.target);

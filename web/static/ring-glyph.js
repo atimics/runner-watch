@@ -71,9 +71,8 @@
         pattern.removeAttribute('data-score-key'); pattern.removeAttribute('aria-label');
         pattern.style[solid ? 'fill' : 'stroke'] = paint[part.key];
       }
-      segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
       segment.dataset.sigilHint = `${part.label} · ${points(part.value)} · ${percent(part)}`;
-      segment.querySelector('title')?.remove();
+      segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
       wireControl?.(segment,part); ringLayer.append(segment);
       if (pattern) ringLayer.append(pattern);
     });
@@ -153,14 +152,13 @@
       const end = angle + part.share * sweepAll;
       const segment = ringShape(cx, cy, gauge, angle, end, {class:'map-score-segment', 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'stroke-width':width});
       segment.style.stroke = color(part);
-      segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
       segment.dataset.sigilHint = `${part.label} · ${points(part.value)} · ${percent(part)}`;
-      segment.querySelector('title')?.remove();
+      segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
       wireControl?.(segment, part); ringLayer.append(segment);
       if (paint[part.key]) {
         const pattern = segment.cloneNode(false);
         pattern.setAttribute('class', 'map-score-pattern'); pattern.setAttribute('aria-hidden', 'true');
-        ['data-score-key','aria-label','role','tabindex','aria-pressed'].forEach(name => pattern.removeAttribute(name));
+        ['data-score-key','data-sigil-hint','aria-label','role','tabindex','aria-pressed'].forEach(name => pattern.removeAttribute(name));
         pattern.style.stroke = paint[part.key]; ringLayer.append(pattern);
       }
       angle = end;
@@ -184,6 +182,7 @@
         ticks.append(svg('path', {d:arcPath(cx, cy, WELL_STANDARDS_R*u, a0, a0 + step - gap), class:'well-standard', 'data-state':mark.state}));
       });
       ticks.dataset.sigilHint = standards.reading;
+      ticks.append(svg('title', {}, standards.reading));
       wireControl?.(ticks, controls.find(part => part.key === 'standards')); ringLayer.append(ticks);
     }
     // The well itself is one control: it opens the liquidity reading.
@@ -220,6 +219,7 @@
       body.append(svg('polyline', {points:zig, class:'well-crack'}));
     }
     body.dataset.sigilHint = well.reading.split(';')[0];
+    body.append(svg('title', {}, well.reading));
     wireControl?.(body, controls.find(part => part.key === 'liquidity')); ringLayer.append(body);
     // A risk factor notches the top; unknown risk draws nothing.
     if (glyph.risk === 'detected' || glyph.risk === 'significant') {
