@@ -6,7 +6,7 @@ from typing import Any
 
 from runner_trading import ledger
 from runner_trading.config import USDC, Policy, age, stamp
-from runner_trading.providers import Jupiter, ProviderError
+from runner_trading.providers import Jupiter, ProviderError, QuoteRejected
 from runner_trading.strategy import entry_reasons, exit_reason
 from runner_web.db import connection
 
@@ -258,7 +258,8 @@ class Trader:
                         )
                 except (ProviderError, ValueError) as exc:
                     reasons.append(str(exc))
-                    self.issues.append(str(exc))
+                    if not isinstance(exc, QuoteRejected):
+                        self.issues.append(str(exc))
             if not reasons and ledger.reserve_buy(
                 self.identifier, self.token, signal, self.policy, self.clock()
             ):
@@ -317,7 +318,7 @@ class Trader:
                     if net * 10_000 < quote.input_raw * (
                         10_000 - self.policy.max_round_trip_loss_bps
                     ):
-                        raise ProviderError("The size-specific return quote exceeds the cost limit")
+                        raise QuoteRejected("The size-specific return quote exceeds the cost limit")
                 quote.require_fresh(self.policy, self.clock())
                 if self.live:
                     self.live.prepare(self.identifier, self.token, order, quote, self.clock())
@@ -364,7 +365,8 @@ class Trader:
                             self.clock(),
                         )
             except (ProviderError, ValueError) as exc:
-                self.issues.append(str(exc))
+                if order["side"] == "sell" or not isinstance(exc, QuoteRejected):
+                    self.issues.append(str(exc))
                 if order["side"] == "buy":
                     ledger.fail_order(
                         self.identifier, self.token, order["id"], str(exc), self.clock()

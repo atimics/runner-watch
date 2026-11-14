@@ -17,6 +17,10 @@ class ProviderError(ValueError):
     pass
 
 
+class QuoteRejected(ProviderError):
+    """This route is ineligible; the provider can still serve other candidates."""
+
+
 def positive_int(value: Any) -> int:
     if isinstance(value, bool) or not str(value).isdigit():
         raise ProviderError("Provider amount is invalid")
@@ -129,21 +133,24 @@ class Jupiter:
             or raw.get("outputMint") != output_mint
             or positive_int(raw.get("inAmount")) != amount
             or raw.get("swapMode") != "ExactIn"
-            or raw.get("router") != "metis"
         ):
             raise ProviderError("Swap route differs from the order")
+        if raw.get("router") != "metis":
+            raise QuoteRejected("The swap router is outside the supported route policy")
         output = positive_int(raw.get("outAmount"))
         minimum = positive_int(raw.get("otherAmountThreshold"))
         floor = output * (10_000 - self.policy.slippage_bps) // 10_000
-        if minimum > output or minimum < floor:
-            raise ProviderError("Swap minimum exceeds the slippage policy")
+        if minimum > output:
+            raise ProviderError("Swap minimum exceeds the quoted output")
+        if minimum < floor:
+            raise QuoteRejected("Swap minimum exceeds the slippage policy")
         impact = (
             abs(number(raw["priceImpact"])) * 100
             if "priceImpact" in raw
             else abs(number(raw.get("priceImpactPct"))) * 10_000
         )
         if input_mint == USDC and impact > self.policy.max_price_impact_bps:
-            raise ProviderError("Swap price impact exceeds the limit")
+            raise QuoteRejected("Swap price impact exceeds the limit")
         fees = 0
         for name in ("signatureFeeLamports", "prioritizationFeeLamports", "rentFeeLamports"):
             fee = number(raw.get(name, 0))
@@ -155,7 +162,7 @@ class Jupiter:
             # Reserve a fresh associated account in the paper cost model.
             fees = max(fees, 2_039_280 + self.policy.paper_fee_lamports)
         if fees > self.policy.max_fee_lamports:
-            raise ProviderError("Network and account costs exceed the limit")
+            raise QuoteRejected("Network and account costs exceed the limit")
         return Quote(
             input_mint,
             output_mint,
