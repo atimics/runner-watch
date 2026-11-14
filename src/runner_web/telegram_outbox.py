@@ -157,8 +157,9 @@ OUTBOX_MAX_AGE = timedelta(days=1)
 
 
 def deliver_outbox(
-    config, sender, *, at: datetime, kinds: tuple[str, ...], last_kind: str = ""
+    config, sender, *, at: datetime, kinds: tuple[str, ...], last_kind: str = "", clock=None
 ) -> dict:
+    clock = clock or (lambda: datetime.now(UTC))
     stamp = at.isoformat()
     with connection() as database:
         lock_channel(database, config.chat_id, at)
@@ -241,7 +242,7 @@ def deliver_outbox(
     if not chosen:
         return {"status": "waiting" if candidates else "empty", "sent": 0, "items": []}
     row, cards, attempts = chosen
-    status, error, receipt, retry_at = "sent", None, None, None
+    status, error, receipt, retry_at, retry_after = "sent", None, None, None, None
     try:
         receipt = sender(config, row["text"])
         if type(receipt) is not int or receipt <= 0:
@@ -250,27 +251,44 @@ def deliver_outbox(
         status = exc.status
         if status == "retry":
             status = "retry" if attempts < 3 else "failed"
-            retry_at = (at + timedelta(seconds=exc.retry_after)).isoformat()
+            retry_after = exc.retry_after
         error = "telegram_" + status
     except Exception:
         status, error = "uncertain", "acknowledgement_lost"
     if status != "sent":
         receipt = None
+    completed = clock()
+    stamp = completed.isoformat()
+    if retry_after is not None:
+        retry_at = (completed + timedelta(seconds=retry_after)).isoformat()
     with connection() as database:
-        lock_channel(database, config.chat_id, at)
+        lock_channel(database, config.chat_id, completed)
         database.execute(
             "UPDATE telegram_outbox SET status=?,message_id=?,retry_at=?,last_error=?,updated_at=? "
             "WHERE id=? AND status='sending'",
             (status, receipt, retry_at, error, stamp, row["id"]),
         )
         _mirror(database, cards, status, attempts, stamp)
+        from runner_web.dash_jobs import record_delivery
+
+        for card in cards:
+            if card.get("research_job"):
+                record_delivery(
+                    database, card["research_job"], status, completed, message_id=receipt
+                )
         if retry_at:
             database.execute(
                 "UPDATE telegram_channel_schedule SET next_at=CASE WHEN next_at<? "
                 "THEN ? ELSE next_at END WHERE chat_id=?",
                 (retry_at, retry_at, config.chat_id),
             )
-    return {"status": status, "sent": int(status == "sent"), "items": cards, "id": row["id"]}
+    return {
+        "status": status,
+        "sent": int(status == "sent"),
+        "items": cards,
+        "id": row["id"],
+        "completed_at": stamp,
+    }
 
 
 def stock_event_card(ticker: str, event: dict) -> dict:

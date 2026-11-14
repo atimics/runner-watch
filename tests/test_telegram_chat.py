@@ -599,6 +599,126 @@ def test_being_addressed_earns_a_reply_and_opens_a_run(wired):
     assert run["replies_left"] == chat.ENGAGEMENT_REPLIES - 1
 
 
+def test_group_prose_uses_the_same_evidence_validation(monkeypatch):
+    web_main = _no_prefetch(monkeypatch)
+    responses = iter(
+        [
+            {"choices": [{"message": {"content": f"{CA} is running."}, "finish_reason": "stop"}]},
+            {
+                "choices": [
+                    {"message": {"content": "I need a fresh lookup."}, "finish_reason": "stop"}
+                ]
+            },
+        ]
+    )
+    monkeypatch.setattr(web_main, "_telegram_chat_completion", lambda body: next(responses))
+    result = web_main._generate_telegram_turn(_parse(_update("what now", mention=True)), [])
+    assert result["text"] == "I need a fresh lookup."
+    assert result["research"]["outcome"] == "answered"
+
+
+def test_lost_group_acknowledgement_is_terminal_and_never_resends(wired, monkeypatch):
+    from runner_web import dash_jobs
+    from runner_web import main as web_main
+    from runner_web.telegram import TelegramDeliveryError
+
+    with connection() as database:
+        chat.record_update(database, _update("hey", mention=True), NOW)
+    claim = dash_jobs.claim("telegram:1", "chat:test", "chat", NOW)
+    answer = {"action": "reply", "text": "A frozen answer."}
+    dash_jobs.finish("telegram:1", claim["token"], "chat:test", answer, {}, NOW)
+    sends = []
+
+    def uncertain(*args, **kwargs):
+        sends.append(args[2])
+        assert kwargs["confirmed"] is True
+        raise TelegramDeliveryError("uncertain")
+
+    monkeypatch.setattr(web_main, "send_telegram_reply", uncertain)
+    result = web_main.run_telegram_chat(lambda *args: answer, at=NOW)
+    web_main.run_telegram_chat(lambda *args: answer, at=NOW + timedelta(minutes=5))
+    assert result["delivery_uncertain"] == 1
+    assert sends == ["A frozen answer."]
+    with connection() as database:
+        row = database.execute("SELECT status,last_error FROM telegram_updates").fetchone()
+    assert row["status"] == "failed" and row["last_error"] == "telegram_uncertain"
+    assert (
+        dash_jobs.completed_result("telegram:1", "chat:test")["delivery"]["status"] == "uncertain"
+    )
+
+
+def test_group_rate_limit_waits_then_retries_once(wired, monkeypatch):
+    from runner_web import main as web_main
+    from runner_web.telegram import TelegramDeliveryError
+
+    with connection() as database:
+        chat.record_update(database, _update("hey", mention=True), NOW)
+    calls = []
+
+    def sender(*args, **kwargs):
+        calls.append(args[2])
+        if len(calls) == 1:
+            raise TelegramDeliveryError("retry", retry_after=120)
+        return 42
+
+    monkeypatch.setattr(web_main, "send_telegram_reply", sender)
+
+    def generate(*args):
+        return {"action": "reply", "text": "An answer."}
+
+    assert web_main.run_telegram_chat(generate, at=NOW)["delivery_retry"] == 1
+    assert web_main.run_telegram_chat(generate, at=NOW + timedelta(seconds=119))["seen"] == 0
+    assert web_main.run_telegram_chat(generate, at=NOW + timedelta(seconds=121))["replied"] == 1
+    assert calls == ["An answer.", "An answer."]
+
+
+def test_chat_timestamps_follow_generation_and_acknowledgement(wired, monkeypatch):
+    from runner_web import main as web_main
+
+    instant = [NOW]
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant[0]
+
+    monkeypatch.setattr(web_main, "datetime", Clock)
+    with connection() as database:
+        chat.record_update(database, _update("hey", mention=True), NOW)
+
+    def generate(*args):
+        instant[0] += timedelta(seconds=40)
+        return {"action": "reply", "text": "An answer."}
+
+    def send(*args, **kwargs):
+        instant[0] += timedelta(seconds=5)
+        return 42
+
+    monkeypatch.setattr(web_main, "send_telegram_reply", send)
+    web_main.run_telegram_chat(generate)
+    with connection() as database:
+        handled = database.execute("SELECT handled_at FROM telegram_updates").fetchone()[0]
+        acted = database.execute("SELECT acted_at FROM telegram_chat_actions").fetchone()[0]
+    assert handled == acted == (NOW + timedelta(seconds=45)).isoformat()
+
+
+def test_exhausted_chat_errors_are_terminal(wired):
+    from runner_web import main as web_main
+
+    with connection() as database:
+        chat.record_update(database, _update("hey", mention=True), NOW)
+
+    def fail(*args):
+        raise RuntimeError("private failure")
+
+    for i in range(chat.MAX_UPDATE_ATTEMPTS + 1):
+        web_main.run_telegram_chat(fail, at=NOW + timedelta(minutes=i))
+    with connection() as database:
+        row = database.execute("SELECT status,attempts,last_error FROM telegram_updates").fetchone()
+    assert row["status"] == "failed" and row["attempts"] == chat.MAX_UPDATE_ATTEMPTS
+    assert row["last_error"] == "RuntimeError"
+
+
 def test_a_full_analysis_reaches_the_followup_history(wired):
     from runner_web import main as web_main
 
@@ -785,7 +905,10 @@ def test_the_turn_hands_the_model_what_was_prefetched(monkeypatch):
 
     decision = web_main._generate_telegram_turn(_parse(_update("$msgm", mention=True)), [])
 
-    assert decision == {"action": "reply", "text": "MSGM is moving."}
+    assert {key: decision[key] for key in ("action", "text")} == {
+        "action": "reply",
+        "text": "MSGM is moving.",
+    }
     assert len(calls) == 1
     request = json.loads(json.dumps(calls[0]))
     system_message = request["messages"][0]
@@ -826,7 +949,10 @@ def test_a_reply_that_names_an_unlooked_ticker_gets_one_chance_to_correct(monkey
         _parse(_update("what about that one", mention=True)), []
     )
 
-    assert decision == {"action": "reply", "text": "That stock still needs a fresh lookup."}
+    assert {key: decision[key] for key in ("action", "text")} == {
+        "action": "reply",
+        "text": "That stock still needs a fresh lookup.",
+    }
     assert len(calls) == 2
 
 
@@ -977,7 +1103,10 @@ def test_a_reply_that_names_an_unlooked_address_gets_one_chance_to_correct(monke
 
     decision = web_main._generate_telegram_turn(_parse(_update("what now", mention=True)), [])
 
-    assert decision == {"action": "reply", "text": "I have not looked at that coin."}
+    assert {key: decision[key] for key in ("action", "text")} == {
+        "action": "reply",
+        "text": "I have not looked at that coin.",
+    }
     assert len(calls) == 2
 
 
@@ -988,7 +1117,10 @@ def test_a_missing_tool_action_retries_the_turn(monkeypatch):
 
     result = web_main._generate_telegram_turn(_parse(_update("$EYPT", mention=True)), [])
 
-    assert result == {"action": "reply", "text": "Checking that question."}
+    assert {key: result[key] for key in ("action", "text")} == {
+        "action": "reply",
+        "text": "Checking that question.",
+    }
     assert scripted == []
 
 
@@ -1001,7 +1133,9 @@ def test_repeated_missing_actions_keep_research_pending(monkeypatch):
 
     result = web_main._generate_telegram_turn(_parse(_update("$EYPT", mention=True)), [])
 
-    assert result == {"action": "retry", "why": "research_pending"}
+    assert result["action"] == "retry" and result["why"] == "research_pending"
+    assert result["research"]["stop_reason"] == "empty_response"
+    assert result["research"]["failures"][0]["tool"] == "complete"
     assert len(calls) == 2
 
 
@@ -1028,7 +1162,10 @@ def test_both_reply_paths_receive_the_followup_lookup(monkeypatch, writer):
         result = web_main._generate_telegram_turn(message, transcript)
     else:
         result = web_main._write_telegram_reply(message, transcript, TurnPlan("reply", "test"), NOW)
-    assert result == {"action": "reply", "text": "$EYPT last 0.52."}
+    assert {key: result[key] for key in ("action", "text")} == {
+        "action": "reply",
+        "text": "$EYPT last 0.52.",
+    }
     assert len(contexts) == 1
     assert contexts[0]["already_looked_up"]["looked_up"] == [{"ticker": "EYPT", "price": 0.52}]
     assert contexts[0]["room"]["recent"][1]["role"] == "assistant"
@@ -1051,7 +1188,10 @@ def test_an_address_the_model_expanded_is_not_corrected(monkeypatch):
 
     decision = web_main._generate_telegram_turn(_parse(_update("what now", mention=True)), [])
 
-    assert decision == {"action": "reply", "text": f"{CA} is running."}
+    assert {key: decision[key] for key in ("action", "text")} == {
+        "action": "reply",
+        "text": f"{CA} is running.",
+    }
     assert len(calls) == 2
 
 

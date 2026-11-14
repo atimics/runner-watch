@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 
 from runner_web import db
@@ -42,6 +43,14 @@ def test_parse_trade_halts_preserves_source_times_and_state() -> None:
     assert event.payload["reason_code"] == "T1"
     assert event.payload["quote_resume_at"] == "2026-08-24T18:57:00+00:00"
     assert event.payload["trade_resume_at"] == "2026-08-24T19:02:00+00:00"
+
+
+@pytest.mark.parametrize("missing", [b"HaltDate", b"HaltTime"])
+def test_halt_time_never_falls_back_to_publication_or_collection_time(missing: bytes) -> None:
+    body = HALT_RSS.replace(b"ndaq:" + missing, b"ndaq:MissingField")
+
+    with pytest.raises(ValueError, match="missing symbol, halt date, or halt time"):
+        parse_trade_halts(body)
 
 
 def test_refresh_trade_halts_archives_and_deduplicates_the_feed(
