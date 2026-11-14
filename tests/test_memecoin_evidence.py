@@ -306,6 +306,49 @@ def test_retention_cap_uses_small_batches_and_keeps_latest_receipts(monkeypatch)
         assert {letter * 64 for letter in "FGH"} <= remaining
 
 
+def test_targeted_swap_cache_payload_is_excluded_from_discovery_status():
+    evidence.save_batch("program:test", [], [], {"cursor": "keep"}, at=AT)
+    evidence.save_batch("wallet:test", [], [], {"cursor": "keep"}, at=AT)
+    payload = {"sample": {"events": [{"marker": "private-targeted-sample"}] * 100}}
+    stream = evidence.TRADING_SWAP_CACHE_PREFIX + "mint:pool"
+    evidence.save_batch(stream, [], [], payload, at=AT)
+    status = evidence.evidence_status(at=AT)
+    assert {row["stream"] for row in status["streams"]} == {"program:test", "wallet:test"}
+    assert "private-targeted-sample" not in str(status)
+    assert evidence.stream_state(stream) == payload
+
+
+def test_targeted_cache_cleanup_is_bounded_and_preserves_cursors_and_receipts(monkeypatch):
+    monkeypatch.setattr(evidence, "PRUNE_BATCH_SIZE", 2)
+    old = AT - timedelta(days=2)
+    tx = transaction()
+    tx["blockTime"] = int(old.timestamp())
+    prefix = evidence.TRADING_SWAP_CACHE_PREFIX
+    for suffix in ("a", "b", "c"):
+        evidence.save_batch(prefix + suffix, [tx], parse_events(tx), {"cached": True}, at=old)
+    preserved = {
+        "program:test": old,
+        "wallet:test": old,
+        "schedule": old,
+        "trading:other": old,
+        prefix + "boundary": AT - timedelta(hours=24),
+        prefix + "fresh": AT,
+    }
+    for stream, updated in preserved.items():
+        evidence.save_batch(stream, [], [], {"keep": True}, at=updated)
+    evidence.prune_evidence(at=AT)
+    assert evidence.stream_state(prefix + "a") == {}
+    assert evidence.stream_state(prefix + "b") == {}
+    assert evidence.stream_state(prefix + "c") == {"cached": True}
+    for stream in preserved:
+        assert evidence.stream_state(stream) == {"keep": True}
+    assert evidence.transaction_receipt("1" * 64)
+    assert evidence.recent_events(at=AT)
+    evidence.prune_evidence(at=AT)
+    assert evidence.stream_state(prefix + "c") == {}
+    assert evidence.transaction_receipt("1" * 64)
+
+
 def test_retention_cap_breaks_timestamp_ties_consistently(monkeypatch):
     monkeypatch.setattr(evidence, "MAX_TRANSACTIONS", 2)
     for letter in "DCBA":

@@ -27,7 +27,12 @@ SAMPLE_MAX_AGE_SECONDS = 300
 
 
 def _stream(row: dict) -> str:
-    return "trading:swaps:" + _address(row["token_address"]) + ":" + _address(row["pool_address"])
+    return (
+        store.TRADING_SWAP_CACHE_PREFIX
+        + _address(row["token_address"])
+        + ":"
+        + _address(row["pool_address"])
+    )
 
 
 def _recent_swaps(events: list[dict], row: dict, at: datetime) -> list[dict]:
