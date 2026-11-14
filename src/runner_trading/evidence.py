@@ -142,6 +142,8 @@ def _collect(row: dict, state: dict, *, at: datetime, rpc: Rpc) -> dict:
         if not isinstance(payload, dict) or payload.get("error"):
             raise ValueError("Invalid transaction response")
         result = payload.get("result") or {}
+        if not isinstance(result, dict):
+            raise ValueError("Invalid transaction result")
         raw = result.get("data")
         if not isinstance(raw, list) or len(raw) > PAGE_SIZE:
             raise ValueError("Invalid transaction page")
@@ -158,7 +160,9 @@ def _collect(row: dict, state: dict, *, at: datetime, rpc: Rpc) -> dict:
                 "checked_at": stamp(at),
                 "window_start": stamp(at - timedelta(seconds=WINDOW_SECONDS)),
                 "window_end": stamp(at),
-                "partial": bool(result.get("paginationToken")) or len(entries) != len(raw),
+                "partial": bool(result.get("paginationToken"))
+                or len(raw) == PAGE_SIZE
+                or len(entries) != len(raw),
                 "received_transactions": len(raw),
                 "events": swaps,
             },
@@ -189,6 +193,8 @@ def enrich_candidates(
     pages = 0
     for _, _, index, state in sorted(pending, key=lambda item: (item[0], item[1], item[2])):
         row = result[index]
+        # Another candidate can share this pool; use a sample saved earlier in this call.
+        state = store.stream_state(_stream(row))
         if not 0 <= age(state.get("attempted_at"), at) < CACHE_SECONDS:
             if pages >= MAX_PAGES:
                 result[index]["_trading_evidence_deferred"] = True
