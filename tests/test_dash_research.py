@@ -179,11 +179,15 @@ def test_an_analyst_checks_two_sources_then_saves_his_own_take():
     result, requests = run(
         [
             turn(("expand", {"node": "ticker:TEST"}), ("expand", {"node": "sector:technology"})),
-            turn(("remember_thesis", thesis()), ("reply", {"text": answer})),
+            turn(
+                ("remember_thesis", thesis()),
+                ("reply", {"text": answer + "\n[review:ticker:TEST]"}),
+            ),
         ],
         expand=lambda node: reads.append(node) or {"known": True, "price": 2},
     )
-    assert result == {"action": "reply", "text": answer}
+    assert result["action"] == "reply"
+    assert result["text"] == answer + "\nI'll revisit this in our next conversation."
     assert reads == ["ticker:TEST", "sector:technology"]
     tool_results = [m for m in requests[1]["messages"] if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tool_results] == ["call-0", "call-1"]
@@ -248,13 +252,13 @@ def test_a_due_thesis_gets_fresh_evidence_and_an_explicit_review():
             turn(("expand", {"node": "ticker:TEST"})),
             turn(
                 ("remember_thesis", new),
-                ("reply", {"text": "I changed my view as volume returned."}),
+                ("reply", {"text": "I changed my view as volume returned.\n[review:ticker:TEST]"}),
             ),
         ],
         proactive=True,
         evidence={"world": {}},
     )
-    assert result["text"] == "I changed my view as volume returned."
+    assert result["text"].startswith("I changed my view as volume returned.")
     assert "Review the due theses" in requests[1]["messages"][-1]["content"]
     note = research.notebook(SCOPE, NOW)[0]
     assert note["previous_view"]["thesis"] == thesis()["thesis"]

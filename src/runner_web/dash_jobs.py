@@ -138,7 +138,7 @@ def release(identity, token, at):
 def finish(
     identity, token, scope, result, notes, at, *, chat_id=None, direction=None, explored=False
 ):
-    from runner_web import dash_direction
+    from runner_web import dash_direction, dash_schedule
     from runner_web.dash_research import store_note
 
     with connection() as database:
@@ -150,9 +150,34 @@ def finish(
         ).fetchone()
         if not row:
             raise RuntimeError("Research lease changed")
-        for note in notes.values():
-            store_note(database, scope, note, at)
-        dash_direction.finish(database, scope, direction, at, explored=explored)
+        announced = result.get("_schedule", {}).get("references", [])
+        # Complete existing reviews before additions claim their bounded notebook slots.
+        for note in sorted(notes.values(), key=lambda item: not item.get("_base_revision")):
+            store_note(
+                database,
+                scope,
+                note,
+                at,
+                announced=note["node"] in announced,
+                retain_nodes=announced,
+            )
+        dash_direction.finish(
+            database,
+            scope,
+            direction,
+            at,
+            explored=explored,
+            announced="direction" in announced,
+            failed=result.get("research", {}).get("status") == "incomplete",
+            explored_at=dash_schedule.stored_instant(
+                result.get("research", {}).get("attempt_started_at")
+            ),
+        )
+        dash_schedule.finalize(database, scope, result, at)
+        database.execute(
+            "UPDATE dash_research_jobs SET result_json=? WHERE id=? AND status='complete'",
+            (json.dumps(result), identity),
+        )
         if chat_id is not None and result["action"] == "reply":
             enqueue_cards(
                 database,
