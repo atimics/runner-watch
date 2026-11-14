@@ -54,6 +54,7 @@
   {% if screen is defined and screen.market in ['memecoins', 'sports'] %}<link rel="stylesheet" href="/static/market-anchor.css?v={{ static_version }}">{% endif %}
   {% if screen is defined and screen.market == 'sports' %}<link rel="stylesheet" href="/static/sports-row.css?v={{ static_version }}"><link rel="stylesheet" href="/static/prediction-ticker.css?v={{ static_version }}">{% endif %}
   {% if screen is defined and screen.market in ["stocks", "memecoins", "sports"] %}<link rel="stylesheet" href="/static/stock-indicator.css?v={{ static_version }}">{% endif %}
+  {% if screen is defined and screen.market in ["stocks", "memecoins"] %}<link rel="stylesheet" href="/static/sigil-hover.css?v={{ static_version }}">{% endif %}
   {% block detail_head %}{% endblock %}
   <meta name="description" content="{% block screen_description %}{% if share %}{{ share.summary }}{% endif %}{% endblock %}">
   {% if share %}
@@ -195,6 +196,7 @@
 {% if user and flash_wallet %}{% include "_flash_release_modal.html" %}{% endif %}
 {% if screen is defined and screen.kind == 'detail' %}<script type="application/json" nonce="{{ request.state.csp_nonce }}" id="screenData">{{ screen|tojson }}</script>{% endif %}
 {% if screen is defined and screen.market == "stocks" %}<script src="/static/stock-indicator.js?v={{ static_version }}" defer></script>{% endif %}
+  {% if screen is defined and screen.market in ["stocks", "memecoins"] %}<script src="/static/sigil-hover.js?v={{ static_version }}" defer></script>{% endif %}
 <script src="/static/market-screen.js?v={{ static_version }}" defer></script>
 {% if screen is defined and screen.market in ['memecoins', 'sports'] %}<script src="/static/market-anchor.js?v={{ static_version }}" defer></script>{% endif %}
 {% if screen is defined and screen.kind != 'detail' and screen.market in ['stocks', 'memecoins'] %}<script src="/static/ticker-row.js?v={{ static_version }}" defer></script><script nonce="{{ request.state.csp_nonce }}">window.addEventListener('DOMContentLoaded',()=>{if(window.TickerRow){window.TickerRow.loadCharts({{ ('/api/memecoins/charts' if screen.market == 'memecoins' else '/api/pulse/charts')|tojson }});}});</script>{% endif %}
