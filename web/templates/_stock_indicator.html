@@ -1,17 +1,18 @@
 {# Presentation only: run-state chips and trading policy live elsewhere. #}
 {% macro indicator_glyph(item) -%}
 {% set glyph = item.indicator %}
+{% set hint = 'Attention · ' ~ ('%.0f' | format(glyph.score)) ~ '/100' if glyph.score is not none else 'Attention · unavailable' %}
 {% if glyph.liquidity %}
 {#- A memecoin's sigil is the Well, drawn around its liquidity (memecoin_well.py). -#}
 <span class="ticker-score indicator-glyph indicator-glyph--well" data-well data-band="{{ glyph.band }}"
       data-lock="{{ glyph.liquidity.lock }}" data-risk="{{ glyph.risk }}" data-mix="{{ glyph.mix_state }}"
       data-sentiment-mix="{{ glyph.sentiment_mix.state }}"
-      role="img" aria-label="{{ glyph.description }}" title="{{ glyph.description }}">{{ well_svg(glyph) | safe }}<span class="well-score-label" aria-hidden="true">{{ '%.0f' | format(glyph.score) if glyph.score is not none else '—' }}</span></span>
+      role="img" aria-label="{{ glyph.description }}" data-sigil-hint="{{ hint }}">{{ well_svg(glyph) | safe }}<span class="well-score-label" aria-hidden="true">{{ '%.0f' | format(glyph.score) if glyph.score is not none else '—' }}</span></span>
 {% else %}
 <span class="ticker-score indicator-glyph" data-band="{{ glyph.band }}"
       data-sentiment="{{ glyph.sentiment }}" data-risk="{{ glyph.risk }}" data-mix="{{ glyph.mix_state }}"
       data-sentiment-mix="{{ glyph.sentiment_mix.state }}"
-      role="img" aria-label="{{ glyph.description }}" title="{{ glyph.description }}">
+      role="img" aria-label="{{ glyph.description }}" data-sigil-hint="{{ hint }}">
   <span class="indicator-glyph__face" aria-hidden="true">
     <span class="indicator-glyph__sentiment"{% if glyph.sentiment_mix.gradient %} style="background: {{ glyph.sentiment_mix.gradient }}"{% endif %}>
       {% if glyph.sentiment_mix.state == 'available' and glyph.sentiment_mix.bearish > 0 %}<span class="indicator-pattern indicator-pattern--evidence" data-bearish-pattern style="--slice-start: {{ glyph.sentiment_mix.bullish * 100 }}%; --slice-end: 100%"></span>{% endif %}
