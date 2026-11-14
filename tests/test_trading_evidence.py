@@ -224,3 +224,89 @@ def test_stale_foreign_cache_and_expired_swaps_never_pass():
     store.save_batch(stream, [], [], state, at=AT)
     foreign = evidence.apply_cached_evidence(candidate(), at=AT)
     assert foreign["memecoin_assessment"]["coverage"]["swap_checked_at"] is None
+
+
+def test_duplicate_pool_candidates_share_one_read_and_receipt():
+    calls = []
+
+    def rpc(request):
+        calls.append(request)
+        return page([transaction(i) for i in (1, 2, 3)])
+
+    rows = evidence.enrich_candidates([candidate(), candidate()], at=AT, policy=Policy(), rpc=rpc)
+    assert len(calls) == 1
+    assert all(not entry_reasons(row, Policy(), AT) for row in rows)
+
+
+def test_default_rpc_preserves_shared_non_price_budget_and_timeout(monkeypatch):
+    monkeypatch.setenv("HELIUS_API_KEY", "test-only")
+    monkeypatch.setenv("HELIUS_DAILY_CREDITS", "30")
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def read(self, *_):
+            return b'{"result":{"data":[]}}'
+
+    def open_url(request, *, timeout):
+        requests.append((request, timeout))
+        return Response()
+
+    monkeypatch.setattr(helius.urllib.request, "urlopen", open_url)
+    rows = [
+        candidate(helius._encode(bytes([i]) * 32), helius._encode(bytes([i + 10]) * 32))
+        for i in range(2, 5)
+    ]
+    evidence.enrich_candidates(rows, at=AT, policy=Policy())
+    assert len(requests) == 2 and all(timeout == 8 for _, timeout in requests)
+    status = store.budget_status(at=AT)
+    assert status["reserved_credits"] == 20 and status["price_reserve"] == 6
+    result = evidence.enrich_candidates([rows[2]], at=AT, policy=Policy())[0]
+    assert result["_trading_evidence_deferred"]
+    assert result["memecoin_assessment"]["coverage"]["swap_state"] == "budget_exhausted"
+    assert len(requests) == 2
+    store.reserve_credits(10, at=AT, lane="price")
+    assert store.budget_status(at=AT)["remaining_credits"] == 0
+
+
+def test_cached_enrichment_preserves_existing_chain_risk_and_timestamps():
+    evidence.enrich_candidates(
+        [candidate()],
+        at=AT,
+        policy=Policy(),
+        rpc=lambda _: page([transaction(i) for i in (1, 2, 3)]),
+    )
+    row = candidate()
+    row["memecoin_assessment"]["risk"]["factors"] = [{"kind": "creator_sell"}]
+    row["memecoin_assessment"]["coverage"]["chain_checked_at"] = stamp(AT - timedelta(seconds=301))
+    updated = evidence.apply_cached_evidence(row, at=AT)
+    assert updated["memecoin_assessment"]["risk"]["factors"] == [{"kind": "creator_sell"}]
+    assert "A chain risk finding is active" in entry_reasons(updated, Policy(), AT)
+    assert "Refresh chain coverage" in entry_reasons(updated, Policy(), AT)
+    assert updated["ratification"] == row["ratification"]
+    assert updated["trading_checks"] == row["trading_checks"]
+    assert updated["observed_at"] == row["observed_at"]
+
+
+@pytest.mark.parametrize(
+    "payload", [{"result": [1]}, {"result": "invalid"}, {"result": {"data": {}}}]
+)
+def test_malformed_result_is_deferred_with_failure_cooldown(payload):
+    calls = []
+
+    def rpc(request):
+        calls.append(request)
+        return payload
+
+    for seconds in (0, 30):
+        result = evidence.enrich_candidates(
+            [candidate()], at=AT + timedelta(seconds=seconds), policy=Policy(), rpc=rpc
+        )[0]
+        assert result["_trading_evidence_deferred"]
+        assert result["memecoin_assessment"]["coverage"]["swap_state"] == "failed"
+    assert len(calls) == 1

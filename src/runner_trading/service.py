@@ -6,6 +6,7 @@ import threading
 
 from runner_trading.config import Policy, mode
 from runner_trading.engine import Trader
+from runner_trading.evidence import apply_cached_evidence, enrich_candidates
 from runner_trading.providers import Jupiter
 from runner_web.db import init_db
 
@@ -22,7 +23,14 @@ def main() -> None:
         from runner_trading.live import Live
 
         live = Live(policy, provider)
-    trader = Trader(policy, mode=selected_mode, provider=provider, live=live)
+    trader = Trader(
+        policy,
+        mode=selected_mode,
+        provider=provider,
+        live=live,
+        evidence_enricher=enrich_candidates,
+        evidence_cache=apply_cached_evidence,
+    )
     stopped = threading.Event()
     for name in (signal.SIGTERM, signal.SIGINT):
         signal.signal(name, lambda *_: stopped.set())
