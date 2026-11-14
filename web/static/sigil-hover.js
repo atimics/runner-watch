@@ -44,6 +44,7 @@
   function wellReading(glyph, data, event) {
     const svg = glyph.querySelector('.well-glyph'), matrix = svg?.getScreenCTM();
     if (!matrix) return null;
+    if (event.target.closest('.well-unknown')) return {key:'liquidity', text:'Real liquidity · unavailable'};
     const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
     const well = data.liquidity;
     const shapes = [...svg.querySelectorAll('circle,path,polyline')].reverse();
@@ -83,8 +84,6 @@
       if (shape.matches('.well-chamber')) return {key:'valuation', text:`Fully diluted value · ${money(well.fdv)}`};
       if (shape.matches('.well-track')) return null;
     }
-    // Unknown liquidity is a question mark in the center rather than a filled pool.
-    if (event.target.closest('.well-unknown')) return {key:'liquidity', text:'Real liquidity · unavailable'};
     return null;
   }
   function pointerReading(glyph, event) {
