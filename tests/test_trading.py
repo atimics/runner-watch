@@ -54,6 +54,7 @@ def candidate(at=AT, **changes):
     return {
         "id": "solana:example",
         "token_address": MINT,
+        "pool_address": "test-pool",
         "network": "solana",
         "venue": "pool",
         "observed_at": stamp(at),
@@ -67,7 +68,13 @@ def candidate(at=AT, **changes):
             "controls_clean": True,
         },
         "memecoin_assessment": {
-            "coverage": {"chain_checked_at": stamp(at)},
+            "coverage": {
+                "chain_checked_at": stamp(at),
+                "swap_checked_at": stamp(at),
+                "swap_token_address": changes.get("token_address", MINT),
+                "swap_pool_address": changes.get("pool_address", "test-pool"),
+                "swap_state": "sampled",
+            },
             "risk": {"factors": []},
             "sentiment": {"observed_swaps": 4},
         },

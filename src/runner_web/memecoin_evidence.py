@@ -19,6 +19,8 @@ RETENTION_DAYS = 30
 MAX_TRANSACTIONS = 250_000
 PRUNE_BATCH_SIZE = 500
 PRUNE_LOCK_ID = 728416203
+TRADING_SWAP_CACHE_PREFIX = "trading:swaps:"
+TRADING_SWAP_CACHE_HOURS = 24
 LOG = logging.getLogger(__name__)
 
 
@@ -202,7 +204,9 @@ def evidence_status(*, at: datetime) -> dict[str, Any]:
         ).fetchall()
         gap_count = database.execute("SELECT COUNT(*) FROM memecoin_chain_gaps").fetchone()[0]
         streams = database.execute(
-            "SELECT stream,state_json,updated_at FROM memecoin_chain_cursors"
+            "SELECT stream,state_json,updated_at FROM memecoin_chain_cursors "
+            "WHERE stream NOT LIKE ?",
+            (TRADING_SWAP_CACHE_PREFIX + "%",),
         ).fetchall()
     return {
         "event_counts": {row["kind"]: row["count"] for row in counts},
@@ -234,6 +238,18 @@ def prune_evidence(*, at: datetime) -> None:
                 ).fetchone()
                 if not acquired["acquired"]:
                     return
+            # Targeted samples are short-lived private caches, not discovery cursors.
+            # Their durable transaction receipts follow the normal retention below.
+            database.execute(
+                "DELETE FROM memecoin_chain_cursors WHERE stream IN "
+                "(SELECT stream FROM memecoin_chain_cursors WHERE stream LIKE ? "
+                "AND updated_at<? ORDER BY updated_at,stream LIMIT ?)",
+                (
+                    TRADING_SWAP_CACHE_PREFIX + "%",
+                    (at - timedelta(hours=TRADING_SWAP_CACHE_HOURS)).isoformat(),
+                    PRUNE_BATCH_SIZE,
+                ),
+            )
             database.execute(
                 "DELETE FROM memecoin_chain_gaps WHERE (stream,start_time,end_time) IN "
                 "(SELECT stream,start_time,end_time FROM memecoin_chain_gaps "

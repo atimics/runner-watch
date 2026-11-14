@@ -13,6 +13,22 @@ and a dated liquidity lock check. The existing pool-age rule is 24 hours.
 Holder concentration combines accounts owned by the same wallet. It remains an
 estimate from the largest token accounts; the full ownership graph can differ.
 
+Before deciding on an otherwise eligible SETUP, the trader samples finalized
+transactions for that token's pool. It reads at most two pages per cycle, with
+up to 100 transactions per page, and reuses each pool's result for at least one
+minute. Reads share the existing Helius non-price budget and preserve its price
+reserve. Transaction recovery and position exits run before these reads.
+
+The three-swap gate counts distinct, decoded transactions for the same mint and
+pool within the last 15 minutes. A general collector heartbeat does not satisfy
+this check. Deferred reads retain the original SETUP decision and its three-minute
+entry deadline across restarts. A failed or budget-limited read cannot refresh
+the evidence timestamp. An empty successful sample is recorded as empty.
+
+Candidate quote rejections, such as excessive price impact, remain attached to
+that candidate. They do not report a provider outage or block unrelated entries.
+Transport failures and unavailable position exits retain their health controls.
+
 | Setting | Default |
 | --- | --- |
 | Starting USDC | 1,000 |
@@ -67,6 +83,14 @@ check is due six hours later. Failed quotes and late checks retain their reason
 and time. These records survive board and quote-history pruning. Outcome tables
 describe coverage; strategy results need a representative paper observation
 period before capital sizing decisions.
+
+The desk separates priced outcomes, unavailable outcomes, pending and overdue
+checks, distinct tokens, filled entries, and closed trades. Priced coverage uses
+all due checks as its denominator, including missing and overdue observations.
+Outcome checks model a hold lasting the account's configured maximum holding
+period; they are separate from the strategy's stop, target, and risk-driven exits.
+The legacy `cohort.resolved` API field still counts processed attempts, including
+unavailable results; `outcome_priced` counts attempts with a quoted result.
 
 ## Running paper mode
 

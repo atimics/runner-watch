@@ -17,6 +17,22 @@ class ProviderError(ValueError):
     pass
 
 
+class QuoteRejected(ProviderError):
+    """This route is ineligible; the provider can still serve other candidates."""
+
+
+# Published Metis routing errors, not arbitrary provider error text.
+ROUTE_REJECTIONS = frozenset(
+    {
+        "NO_ROUTES_FOUND",
+        "COULD_NOT_FIND_ANY_ROUTE",
+        "ROUTE_PLAN_DOES_NOT_CONSUME_ALL_THE_AMOUNT",
+        "MARKET_NOT_FOUND",
+        "TOKEN_NOT_TRADABLE",
+    }
+)
+
+
 def positive_int(value: Any) -> int:
     if isinstance(value, bool) or not str(value).isdigit():
         raise ProviderError("Provider amount is invalid")
@@ -123,27 +139,38 @@ class Jupiter:
             params["taker"] = taker
         raw = self.request("order?" + urlencode(params))
         if raw.get("errorCode") or raw.get("error"):
+            if (
+                str(raw.get("errorCode")) in ROUTE_REJECTIONS
+                or str(raw.get("error")) in ROUTE_REJECTIONS
+                or (raw.get("router") == "metis" and raw.get("errorCode") == 3)
+            ):
+                raise QuoteRejected("A swap route is unavailable for this order")
             raise ProviderError("A swap route is unavailable")
         if (
             raw.get("inputMint") != input_mint
             or raw.get("outputMint") != output_mint
             or positive_int(raw.get("inAmount")) != amount
             or raw.get("swapMode") != "ExactIn"
-            or raw.get("router") != "metis"
         ):
             raise ProviderError("Swap route differs from the order")
+        if raw.get("router") != "metis":
+            if raw.get("router") in {"jupiterz", "dflow", "okx"}:
+                raise QuoteRejected("The swap router is outside the supported route policy")
+            raise ProviderError("Swap response has no recognized router")
         output = positive_int(raw.get("outAmount"))
         minimum = positive_int(raw.get("otherAmountThreshold"))
         floor = output * (10_000 - self.policy.slippage_bps) // 10_000
-        if minimum > output or minimum < floor:
-            raise ProviderError("Swap minimum exceeds the slippage policy")
+        if minimum > output:
+            raise ProviderError("Swap minimum exceeds the quoted output")
+        if minimum < floor:
+            raise QuoteRejected("Swap minimum exceeds the slippage policy")
         impact = (
             abs(number(raw["priceImpact"])) * 100
             if "priceImpact" in raw
             else abs(number(raw.get("priceImpactPct"))) * 10_000
         )
         if input_mint == USDC and impact > self.policy.max_price_impact_bps:
-            raise ProviderError("Swap price impact exceeds the limit")
+            raise QuoteRejected("Swap price impact exceeds the limit")
         fees = 0
         for name in ("signatureFeeLamports", "prioritizationFeeLamports", "rentFeeLamports"):
             fee = number(raw.get(name, 0))
@@ -155,7 +182,7 @@ class Jupiter:
             # Reserve a fresh associated account in the paper cost model.
             fees = max(fees, 2_039_280 + self.policy.paper_fee_lamports)
         if fees > self.policy.max_fee_lamports:
-            raise ProviderError("Network and account costs exceed the limit")
+            raise QuoteRejected("Network and account costs exceed the limit")
         return Quote(
             input_mint,
             output_mint,

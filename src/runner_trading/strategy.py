@@ -6,8 +6,8 @@ from typing import Any
 from runner_trading.config import Policy, age, number
 
 
-def entry_reasons(row: dict[str, Any], policy: Policy, at: datetime) -> list[str]:
-    """All entry gates use dated evidence. Exit decisions have their own rules."""
+def non_swap_entry_reasons(row: dict[str, Any], policy: Policy, at: datetime) -> list[str]:
+    """Check existing risk gates before spending on candidate swap evidence."""
     reasons = []
     if row.get("network") != "solana" or row.get("venue") != "pool":
         reasons.append("A graduated Solana pool is required")
@@ -36,8 +36,6 @@ def entry_reasons(row: dict[str, Any], policy: Policy, at: datetime) -> list[str
         reasons.append("Read mint and freeze controls")
     if not 0 <= age(checks.get("lock_checked_at"), at) <= 3600:
         reasons.append("Refresh the pool lock check")
-    if (assessment.get("sentiment") or {}).get("observed_swaps", 0) < 3:
-        reasons.append("Sample at least three recent swaps")
     try:
         liquidity = number(row.get("real_liquidity_usd")) * 1_000_000
         if liquidity < policy.min_real_liquidity_usdc:
@@ -46,6 +44,25 @@ def entry_reasons(row: dict[str, Any], policy: Policy, at: datetime) -> list[str
             reasons.append("Entry is too large for the pool")
     except ValueError:
         reasons.append("Read real pool liquidity")
+    return reasons
+
+
+def entry_reasons(row: dict[str, Any], policy: Policy, at: datetime) -> list[str]:
+    """All entry gates use dated evidence. Exit decisions have their own rules."""
+    reasons = non_swap_entry_reasons(row, policy, at)
+    assessment = row.get("memecoin_assessment") or {}
+    coverage = assessment.get("coverage") or {}
+    if (
+        coverage.get("swap_token_address") != row.get("token_address")
+        or not row.get("pool_address")
+        or coverage.get("swap_pool_address") != row.get("pool_address")
+        or coverage.get("swap_state") not in {"sampled", "empty"}
+        or not 0 <= age(coverage.get("swap_checked_at"), at) <= policy.evidence_max_age_seconds
+    ):
+        reasons.append("Refresh this pool's swap evidence")
+    swaps = (assessment.get("sentiment") or {}).get("observed_swaps", 0)
+    if type(swaps) is not int or swaps < 3:
+        reasons.append("Sample at least three recent swaps")
     return reasons
 
 
