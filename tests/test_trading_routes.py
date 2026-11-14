@@ -167,7 +167,7 @@ def test_coverage_separates_priced_missing_pending_and_actual_trades(client):
     assert client.get("/api/trading").json()["cohort"] == cohort
     page = client.get("/trading").text
     assert "Priced outcomes" in page and "Unavailable outcomes" in page
-    assert "Six-hour hold:" in page and "40.0%" in page
+    assert "Hold at 6 hours:" in page and "40.0%" in page
 
 
 def test_empty_account_has_no_priced_coverage_percentage(client):
@@ -176,3 +176,8 @@ def test_empty_account_has_no_priced_coverage_percentage(client):
     assert cohort["total"] == cohort["outcome_processed"] == cohort["closed_trades"] == 0
     assert cohort["outcome_coverage_percent"] is None
     assert "Awaiting due checks" in client.get("/trading").text
+
+
+def test_outcome_copy_uses_the_accounts_configured_holding_period(client):
+    ledger.ensure_account("paper", Policy(max_hold_seconds=7200), datetime.now(UTC))
+    assert "hypothetical hold of 2 hours" in client.get("/trading").text
