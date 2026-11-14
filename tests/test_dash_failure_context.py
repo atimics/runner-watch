@@ -79,6 +79,24 @@ def test_empty_provider_failure_is_never_quiet(monkeypatch, finish, reason):
     assert result["research"]["stop_reason"] == reason
 
 
+def test_filtered_model_response_does_not_imply_a_public_action():
+    response = {"choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}]}
+    result, requests = run([response], job_key="filtered")
+    assert result["action"] == "reply"
+    assert "rephrase" in result["text"] and "action" not in result["text"]
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("finish", ["length", "error", None])
+def test_model_failures_use_plain_retry_guidance(monkeypatch, finish):
+    monkeypatch.setattr(dash_jobs, "MAX_ATTEMPTS", 1)
+    response = {"choices": [{"message": {"content": ""}, "finish_reason": finish}]}
+    result, _ = run([response, response], job_key="plain-error")
+    assert "model" in result["text"] and "Please try again" in result["text"]
+    assert "with complete" not in result["text"]
+    assert "action" not in result["text"]
+
+
 def test_unrelated_success_preserves_the_missing_evidence_failure():
     claim = dash_jobs.claim("missing", SCOPE, "chat", NOW)
     state = {}

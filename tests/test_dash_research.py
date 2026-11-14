@@ -72,7 +72,7 @@ def run(script, *, expand=None, evidence=None, **kwargs):
         persona="Dash",
         tools=list(TOOL_SCHEMA),
         complete=complete,
-        model="test-model",
+        model=kwargs.pop("model", "test-model"),
         expand=expand or (lambda node: {"known": True, "price": 2}),
         unbacked=kwargs.pop("unbacked", lambda text, evidence: []),
         evidence=evidence if evidence is not None else {},
@@ -82,6 +82,24 @@ def run(script, *, expand=None, evidence=None, **kwargs):
         **kwargs,
     )
     return result, requests
+
+
+@pytest.mark.parametrize("model", ["deepseek/deepseek-v4.1-flash", "another-model"])
+def test_answer_budget_leaves_headroom_without_extending_the_turn(model):
+    result, requests = run([turn(("reply", {"text": "A concise answer."}))], model=model)
+    assert result["text"] == "A concise answer."
+    assert requests[0]["max_tokens"] == 4096
+    assert requests[0]["provider"] == {"require_parameters": True, "zdr": True}
+    assert requests[0]["tool_choice"] == "required"
+    assert all(tool["type"] == "function" for tool in requests[0]["tools"])
+    if model == "deepseek/deepseek-v4.1-flash":
+        assert requests[0]["reasoning"] == {"effort": "low"}
+    else:
+        assert "reasoning" not in requests[0]
+    assert research.TURN_SECONDS == 75
+    assert research.MAX_ROUNDS == 8
+    assert research.MAX_TOOLS == 12
+    assert research.dash_jobs.MAX_ATTEMPTS == 3
 
 
 def test_notes_keep_the_view_evidence_and_a_review_time():

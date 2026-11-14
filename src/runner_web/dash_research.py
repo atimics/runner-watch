@@ -345,12 +345,22 @@ def _incomplete(progress, reason):
 
 
 def _failure_reply(status):
+    if status["stop_reason"] == "response_filtered":
+        return "The model blocked its response. Please rephrase the question before retrying."
     failures = status["failures"]
     # A failed lookup gives a more useful retry target than the final answer limit.
     failure = next((item for item in failures if not item["retryable"]), None)
     failure = failure or next((item for item in failures if item.get("node")), None)
     failure = failure or (failures[-1] if failures else None)
-    if failure and failure.get("tool"):
+    if failure and failure["stage"] == "model":
+        reason = {
+            "response_truncated": "The model reached its response limit before answering.",
+            "empty_response": "The model returned no usable answer.",
+            "provider_error": "The model service could not complete the answer.",
+            "model_failed": "The model service could not complete the answer.",
+        }.get(failure["code"], "The answer step could not finish.")
+        text = reason + " Please try again."
+    elif failure and failure.get("tool"):
         target = failure["tool"]
         if failure.get("node"):
             target += " for " + failure["node"]
@@ -359,6 +369,8 @@ def _failure_reply(status):
             f"Please try again with {target}."
             if failure["retryable"]
             else "Check its outcome before retrying the action."
+            if failure["stage"] == "action"
+            else "Please rephrase the question before retrying."
         )
     else:
         reason = {
@@ -676,7 +688,13 @@ def _run_research(
                     "tools": [{"type": "function", "function": tool} for tool in available],
                     "tool_choice": "auto" if allow_text else "required",
                     "provider": {"require_parameters": True, "zdr": True},
-                    "max_tokens": 1600,
+                    # Reasoning and visible output share this bounded allowance.
+                    "max_tokens": 4096,
+                    **(
+                        {"reasoning": {"effort": "low"}}
+                        if model == "deepseek/deepseek-v4.1-flash"
+                        else {}
+                    ),
                 },
             ),
         )
