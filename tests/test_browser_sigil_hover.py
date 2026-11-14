@@ -58,7 +58,7 @@ def test_row_focus_and_replacement_keep_accessible_inspection(page: Page):
 
 def test_memecoin_part_preview_preserves_selection_and_focus(page: Page, tmp_path):
     open_replay(page, width=1440)
-    graph = page.locator('[data-replay-graph]')
+    graph = page.locator("[data-replay-graph]")
     graph.evaluate("el => el.setAttribute('tabindex', '0')")
     graph.focus()
     expect(page.get_by_role("tooltip")).to_be_hidden()
