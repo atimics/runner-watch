@@ -310,3 +310,20 @@ def test_malformed_result_is_deferred_with_failure_cooldown(payload):
         assert result["_trading_evidence_deferred"]
         assert result["memecoin_assessment"]["coverage"]["swap_state"] == "failed"
     assert len(calls) == 1
+
+
+def test_multi_wallet_transaction_keeps_wallet_analysis_but_counts_once():
+    tx = transaction(1)
+    wallet = helius._encode(bytes([9]) * 32)
+    ix = deepcopy(tx["transaction"]["message"]["instructions"][0])
+    ix["accounts"][1] = wallet
+    tx["transaction"]["message"]["instructions"].append(ix)
+    for key in ("preTokenBalances", "postTokenBalances"):
+        tx["meta"][key].append({**tx["meta"][key][0], "owner": wallet})
+    result = evidence.enrich_candidates(
+        [candidate()], at=AT, policy=Policy(), rpc=lambda _: page([tx])
+    )[0]
+    sentiment = result["memecoin_assessment"]["sentiment"]
+    assert sentiment["net_buyers"] == 2
+    assert sentiment["observed_swaps"] == 1
+    assert "Sample at least three recent swaps" in entry_reasons(result, Policy(), AT)
