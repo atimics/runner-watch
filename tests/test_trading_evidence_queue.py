@@ -7,6 +7,7 @@ import pytest
 from runner_trading import ledger
 from runner_trading.config import Policy, stamp
 from runner_trading.engine import Trader
+from runner_trading.providers import ProviderError
 from tests.test_trading import AT, MINT, FakeJupiter, candidate, setup_trader
 from tests.test_trading import trading_db as trading_db
 
@@ -174,3 +175,51 @@ def test_deferred_rows_do_not_consume_candidate_quote_budget(trading_db):
         sum(s["state"] == "observed" for s in ledger.rows("trading_signals", trader.identifier))
         == 10
     )
+
+
+def test_paused_account_skips_paid_evidence_but_preserves_baseline_sample(trading_db):
+    clock, board = {"at": AT}, [candidate()]
+
+    def should_not_sample(*args, **kwargs):
+        pytest.fail("Paused account spent a targeted read")
+
+    trader = worker(clock, board, should_not_sample)
+    ledger.pause(trader.identifier, "Operator paused entries", AT)
+    trader.cycle()
+    signal = ledger.rows("trading_signals", trader.identifier)[0]
+    assert signal["state"] == "skipped"
+    assert "Operator paused entries" in signal["reason"]
+    assert signal["baseline_units"] == "100000000"
+    assert signal["baseline_cost_usdc"] == 25_010_000
+    assert ledger.rows("trading_orders", trader.identifier) == []
+
+
+def test_provider_failure_skips_paid_evidence_but_preserves_baseline_sample(trading_db):
+    trader, clock, board, provider = setup_trader()
+    trader.cycle()
+    clock["at"] += timedelta(seconds=30)
+    trader.cycle()
+    clock["at"] += timedelta(seconds=30)
+    board[:] = [candidate(at=clock["at"], token_address="new-mint", id="new")]
+    original_quote = provider.quote
+
+    def failed_position_quote(input_mint, output_mint, amount, **kwargs):
+        if input_mint == MINT:
+            raise ProviderError("Provider request failed; retry is scheduled")
+        return original_quote(input_mint, output_mint, amount, **kwargs)
+
+    def should_not_sample(*args, **kwargs):
+        pytest.fail("Unhealthy account spent a targeted read")
+
+    provider.quote = failed_position_quote
+    trader.evidence_enricher = should_not_sample
+    health = trader.cycle()
+    signal = next(
+        s for s in ledger.rows("trading_signals", trader.identifier) if s["mint"] == "new-mint"
+    )
+    assert health["state"] == "degraded" and health["unavailable_exits"] == 1
+    assert signal["state"] == "skipped" and "Restore provider health" in signal["reason"]
+    assert "Refresh every position's exit quote" in signal["reason"]
+    assert signal["baseline_units"] == "100000000"
+    assert signal["baseline_cost_usdc"] == 25_010_000
+    assert len(ledger.rows("trading_orders", trader.identifier)) == 1

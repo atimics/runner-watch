@@ -237,7 +237,7 @@ class Trader:
             }
             for s in waiting
         ]
-        if self.evidence_enricher:
+        if self.evidence_enricher and not self.entry_health():
             eligible = [
                 signal["row"]
                 for signal in created
