@@ -3,8 +3,54 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from runner_trading.config import account_id, age
+from runner_trading.config import account_id, age, stamp
 from runner_web.db import connection
+
+
+def decision_coverage(db, identifier: str, at: datetime) -> dict:
+    outcome_state = (
+        "outcome_json::jsonb->>'state'"
+        if db.backend == "postgres"
+        else "json_extract(outcome_json,'$.state')"
+    )
+    cohort = dict(
+        db.execute(
+            "SELECT COUNT(*) AS total,COUNT(DISTINCT mint) AS distinct_tokens,"
+            "SUM(CASE WHEN state='skipped' THEN 1 ELSE 0 END) AS skipped,"
+            "SUM(CASE WHEN state='entered' THEN 1 ELSE 0 END) AS entries_filled,"
+            "SUM(CASE WHEN state='entry_failed' THEN 1 ELSE 0 END) AS entries_failed,"
+            "SUM(CASE WHEN baseline_units IS NOT NULL THEN 1 ELSE 0 END) AS entry_quoted,"
+            "SUM(CASE WHEN outcome_at IS NOT NULL THEN 1 ELSE 0 END) AS outcome_processed,"
+            "SUM(CASE WHEN outcome_at IS NOT NULL AND outcome_state='quoted' "
+            "THEN 1 ELSE 0 END) AS outcome_priced,"
+            "SUM(CASE WHEN outcome_at IS NOT NULL AND outcome_state='unavailable' "
+            "THEN 1 ELSE 0 END) AS outcome_unavailable,"
+            "SUM(CASE WHEN outcome_at IS NULL THEN 1 ELSE 0 END) AS outcome_pending,"
+            "SUM(CASE WHEN outcome_due_at<=? THEN 1 ELSE 0 END) AS outcome_due,"
+            "SUM(CASE WHEN outcome_due_at<=? AND outcome_at IS NULL "
+            "THEN 1 ELSE 0 END) AS outcome_overdue,"
+            "SUM(CASE WHEN outcome_due_at<=? AND outcome_at IS NOT NULL "
+            "AND outcome_state='quoted' THEN 1 ELSE 0 END) AS priced_due "
+            "FROM (SELECT mint,state,baseline_units,outcome_at,outcome_due_at,"
+            f"{outcome_state} AS outcome_state FROM trading_signals WHERE account_id=?) decisions",
+            (stamp(at), stamp(at), stamp(at), identifier),
+        ).fetchone()
+    )
+    cohort = {key: int(value or 0) for key, value in cohort.items()}
+    priced_due = cohort.pop("priced_due")
+    cohort["outcome_coverage_percent"] = (
+        round(100 * priced_due / cohort["outcome_due"], 1) if cohort["outcome_due"] else None
+    )
+    cohort["outcome_unclassified"] = (
+        cohort["outcome_processed"] - cohort["outcome_priced"] - cohort["outcome_unavailable"]
+    )
+    # Preserve the existing API field for clients; it counts attempts, not returns.
+    cohort["resolved"] = cohort["outcome_processed"]
+    cohort["closed_trades"] = db.execute(
+        "SELECT COUNT(*) FROM trading_positions WHERE account_id=? AND status='closed'",
+        (identifier,),
+    ).fetchone()[0]
+    return cohort
 
 
 def snapshot(mode: str, *, at: datetime | None = None) -> dict:
@@ -63,16 +109,7 @@ def snapshot(mode: str, *, at: datetime | None = None) -> dict:
                 (identifier,),
             ).fetchall()
         ]
-        cohort = dict(
-            db.execute(
-                "SELECT COUNT(*) AS total,"
-                "SUM(CASE WHEN state='skipped' THEN 1 ELSE 0 END) AS skipped,"
-                "SUM(CASE WHEN outcome_at IS NOT NULL THEN 1 ELSE 0 END) AS resolved,"
-                "SUM(CASE WHEN baseline_units IS NOT NULL THEN 1 ELSE 0 END) AS entry_quoted "
-                "FROM trading_signals WHERE account_id=?",
-                (identifier,),
-            ).fetchone()
-        )
+        cohort = decision_coverage(db, identifier, now)
         events = [
             dict(e)
             for e in db.execute(
