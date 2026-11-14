@@ -883,7 +883,9 @@ def desk(monkeypatch):
         web_main, "dash_world", lambda *a, **k: {"changes": {"any": True, "new_runners": 1}}
     )
     monkeypatch.setattr(
-        web_main, "_generate_desk_note", lambda world: notes.append(world) or "Something moved."
+        web_main,
+        "_generate_desk_note",
+        lambda world, **kw: notes.append(world) or {"action": "reply", "text": "Something moved."},
     )
     with connection() as database:
         web_main.dash_direction.finish(

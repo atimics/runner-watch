@@ -298,6 +298,7 @@ def _research_status(progress, status, stop_reason=None):
         "status": status,
         "stop_reason": stop_reason,
         "failures": list(progress.get("failures", [])),
+        "model_calls": list(progress.get("model_calls", [])),
         "completed_nodes": sorted(
             node
             for node, value in progress.get("evidence", {}).items()
@@ -313,13 +314,27 @@ def _research_status(progress, status, stop_reason=None):
 
 
 def _incomplete(progress, reason):
-    if reason in {"deadline_exceeded", "round_limit", "retry_limit", "empty_response"}:
-        model = reason == "empty_response"
+    if reason in {
+        "deadline_exceeded",
+        "round_limit",
+        "retry_limit",
+        "empty_response",
+        "response_truncated",
+        "response_filtered",
+        "provider_error",
+    }:
+        model = reason in {
+            "empty_response",
+            "response_truncated",
+            "response_filtered",
+            "provider_error",
+        }
         _record_failure(
             progress,
             code=reason,
             stage="model" if model else "budget",
             tool="complete" if model else None,
+            retryable=reason != "response_filtered",
             retry={"stage": "model" if model else "research"},
         )
     return {
@@ -362,7 +377,7 @@ def _failure_reply(status):
 def _run_step(progress, checkpoint, *, stage, tool, node=None, retry=None, read=False, call):
     try:
         output = call()
-    except Exception:
+    except Exception as exc:
         failure = _record_failure(
             progress,
             code="lookup_failed"
@@ -376,6 +391,10 @@ def _run_step(progress, checkpoint, *, stage, tool, node=None, retry=None, read=
             retryable=stage != "action",
             retry=retry,
         )
+        failure["error_type"] = type(exc).__name__[:80]
+        code = getattr(exc, "code", None)
+        if type(code) is int and 100 <= code <= 599:
+            failure["http_status"] = code
         if read:
             return {"error": "Lookup failed", "failure": failure}
         progress["stopped_failure"] = failure
@@ -521,6 +540,26 @@ def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), default=str)
 
 
+def _assistant_message(choice):
+    # Reasoning tool models require their returned context on subsequent calls.
+    # Keep it only in this in-memory conversation, never checkpoints or telemetry.
+    return {
+        "role": "assistant",
+        "content": "",
+        **{
+            key: choice[key]
+            for key in (
+                "content",
+                "tool_calls",
+                "reasoning",
+                "reasoning_content",
+                "reasoning_details",
+            )
+            if key in choice
+        },
+    }
+
+
 def _bound_reply(text: str) -> str:
     if len(text.encode("utf-16-le")) <= 7000:
         return text
@@ -644,6 +683,36 @@ def _run_research(
         first = (result.get("choices") or [{}])[0]
         choice = first.get("message") or {}
         calls = choice.get("tool_calls") or []
+        usage = result.get("usage") or {}
+        details = usage.get("completion_tokens_details") or {}
+        summary = {
+            "finish_reason": str(first.get("finish_reason") or "unknown")[:40],
+            "content_chars": len(str(choice.get("content") or "")),
+            "tool_calls": len(calls),
+        }
+        provider_error = result.get("error")
+        if isinstance(provider_error, dict) and type(provider_error.get("code")) is int:
+            summary["error_code"] = provider_error["code"]
+        for key, value in (
+            ("completion_tokens", usage.get("completion_tokens")),
+            ("reasoning_tokens", details.get("reasoning_tokens")),
+        ):
+            if type(value) is int and value >= 0:
+                summary[key] = value
+        progress["model_calls"] = [*progress.get("model_calls", []), summary][
+            -(MAX_ROUNDS * dash_jobs.MAX_ATTEMPTS) :
+        ]
+        checkpoint()
+        finish_reason = first.get("finish_reason")
+        if provider_error:
+            return _incomplete(progress, "provider_error")
+        if finish_reason in {"content_filter", "error"}:
+            return _incomplete(
+                progress,
+                "response_filtered" if finish_reason == "content_filter" else "provider_error",
+            )
+        if finish_reason == "length" and not calls and not choice.get("content"):
+            return _incomplete(progress, "response_truncated")
         if not calls and allow_text and choice.get("content"):
             text = str(choice["content"]).strip()
             if first.get("finish_reason") == "length":
@@ -660,13 +729,20 @@ def _run_research(
                     },
                 }
             ]
-            choice = {"role": "assistant", "tool_calls": calls}
+            choice = {**choice, "tool_calls": calls}
         if not calls:
-            if proactive and allow_text and choice.get("content") == "" and not (due - reviewed):
+            if (
+                proactive
+                and allow_text
+                and choice.get("content") == ""
+                and finish_reason == "stop"
+                and not (due - reviewed)
+            ):
                 return {"action": "hold", "why": "quiet"}
             if empty:
                 return _incomplete(progress, "empty_response")
             empty = True
+            messages.append(_assistant_message(choice))
             messages.append(
                 {
                     "role": "user",
@@ -675,9 +751,7 @@ def _run_research(
             )
             continue
         # Every call receives a result, including calls after a terminal action.
-        messages.append(
-            {"role": "assistant", "content": choice.get("content"), "tool_calls": calls}
-        )
+        messages.append(_assistant_message(choice))
         terminal = None
         for call in calls:
             function = call.get("function") or {}
@@ -872,6 +946,28 @@ def _run_research(
                                 read=read,
                                 call=partial(act, name, args),
                             )
+            if isinstance(output, dict) and output.get("error") and not output.get("failure"):
+                _record_failure(
+                    progress,
+                    code="invalid_tool_call"
+                    if name not in definitions or not isinstance(args, dict)
+                    else "tool_rejected",
+                    stage="validation",
+                    tool=name if name in definitions else "unknown",
+                    retry={"stage": "model"},
+                )
+            elif name in definitions and isinstance(output, dict) and not output.get("failure"):
+                # A valid correction resolves the earlier rejected call.
+                failures = progress.get("failures", [])
+                progress["failures"] = [
+                    item
+                    for item in failures
+                    if not (
+                        item["tool"] == name
+                        and item["stage"] == "validation"
+                        and item["node"] is None
+                    )
+                ]
             checkpoint()
             encoded = _json(output)
             if len(encoded) > 24000:

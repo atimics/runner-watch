@@ -32,6 +32,26 @@ def completed_result(identity, scope):
     return json.loads(row["result_json"]) if row else None
 
 
+def record_delivery(database, identity, status, at, *, message_id=None):
+    """Keep answer quality and Telegram acknowledgement separate."""
+    row = database.execute(
+        "SELECT result_json FROM dash_research_jobs WHERE id=? AND status='complete'",
+        (identity,),
+    ).fetchone()
+    if not row:
+        return
+    result = json.loads(row["result_json"])
+    result["delivery"] = {
+        "status": status,
+        "completed_at": at.isoformat(),
+        "message_id": message_id,
+    }
+    database.execute(
+        "UPDATE dash_research_jobs SET result_json=? WHERE id=? AND status='complete'",
+        (json.dumps(result), identity),
+    )
+
+
 def claim(identity, scope, kind, at):
     token = uuid4().hex
     stamp = at.isoformat()
@@ -40,7 +60,18 @@ def claim(identity, scope, kind, at):
             "UPDATE dash_research_jobs SET status='complete',state_json='{}',result_json=?,"
             "updated_at=? WHERE status='pending' AND created_at<? AND lease_until<=?",
             (
-                json.dumps({"action": "hold", "why": "research_expired"}),
+                json.dumps(
+                    {
+                        "action": "hold",
+                        "why": "research_expired",
+                        "research": {
+                            "status": "incomplete",
+                            "outcome": "incomplete",
+                            "stop_reason": "research_expired",
+                            "completed_at": stamp,
+                        },
+                    }
+                ),
                 stamp,
                 (at - timedelta(days=1)).isoformat(),
                 stamp,

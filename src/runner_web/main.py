@@ -386,6 +386,10 @@ from runner_web.sports_routes import (
 from runner_web.static_files import NoSourceMapStaticFiles
 from runner_web.swarm_runtime import maintain_swarm_runtime, open_swarm_runtime
 from runner_web.telegram import (
+    TelegramDeliveryError,
+    select_new_runners,
+)
+from runner_web.telegram import (
     _api_call as telegram_api_call,
 )
 from runner_web.telegram import (
@@ -413,9 +417,6 @@ from runner_web.telegram import (
     release_announcements_enabled as telegram_release_announcements_enabled,
 )
 from runner_web.telegram import (
-    select_new_runners,
-)
-from runner_web.telegram import (
     send_post as telegram_send_post,
 )
 from runner_web.telegram import (
@@ -439,6 +440,7 @@ from runner_web.telegram_chat import (
 from runner_web.telegram_chat import (
     conversation_tickers as telegram_conversation_tickers,
 )
+from runner_web.telegram_chat import defer_update as telegram_defer_update
 from runner_web.telegram_chat import (
     finish_update as telegram_finish_update,
 )
@@ -2055,9 +2057,12 @@ def _act_on_telegram_message(
     message: Any,
     decision: dict[str, Any],
     now: datetime,
+    *,
+    clock: Any = None,
 ) -> str:
     """Carry out one decision and write down that it happened."""
 
+    clock = clock or (lambda: datetime.now(UTC))
     action = str(decision.get("action") or "hold")
     if action == "reply":
         text = str(decision.get("text") or "").strip()
@@ -2070,22 +2075,29 @@ def _act_on_telegram_message(
                 if coin.get("requested")
             }
             body, preview = _dash_reply_markup(database, text, searches=searches)
-            send_telegram_reply(
+            receipt = send_telegram_reply(
                 config,
                 message.chat_id,
                 text,
                 reply_to_message_id=message.message_id,
                 html=body,
                 preview_url=preview,
+                confirmed=True,
             )
+            now = clock()
             telegram_record_action(database, message, "reply", text[:3500], now)
             telegram_spend_engagement(database, message.chat_id, message.user_id, now)
+            dash_jobs.record_delivery(
+                database, f"telegram:{message.update_id}", "sent", now, message_id=receipt
+            )
             return "reply"
     if action == "react":
         emoji = str(decision.get("emoji") or "🐆")
         set_telegram_reaction(config, message.chat_id, message.message_id, emoji)
+        now = clock()
         telegram_record_action(database, message, "react", emoji, now)
         return "react"
+    now = clock()
     telegram_record_action(database, message, "hold", str(decision.get("why") or ""), now)
     if decision.get("stop"):
         telegram_mute_engagement(database, message.chat_id, message.user_id, now)
@@ -2096,6 +2108,10 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
     """Read pending updates and let the cheetah answer, react, or stay quiet."""
 
     counts = {"seen": 0, "replied": 0, "reacted": 0, "held": 0, "skipped": 0}
+
+    def clock():
+        return at or datetime.now(UTC)
+
     identity = _telegram_identity()
     if identity is None:
         return counts
@@ -2191,14 +2207,50 @@ def run_telegram_chat(generate: Any = None, at: datetime | None = None) -> dict[
             if decision.get("action") == "retry":
                 continue
             with connection() as database:
-                outcome = _act_on_telegram_message(database, config, message, decision, now)
-                telegram_finish_update(database, update_id, "handled", now=now)
+                outcome = _act_on_telegram_message(
+                    database, config, message, decision, now, clock=clock
+                )
+                research = decision.get("research", {})
+                incomplete = research.get("status") == "incomplete"
+                telegram_finish_update(
+                    database,
+                    update_id,
+                    "handled",
+                    error="research_incomplete:" + str(research.get("stop_reason"))
+                    if incomplete
+                    else None,
+                    now=clock(),
+                )
+            if research.get("status") in {"partial", "incomplete"}:
+                key = "research_" + research["status"]
+                counts[key] = counts.get(key, 0) + 1
             counts[{"reply": "replied", "react": "reacted", "hold": "held"}[outcome]] += 1
+        except TelegramDeliveryError as exc:
+            completed = clock()
+            with connection() as database:
+                if exc.status == "retry":
+                    telegram_defer_update(
+                        database,
+                        update_id,
+                        completed + timedelta(seconds=exc.retry_after),
+                        completed,
+                    )
+                status = telegram_finish_update(
+                    database,
+                    update_id,
+                    "pending" if exc.status == "retry" else "failed",
+                    error="telegram_" + exc.status,
+                    now=completed,
+                )
+                delivery = "failed" if exc.status == "retry" and status == "failed" else exc.status
+                dash_jobs.record_delivery(database, f"telegram:{update_id}", delivery, completed)
+            key = "delivery_" + delivery
+            counts[key] = counts.get(key, 0) + 1
         except Exception as exc:
             LOG.warning("Telegram chat turn failed: %s", type(exc).__name__)
             with connection() as database:
                 telegram_finish_update(
-                    database, update_id, "pending", error=type(exc).__name__, now=now
+                    database, update_id, "pending", error=type(exc).__name__, now=clock()
                 )
     return counts
 
@@ -2297,6 +2349,7 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         scope=dash_research.research_scope(message.chat_id, message.message_thread_id),
         job_key=f"telegram:{message.update_id}",
         act=lambda name, args: _dash_research_action(message, name, args),
+        allow_text=True,
     )
 
 
@@ -2559,7 +2612,7 @@ DASH_DESK_NOTE_SECONDS = max(900, int(os.getenv("DASH_DESK_NOTE_SECONDS", "3600"
 DASH_DESK_NOTE_MIN_GAP_SECONDS = max(600, int(os.getenv("DASH_DESK_NOTE_MIN_GAP_SECONDS", "3000")))
 
 
-def _generate_desk_note(world: dict[str, Any]) -> str:
+def _generate_desk_note(world: dict[str, Any], *, clock: Any = None) -> dict[str, Any]:
     """Research a change or revisit an idea, then share Dash's own take."""
     result = dash_research.run_research(
         context={
@@ -2605,8 +2658,9 @@ def _generate_desk_note(world: dict[str, Any]) -> str:
         proactive=True,
         allow_text=True,
         at=_stamp(world.get("research_time")),
+        clock=clock,
     )
-    return str(result.get("text") or "") if result["action"] == "reply" else ""
+    return result
 
 
 def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
@@ -2625,6 +2679,10 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     from runner_web.telegram_outbox import deliver_outbox, enqueue_cards
 
     current = at or now()
+
+    def clock():
+        return at or now()
+
     room_config = replace(config, chat_id=str(chat_id))
 
     def deliver():
@@ -2635,10 +2693,12 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
                 target, chat_id, text, html=body, preview_url=preview, confirmed=True
             )
 
-        result = deliver_outbox(room_config, sender, at=current, kinds=("dash_research",))
+        result = deliver_outbox(
+            room_config, sender, at=clock(), kinds=("dash_research",), clock=clock
+        )
         if result["status"] == "sent":
             note = result["items"][0]["text"]
-            worker_state("dash_desk_note_last_at", current.isoformat())
+            worker_state("dash_desk_note_last_at", result["completed_at"])
             worker_state("dash_desk_note_last_note", note[:3500])
         return result
 
@@ -2654,7 +2714,7 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     saved = {row["key"]: row["value"] for row in rows}
     with connection() as database:
         finding = database.execute(
-            "SELECT o.text,o.status,o.created_at FROM telegram_outbox o "
+            "SELECT o.text,o.status,o.created_at,o.updated_at FROM telegram_outbox o "
             "JOIN telegram_outbox_items i ON i.outbox_id=o.id "
             "WHERE o.chat_id=? AND i.kind='dash_research' "
             "ORDER BY o.created_at DESC,o.id DESC LIMIT 1",
@@ -2663,7 +2723,8 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     if finding:
         saved["dash_desk_note_last_note"] = finding["text"]
         saved["dash_desk_note_last_at"] = max(
-            saved.get("dash_desk_note_last_at", ""), finding["created_at"]
+            saved.get("dash_desk_note_last_at", ""),
+            finding["updated_at"] if finding["status"] == "sent" else finding["created_at"],
         )
     last_at = _stamp(saved.get("dash_desk_note_last_at"))
     scope = dash_research.research_scope(chat_id)
@@ -2700,11 +2761,16 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
         "previous_delivery_status": finding["status"] if finding else "unknown",
     }
     try:
-        note = _generate_desk_note(world)
+        result = _generate_desk_note(world, clock=clock)
     except Exception as exc:
         return {"status": "error", "detail": type(exc).__name__}
+    research = result.get("research", {})
+    metadata = {"research_job": identity, "research": research}
+    if research.get("status") == "incomplete" and result["action"] != "retry":
+        return {"status": "research_incomplete", **metadata}
+    note = str(result.get("text") or "") if result["action"] == "reply" else ""
     if not note or note == saved.get("dash_desk_note_last_note"):
-        return {"status": "pending" if dash_jobs.active_desk_key(scope) else "held"}
+        return {"status": "pending" if dash_jobs.active_desk_key(scope) else "held", **metadata}
     # The research completion enqueues atomically. This also accepts alternate generators.
     with connection() as database:
         enqueue_cards(
@@ -2718,9 +2784,9 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
                     "research_job": identity,
                 }
             ],
-            at=current,
+            at=clock(),
         )
-    return deliver()
+    return {**deliver(), **metadata}
 
 
 async def dash_desk_note_worker() -> None:

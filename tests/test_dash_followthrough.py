@@ -42,6 +42,29 @@ def desk(monkeypatch, sender):
     monkeypatch.setattr(main, "send_telegram_reply", sender)
 
 
+def test_confirmed_reply_preserves_the_selected_preview():
+    payloads = []
+
+    def receive(request, **kwargs):
+        payloads.append(json.loads(request.data))
+        return BytesIO(b'{"ok":true,"result":{"message_id":42}}')
+
+    receipt = send_reply(
+        TelegramConfig("fixture", "-100"),
+        -100,
+        "A finding.",
+        html="<b>A finding.</b>",
+        preview_url="https://app.test/stock/TEST",
+        confirmed=True,
+        opener=receive,
+    )
+    assert receipt == 42
+    assert payloads[0]["link_preview_options"] == {
+        "url": "https://app.test/stock/TEST",
+        "prefer_large_media": True,
+    }
+
+
 def test_restart_resumes_evidence_then_commits_note_and_finding_together():
     reads = []
     with pytest.raises(StopIteration):
@@ -103,6 +126,48 @@ def test_terminal_research_failure_stays_distinct_from_reply_delivery(monkeypatc
     again, requests = run([], job_key="desk-test")
     assert again == result
     assert requests == []
+
+
+def test_failed_attempt_backoff_starts_when_the_attempt_finishes():
+    finished = NOW + timedelta(seconds=40)
+    result, _ = run([{}, {}], job_key="desk-test", clock=lambda: finished)
+    assert result["action"] == "retry"
+    assert job()["updated_at"] == finished.isoformat()
+    assert job()["next_at"] == (finished + timedelta(seconds=60)).isoformat()
+    assert dash_jobs.claim("desk-test", SCOPE, "chat", NOW + timedelta(seconds=61)) is None
+
+
+def test_desk_failure_remains_visible_and_does_not_send(monkeypatch):
+    desk(monkeypatch, lambda *a, **k: pytest.fail("No completed finding"))
+    monkeypatch.setattr(dash_jobs, "MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(main, "_telegram_chat_completion", lambda body: {"choices": []})
+    result = main.post_dash_desk_note(at=NOW)
+    assert result["status"] == "research_incomplete"
+    assert result["research"]["outcome"] == "incomplete"
+    assert result["research"]["stop_reason"] == "empty_response"
+    assert dash_jobs.active_desk_key(SCOPE) is None
+
+
+def test_reasoning_context_returns_only_to_the_model():
+    first = turn(("expand", {"node": "board"}))
+    message = first["choices"][0]["message"]
+    reasoning = {
+        "reasoning": "private test reasoning",
+        "reasoning_content": "private provider reasoning",
+        "reasoning_details": [{"type": "reasoning.encrypted", "data": "opaque-signature"}],
+    }
+    message.update(reasoning, provider_internal="must not be forwarded")
+    result, requests = run(
+        [first, turn(("reply", {"text": "The check is complete."}))], job_key="desk-test"
+    )
+    assistant = requests[1]["messages"][2]
+    for key, value in reasoning.items():
+        assert assistant[key] == value
+    assert "provider_internal" not in assistant
+    serialized = json.dumps([result, job()])
+    assert "private test reasoning" not in serialized
+    assert "private provider reasoning" not in serialized
+    assert "opaque-signature" not in serialized
 
 
 def test_atomic_queue_failure_preserves_the_original_due_note(monkeypatch):

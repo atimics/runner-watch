@@ -41,7 +41,7 @@ def queue(cards):
 
 
 def deliver(sender=lambda *_: 42, at=AT, config=CONFIG):
-    return outbox.deliver_outbox(config, sender, at=at, kinds=KINDS)
+    return outbox.deliver_outbox(config, sender, at=at, kinds=KINDS, clock=lambda: at)
 
 
 @pytest.mark.parametrize(
@@ -139,6 +139,21 @@ def test_retry_uses_frozen_text_and_honors_rate_limit():
     assert sent[0] == sent[1]
     post = outbox.announcement_history()["posts"][0]
     assert post["message_id"] == 73 and post["attempts"] == 2
+
+
+def test_delivery_and_retry_times_use_the_completed_send():
+    queue([card()])
+    completed = AT + timedelta(seconds=25)
+
+    def limited(*args):
+        raise TelegramDeliveryError("retry", retry_after=120)
+
+    result = outbox.deliver_outbox(CONFIG, limited, at=AT, kinds=KINDS, clock=lambda: completed)
+    assert result["completed_at"] == completed.isoformat()
+    with db.connection() as database:
+        row = database.execute("SELECT updated_at,retry_at FROM telegram_outbox").fetchone()
+    assert row["updated_at"] == completed.isoformat()
+    assert row["retry_at"] == (completed + timedelta(seconds=120)).isoformat()
 
 
 def test_destination_stays_bound_to_queued_message():
