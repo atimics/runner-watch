@@ -375,7 +375,9 @@ def send_reply(
                 **payload,
                 "text": html,
                 "parse_mode": "HTML",
-                "link_preview_options": {"is_disabled": True},
+                "link_preview_options": {"url": preview_url, "prefer_large_media": True}
+                if preview_url
+                else {"is_disabled": True},
             }
             try:
                 return send(formatted)

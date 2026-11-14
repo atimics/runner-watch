@@ -930,7 +930,11 @@ def test_the_desk_note_waits_for_changes_between_scheduled_reviews(monkeypatch):
         lambda config, chat_id, text, **_: sent.append((chat_id, text)) or 42,
     )
     monkeypatch.setattr(web_main, "dash_world", lambda *a, **k: {"changes": {"any": True}})
-    monkeypatch.setattr(web_main, "_generate_desk_note", lambda world: "Something moved.")
+    monkeypatch.setattr(
+        web_main,
+        "_generate_desk_note",
+        lambda world, **kw: {"action": "reply", "text": "Something moved."},
+    )
 
     with connection() as database:
         web_main.dash_direction.finish(
@@ -1502,11 +1506,11 @@ def test_a_desk_note_cut_off_by_the_token_cap_keeps_only_whole_sentences(monkeyp
         return generate
 
     monkeypatch.setattr(web_main, "_telegram_chat_completion", completion(cut, "length"))
-    assert web_main._generate_desk_note({}) == "NCPL flying 246 percent on a fresh 8-K."
+    assert web_main._generate_desk_note({})["text"] == "NCPL flying 246 percent on a fresh 8-K."
     monkeypatch.setattr(web_main, "_telegram_chat_completion", completion("Up 21.", "length"))
-    assert web_main._generate_desk_note({}) == ""
+    assert web_main._generate_desk_note({})["action"] == "hold"
     monkeypatch.setattr(web_main, "_telegram_chat_completion", completion(cut, "stop"))
-    assert web_main._generate_desk_note({}) == cut
+    assert web_main._generate_desk_note({})["text"] == cut
 
 
 def test_a_retried_update_does_not_comment_or_pay_twice():

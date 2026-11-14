@@ -918,17 +918,32 @@ def record_update(database: Any, payload: dict[str, Any], now: datetime | None =
 def pending_updates(
     database: Any, limit: int = 10, *, now: datetime | None = None
 ) -> list[dict[str, Any]]:
+    database.execute(
+        "UPDATE telegram_updates SET status='failed' WHERE status='pending' AND attempts>=?",
+        (MAX_UPDATE_ATTEMPTS,),
+    )
     rows = database.execute(
         """
         SELECT u.* FROM telegram_updates u WHERE u.status='pending' AND u.attempts<?
         AND NOT EXISTS (
             SELECT 1 FROM dash_research_jobs j WHERE j.id='telegram:' || CAST(u.update_id AS TEXT)
             AND j.status='pending' AND (j.next_at>? OR j.lease_until>?)
+        ) AND NOT EXISTS (
+            SELECT 1 FROM worker_state w WHERE w.key='telegram_retry:' || CAST(u.update_id AS TEXT)
+            AND w.value>?
         ) ORDER BY u.update_id LIMIT ?
         """,
-        (MAX_UPDATE_ATTEMPTS, _utc(now).isoformat(), _utc(now).isoformat(), max(1, limit)),
+        (MAX_UPDATE_ATTEMPTS, *([_utc(now).isoformat()] * 3), max(1, limit)),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def defer_update(database: Any, update_id: int, until: datetime, now: datetime) -> None:
+    database.execute(
+        "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+        (f"telegram_retry:{update_id}", until.isoformat(), now.isoformat()),
+    )
 
 
 def finish_update(
@@ -938,15 +953,20 @@ def finish_update(
     *,
     error: str | None = None,
     now: datetime | None = None,
-) -> None:
-    database.execute(
+) -> str:
+    row = database.execute(
         """
         UPDATE telegram_updates
-        SET status=?,attempts=attempts+1,last_error=?,handled_at=?
-        WHERE update_id=?
+        SET status=CASE WHEN ?='pending' AND attempts+1>=? THEN 'failed' ELSE ? END,
+            attempts=attempts+1,last_error=?,handled_at=?
+        WHERE update_id=? RETURNING status
         """,
-        (status, error, _utc(now).isoformat(), update_id),
-    )
+        (status, MAX_UPDATE_ATTEMPTS, status, error, _utc(now).isoformat(), update_id),
+    ).fetchone()
+    final_status = row["status"] if row else status
+    if final_status != "pending":
+        database.execute("DELETE FROM worker_state WHERE key=?", (f"telegram_retry:{update_id}",))
+    return final_status
 
 
 def record_action(
