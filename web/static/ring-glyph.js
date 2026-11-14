@@ -71,6 +71,7 @@
         pattern.removeAttribute('data-score-key'); pattern.removeAttribute('aria-label');
         pattern.style[solid ? 'fill' : 'stroke'] = paint[part.key];
       }
+      segment.dataset.sigilHint = `${part.label} · ${points(part.value)} · ${percent(part)}`;
       segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
       wireControl?.(segment,part); ringLayer.append(segment);
       if (pattern) ringLayer.append(pattern);
@@ -96,10 +97,12 @@
       });
     }
     const sentiment = svg('circle', {cx,cy,r:outer+6,class:'map-glyph-sentiment','aria-label':`${toneLabel}: ${sentimentMix.reading}. Show sentiment.`});
+    sentiment.dataset.sigilHint = `${toneLabel} · ${sentimentMix.reading}`;
     wireControl?.(sentiment,controls.find(part => part.key === 'sentiment')); ringLayer.append(sentiment);
     if (glyph.band !== 3 || !contributions.length) ringLayer.append(svg('circle', {cx,cy,r:radius-width/2-3,class:'map-glyph-hole','pointer-events':'none'}));
     if (glyph.risk !== 'none') {
       const risk = svg('g', {class:'map-glyph-risk','aria-label':`${riskReading(glyph.risk)}. Show risk factors.`});
+      risk.dataset.sigilHint = riskReading(glyph.risk);
       const size = (small ? 7 : 9)*(geometry.markerScale || 1);
       const marker = glyph.risk === 'detected'
         ? svg('path', {d:`M ${cx} ${cy-size-2} L ${cx+size+2} ${cy} L ${cx} ${cy+size+2} L ${cx-size-2} ${cy} Z`,class:'map-risk-dot','data-risk-shape':'diamond'})
@@ -115,6 +118,7 @@
     graph.dataset.orbitCenter = `${cx},${cy}`;
     (glyph.liquidity ? drawWell : drawFace)({ringLayer, glyph, geometry:{cx,cy,outer,radius,width}, small, contributions, controls, toneLabel, points, percent, wireControl});
     const center = svg('g', {role:'button',tabindex:0,class:'map-score-center',...centerAttributes,'aria-label':`${name}, attention ${score === '—' ? 'unavailable' : score + ' of 100 points'}. Show attention overview.`});
+    center.dataset.sigilHint = score === '—' ? 'Attention · unavailable' : `Attention · ${score}/100`;
     // Keep the decorative hole outside the overview button. Combining it with
     // the labels creates a disjoint hit target, with an untappable bounding-box
     // center on small rings. The label rectangle is one contiguous target.
@@ -148,12 +152,13 @@
       const end = angle + part.share * sweepAll;
       const segment = ringShape(cx, cy, gauge, angle, end, {class:'map-score-segment', 'data-score-key':part.key, 'aria-label':`${part.label}: ${points(part.value)}, ${percent(part)}`, 'stroke-width':width});
       segment.style.stroke = color(part);
+      segment.dataset.sigilHint = `${part.label} · ${points(part.value)} · ${percent(part)}`;
       segment.append(svg('title', {}, `${part.label}: ${points(part.value)} · ${percent(part)}`));
       wireControl?.(segment, part); ringLayer.append(segment);
       if (paint[part.key]) {
         const pattern = segment.cloneNode(false);
         pattern.setAttribute('class', 'map-score-pattern'); pattern.setAttribute('aria-hidden', 'true');
-        ['data-score-key','aria-label','role','tabindex','aria-pressed'].forEach(name => pattern.removeAttribute(name));
+        ['data-score-key','data-sigil-hint','aria-label','role','tabindex','aria-pressed'].forEach(name => pattern.removeAttribute(name));
         pattern.style.stroke = paint[part.key]; ringLayer.append(pattern);
       }
       angle = end;
@@ -166,6 +171,7 @@
       if (flow.share < 1) ringLayer.append(ringShape(cx, cy, hair, split, Math.PI*1.5, {class:'well-bear', 'aria-hidden':'true'}));
     }
     const trading = svg('circle', {cx, cy, r:hair, class:'map-glyph-sentiment well-flow-target', 'aria-label':`${flow.reading || 'No trades read in the last hour'}. Show trading.`});
+    trading.dataset.sigilHint = flow.reading || 'No trades read in the last hour';
     wireControl?.(trading, controls.find(part => part.key === 'sentiment')); ringLayer.append(trading);
     // Nine ticks, one per RATi standard: bright met, red failed, dim not checked yet.
     if (standards && standards.marks?.length) {
@@ -175,6 +181,7 @@
         const a0 = -Math.PI/2 + index*step + gap/2;
         ticks.append(svg('path', {d:arcPath(cx, cy, WELL_STANDARDS_R*u, a0, a0 + step - gap), class:'well-standard', 'data-state':mark.state}));
       });
+      ticks.dataset.sigilHint = standards.reading;
       ticks.append(svg('title', {}, standards.reading));
       wireControl?.(ticks, controls.find(part => part.key === 'standards')); ringLayer.append(ticks);
     }
@@ -211,11 +218,13 @@
       const zig = [[0,4*u],[5*u,chamber*.35],[-4*u,chamber*.6],[3*u,chamber*.85],[0,r]].map(([x,y]) => `${cx+x},${cy+y}`).join(' ');
       body.append(svg('polyline', {points:zig, class:'well-crack'}));
     }
+    body.dataset.sigilHint = well.reading.split(';')[0];
     body.append(svg('title', {}, well.reading));
     wireControl?.(body, controls.find(part => part.key === 'liquidity')); ringLayer.append(body);
     // A risk factor notches the top; unknown risk draws nothing.
     if (glyph.risk === 'detected' || glyph.risk === 'significant') {
       const risk = svg('g', {class:'map-glyph-risk', 'aria-label':`${riskReading(glyph.risk)}. Show risk factors.`});
+      risk.dataset.sigilHint = riskReading(glyph.risk);
       // The ring's shapes: detected is a diamond, 1+ significant a circle.
       const notch = glyph.risk === 'detected'
         ? svg('path', {d:`M ${cx} ${cy - 101*u} L ${cx + 7*u} ${cy - 93*u} L ${cx} ${cy - 85*u} L ${cx - 7*u} ${cy - 93*u} Z`, class:'well-risk', 'data-risk':'detected', 'data-risk-shape':'diamond'})

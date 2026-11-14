@@ -27,7 +27,7 @@ def open_screen(page, screen, user=None):
         html,
     )
     html = re.sub(
-        r'<script src="/static/(market-screen|stock-indicator|ticker-row)'
+        r'<script src="/static/(market-screen|stock-indicator|sigil-hover|ticker-row)'
         r'\.js[^\"]*"[^>]*></script>',
         lambda m: "<script>" + (ROOT / "web/static" / (m[1] + ".js")).read_text() + "</script>",
         html,
