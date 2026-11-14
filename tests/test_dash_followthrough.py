@@ -77,6 +77,34 @@ def test_restart_resumes_evidence_then_commits_note_and_finding_together():
     assert again == result and requests == []
 
 
+def test_research_completion_records_outcome_and_finish_time():
+    finished = NOW + timedelta(seconds=42)
+    result, _ = run(
+        [turn(("reply", {"text": "The evidence supports waiting."}))],
+        job_key="desk-test",
+        clock=lambda: finished,
+    )
+    assert result["research"]["outcome"] == "answered"
+    assert result["research"]["status"] == "complete"
+    assert result["research"]["attempts"] == 1
+    assert result["research"]["started_at"] == NOW.isoformat()
+    assert result["research"]["completed_at"] == finished.isoformat()
+    assert job()["updated_at"] == finished.isoformat()
+    assert json.loads(job()["result_json"]) == result
+
+
+def test_terminal_research_failure_stays_distinct_from_reply_delivery(monkeypatch):
+    monkeypatch.setattr(dash_jobs, "MAX_ATTEMPTS", 1)
+    result, _ = run([{}, {}], job_key="desk-test")
+    assert result["action"] == "reply"
+    assert result["research"]["outcome"] == "incomplete"
+    assert result["research"]["stop_reason"] == "empty_response"
+    assert job()["status"] == "complete"
+    again, requests = run([], job_key="desk-test")
+    assert again == result
+    assert requests == []
+
+
 def test_atomic_queue_failure_preserves_the_original_due_note(monkeypatch):
     dash_research.save_thesis(
         SCOPE, thesis(), {"ticker:TEST": {"price": 1}}, NOW - timedelta(hours=2)

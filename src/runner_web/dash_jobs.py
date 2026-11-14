@@ -75,6 +75,7 @@ def claim(identity, scope, kind, at):
         "token": token,
         "state": json.loads(claimed["state_json"]),
         "attempts": claimed["attempts"],
+        "created_at": row["created_at"],
     }
 
 
@@ -97,9 +98,9 @@ def checkpoint(identity, token, state, at):
 def release(identity, token, at):
     with connection() as database:
         database.execute(
-            "UPDATE dash_research_jobs SET lease_until='',lease_token='',next_at=? "
+            "UPDATE dash_research_jobs SET lease_until='',lease_token='',next_at=?,updated_at=? "
             "WHERE id=? AND lease_token=? AND status='pending'",
-            ((at + timedelta(seconds=60)).isoformat(), identity, token),
+            ((at + timedelta(seconds=60)).isoformat(), at.isoformat(), identity, token),
         )
 
 

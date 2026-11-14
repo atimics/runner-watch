@@ -66,6 +66,7 @@ def run(script, *, expand=None, evidence=None, **kwargs):
         requests.append(copy.deepcopy(body))
         return next(responses)
 
+    current = kwargs.pop("at_override", NOW)
     result = research.run_research(
         context=kwargs.pop("context", {}),
         persona="Dash",
@@ -76,7 +77,8 @@ def run(script, *, expand=None, evidence=None, **kwargs):
         unbacked=kwargs.pop("unbacked", lambda text, evidence: []),
         evidence=evidence if evidence is not None else {},
         scope=SCOPE,
-        at=kwargs.pop("at_override", NOW),
+        at=current,
+        clock=kwargs.pop("clock", lambda: current),
         **kwargs,
     )
     return result, requests

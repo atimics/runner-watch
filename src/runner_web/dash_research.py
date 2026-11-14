@@ -390,8 +390,9 @@ def _run_step(progress, checkpoint, *, stage, tool, node=None, retry=None, read=
     return output
 
 
-def run_research(*, job_key=None, job_chat_id=None, **kwargs):
+def run_research(*, job_key=None, job_chat_id=None, clock=None, **kwargs):
     current = kwargs.get("at") or datetime.now(UTC)
+    clock = clock or (lambda: datetime.now(UTC))
     scope = kwargs.get("scope")
     state = {}
     claim = None
@@ -407,7 +408,7 @@ def run_research(*, job_key=None, job_chat_id=None, **kwargs):
 
     def checkpoint():
         if claim:
-            dash_jobs.checkpoint(job_key, claim["token"], state, current)
+            dash_jobs.checkpoint(job_key, claim["token"], state, clock())
 
     try:
         uncertain_action = next(
@@ -434,7 +435,7 @@ def run_research(*, job_key=None, job_chat_id=None, **kwargs):
             and all(item["retryable"] for item in state.get("failures", []))
         ):
             checkpoint()
-            dash_jobs.release(job_key, claim["token"], current)
+            dash_jobs.release(job_key, claim["token"], clock())
             return {**result, "action": "retry", "why": "research_pending"}
         if result.get("why") == "research_incomplete" and scope:
             prior = {note["node"]: note for note in notebook(scope, current)}
@@ -459,7 +460,8 @@ def run_research(*, job_key=None, job_chat_id=None, **kwargs):
                     }
         previous = kwargs.get("context", {}).get("world", {}).get("previous_note")
         if previous and result.get("text") == previous:
-            result = {"action": "hold", "why": "unchanged"}
+            result = {**result, "action": "hold", "why": "unchanged"}
+            result.pop("text", None)
         if result.get("why") == "research_incomplete" and not kwargs.get("proactive"):
             result = {
                 **result,
@@ -472,13 +474,27 @@ def run_research(*, job_key=None, job_chat_id=None, **kwargs):
             if note.get("review_outcome") == "reviewed":
                 note["review_outcome"] = "reviewed_quiet"
         if claim:
+            completed = clock()
+            result.setdefault("research", _research_status(state, "complete"))
+            result["research"].update(
+                attempts=claim["attempts"],
+                started_at=claim["created_at"],
+                attempt_started_at=current.isoformat(),
+                completed_at=completed.isoformat(),
+                outcome="incomplete"
+                if result["research"]["status"] == "incomplete"
+                else {"reply": "answered", "hold": "quiet", "react": "reacted"}.get(
+                    result["action"], result["action"]
+                ),
+                model_calls=state.get("model_calls", []),
+            )
             dash_jobs.finish(
                 job_key,
                 claim["token"],
                 scope,
                 result,
                 state.get("notes", {}),
-                current,
+                completed,
                 chat_id=job_chat_id,
                 direction=state.get("direction"),
                 explored=bool(kwargs.get("proactive")),
@@ -497,7 +513,7 @@ def run_research(*, job_key=None, job_chat_id=None, **kwargs):
         return result
     except Exception:
         if claim:
-            dash_jobs.release(job_key, claim["token"], current)
+            dash_jobs.release(job_key, claim["token"], clock())
         raise
 
 
