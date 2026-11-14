@@ -31,8 +31,7 @@ def _stream(row: dict) -> str:
 
 
 def _recent_swaps(events: list[dict], row: dict, at: datetime) -> list[dict]:
-    # Several instructions can describe the same transaction's net token change.
-    # One signature must not satisfy the three-transaction entry threshold.
+    # Retain each wallet's net change for risk analysis, deduplicating instructions.
     distinct = {}
     for event in events:
         if (
@@ -46,7 +45,7 @@ def _recent_swaps(events: list[dict], row: dict, at: datetime) -> list[dict]:
             and event.get("signature")
             and 0 <= age(event.get("observed_at"), at) <= WINDOW_SECONDS
         ):
-            distinct.setdefault(event["signature"], event)
+            distinct.setdefault((event["signature"], event["wallet"], event["direction"]), event)
     return list(distinct.values())
 
 
@@ -91,6 +90,8 @@ def _apply(row: dict, state: dict, at: datetime) -> dict:
         at=at,
     )["memecoin_assessment"]
     assessment["sentiment"] = updated["sentiment"]
+    # Several wallet changes in one signature still count as one entry observation.
+    assessment["sentiment"]["observed_swaps"] = len({event["signature"] for event in events})
     # New sampled risk can block an entry; collection cannot erase a board finding.
     factors = {finding["id"]: finding for finding in updated["risk"]["factors"]}
     for index, finding in enumerate(previous_risk):
