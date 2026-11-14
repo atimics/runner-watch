@@ -123,11 +123,13 @@ def test_long_market_details_fit(page, width, kind):
     screen = detail(market, {"coin": raw, "history": []} if kind == "coin" else raw)
     page.set_viewport_size(dict(width=width, height=844))
     open_html(page, screens.render(screen), screen)
-    expect(page.locator(".asset-heading h1")).to_have_text(screen["item"]["name"])
     if kind == "coin":
+        expect(page.locator(".asset-heading h1")).to_have_text("CA " + ADDRESS)
+        expect(page.locator(".coin-contract > span").nth(1)).to_have_text(ADDRESS)
         # No chain finding is saved for the sample, so the evidence block stays hidden.
         expect(page.locator("[data-market-assessment]")).to_be_hidden()
     else:
+        expect(page.locator(".asset-heading h1")).to_have_text(screen["item"]["name"])
         expect(page.get_by_role("region", name="Outcome market")).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     for team in page.locator(".teams > div").all():
