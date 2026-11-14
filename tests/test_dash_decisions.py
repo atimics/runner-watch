@@ -21,6 +21,7 @@ from runner_web.dash_decisions import (
     DESK_NOTE_QUESTIONS,
     TURN_QUESTIONS,
     choose_turn,
+    desk_note_state,
     desk_note_worth_it,
     turn_state,
 )
@@ -32,6 +33,42 @@ ALICE = 4242
 BOT_ID = 7849797828
 BOT = "DashRATiBot"
 CA = "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr"
+
+
+@pytest.mark.parametrize("items", [[], [{"ticker": "AAA"}]])
+def test_desk_note_counts_halt_entries_in_the_dated_context(items):
+    state = desk_note_state(
+        {
+            "halts": {
+                "items": items,
+                "window_start": NOW.isoformat(),
+                "coverage": "stored_events_only",
+            }
+        },
+        last_note="",
+        minutes_since=None,
+    )
+    assert state["halts_today"] == len(items)
+
+
+def test_desk_note_separates_carried_over_halts_from_todays_starts():
+    state = desk_note_state(
+        {
+            "halts": {
+                "items": [{"ticker": "OLD"}],
+                "halts_today": 0,
+                "carried_over_count": 3,
+                "unresolved_count": 2,
+                "resolved_count": 1,
+            }
+        },
+        last_note="",
+        minutes_since=None,
+    )
+    assert state["halts_today"] == 0
+    assert state["carried_over_halts"] == 3
+    assert state["unresolved_halts"] == 2
+    assert state["resolved_halts"] == 1
 
 
 @pytest.fixture(autouse=True)

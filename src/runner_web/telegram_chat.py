@@ -614,18 +614,38 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         return {"ticker": symbol, "known": False}
     current = detail.get("current") or {}
     mark = market_mark(symbol)
+    quote = mark if mark is not None else current
+    observed_at = quote.get("observed_at") or quote.get("quote_time")
+    age = quote.get("age_seconds")
+    if age is None and observed_at:
+        try:
+            age = max(0, int((_utc() - _utc(datetime.fromisoformat(observed_at))).total_seconds()))
+        except (TypeError, ValueError):
+            pass
+    risks = [
+        str(risk)
+        for risk in current.get("risks") or []
+        if not str(risk).startswith("quote is about ")
+    ]
+    if age is not None and age > 15 * 60:
+        risks.insert(0, f"quote is about {age / 60:.0f}m old")
     gate = detail.get("evidence_gate") or {}
     return {
         "ticker": symbol,
         "known": True,
         "company": detail.get("company"),
-        "price": (mark or {}).get("price", current.get("price")),
-        "price_age_seconds": (mark or {}).get("age_seconds"),
+        "price": quote.get("price"),
+        "price_as_of": observed_at,
+        "price_age_seconds": age,
         "price_source": (mark or {}).get("source", "scan"),
-        "change_pct": current.get("change_pct"),
+        "change_pct": quote.get("change_pct"),
+        "previous_close": quote.get("previous_close"),
+        "change_basis": "previous regular-session close",
+        "assessment_as_of": current.get("captured_at"),
+        "assessment_quote_as_of": current.get("quote_time"),
         "relative_volume": current.get("relative_volume"),
         "momentum_15m_pct": current.get("momentum_15m_pct"),
-        "session": current.get("session"),
+        "session": quote.get("session"),
         "trade_state": current.get("trade_state"),
         "trade_state_means": _TRADE_STATE_PLAIN.get(str(current.get("trade_state") or "").upper()),
         "rug_level": current.get("rug_level"),
@@ -633,7 +653,7 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         "evidence_summary": gate.get("summary"),
         "evidence_blockers": list(gate.get("blockers") or [])[:3],
         "signals": list(current.get("signals") or [])[:4],
-        "risks": list(current.get("risks") or [])[:4],
+        "risks": risks[:4],
         "model_view": _model_view(detail),
         "halted": bool((detail.get("external_context") or {}).get("active_halt")),
         "filings": _recent_filings(detail),
@@ -840,7 +860,8 @@ def _todays_target(ticker: str) -> dict[str, Any] | None:
     with _connection() as database:
         row = database.execute(
             """
-            SELECT target_price,direction,reason,status,close_price,reference_price
+            SELECT target_price,direction,reason,status,close_price,reference_price,
+                   report_day,reference_at,forecast_at
             FROM market_report_forecasts
             WHERE ticker=? ORDER BY report_day DESC,forecast_at DESC LIMIT 1
             """,
@@ -849,6 +870,10 @@ def _todays_target(ticker: str) -> dict[str, Any] | None:
     if not row:
         return None
     return {
+        "report_day": row["report_day"],
+        "reference_at": row["reference_at"],
+        "forecast_at": row["forecast_at"],
+        "price_basis": "Saved forecast entry price and its closing result for report_day",
         "target_price": row["target_price"],
         "direction": row["direction"],
         "why": row["reason"],

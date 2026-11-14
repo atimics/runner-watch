@@ -94,6 +94,7 @@ def test_a_fetched_quote_is_stored_with_the_change_against_the_previous_close(mo
     assert adapter.calls == 1
     assert quote["price"] == 1.5
     assert quote["previous_close"] == 1.2
+    assert quote["previous_close_basis"] == "regular_session"
     assert quote["change_pct"] == 25.0
     assert quote["session"] == "REGULAR"
     assert quote["fresh"] is True
@@ -245,28 +246,23 @@ def test_the_quote_route_needs_a_known_ticker(monkeypatch):
     assert "max-age" in found.headers["cache-control"]
 
 
-class FakeFastInfo(dict):
-    def __init__(self, previous_close, attribute: bool) -> None:
-        super().__init__({} if attribute else {"previousClose": previous_close})
-        self._attribute = attribute
-        self._previous_close = previous_close
-
-    @property
-    def previous_close(self):
-        if not self._attribute:
-            raise AttributeError("previous_close")
-        return self._previous_close
-
-
 class FakeTicker:
-    def __init__(self, frame, fast_info, error: Exception | None = None) -> None:
+    def __init__(self, frame, daily=None, error: Exception | None = None) -> None:
         self._frame = frame
-        self.fast_info = fast_info
+        self.daily = daily if daily is not None else pd.DataFrame()
         self._error = error
+        self.requests = []
+        self.metadata = {}
 
-    def history(self, **_kwargs):
+    def get_history_metadata(self):
+        return self.metadata
+
+    def history(self, **kwargs):
+        self.requests.append(kwargs)
         if self._error:
             raise self._error
+        if kwargs.get("interval") == "1d":
+            return self.daily
         return self._frame
 
 
@@ -284,15 +280,21 @@ def _minute_frame() -> pd.DataFrame:
     )
 
 
-@pytest.mark.parametrize("attribute", [True, False])
-def test_the_adapter_builds_a_canonical_quote_from_yahoo(monkeypatch, attribute):
+@pytest.mark.parametrize("timezone", [None, EASTERN])
+def test_the_adapter_builds_a_canonical_quote_from_yahoo(monkeypatch, timezone):
     import runner_watch.market_data as market_data
 
     recorded = []
     monkeypatch.setattr(
         market_data.yf,
         "Ticker",
-        lambda _symbol: FakeTicker(_minute_frame(), FakeFastInfo(1.0, attribute)),
+        lambda _symbol: FakeTicker(
+            _minute_frame(),
+            pd.DataFrame(
+                {"Close": [1.0, 1.15]},
+                index=pd.date_range("2026-09-01", periods=2, tz=timezone),
+            ),
+        ),
     )
     adapter = YahooQuoteAdapter(fetch_recorder=recorded.append)
 
@@ -317,7 +319,7 @@ def test_the_adapter_records_a_failure_when_yahoo_breaks(monkeypatch):
     monkeypatch.setattr(
         market_data.yf,
         "Ticker",
-        lambda _symbol: FakeTicker(None, FakeFastInfo(1.0, True), error=OSError("network")),
+        lambda _symbol: FakeTicker(None, error=OSError("network")),
     )
     adapter = YahooQuoteAdapter(fetch_recorder=recorded.append)
 
@@ -336,7 +338,7 @@ def test_a_missing_previous_close_still_yields_a_quote(monkeypatch):
     monkeypatch.setattr(
         market_data.yf,
         "Ticker",
-        lambda _symbol: FakeTicker(_minute_frame(), FakeFastInfo(None, True)),
+        lambda _symbol: FakeTicker(_minute_frame()),
     )
     adapter = YahooQuoteAdapter()
 
@@ -344,7 +346,152 @@ def test_a_missing_previous_close_still_yields_a_quote(monkeypatch):
 
     assert batch.quotes[0].previous_close is None
     assert batch.quotes[0].last == 1.15
-    assert "Yahoo did not report a previous close" in batch.provenance.warnings
+    assert "Yahoo did not report a previous regular close" in batch.provenance.warnings
+
+
+@pytest.mark.parametrize(
+    ("symbol", "price", "regular_close", "extended_close", "expected"),
+    [
+        ("KDK", 1.28, 0.9511, 1.0501, 34.58),
+        ("OCGN", 0.9312, 0.8165, 0.8, 14.05),
+    ],
+)
+@pytest.mark.parametrize("hour", [8, 12, 19])
+def test_quote_change_uses_regular_close_for_the_observed_session(
+    monkeypatch, symbol, price, regular_close, extended_close, expected, hour
+):
+    from runner_watch import market_data
+
+    frame = pd.DataFrame(
+        {"Close": [price]},
+        index=pd.DatetimeIndex(
+            [
+                datetime(2026, 11, 6, hour, 59, tzinfo=EASTERN),
+            ]
+        ),
+    )
+    daily = pd.DataFrame(
+        {"Close": [regular_close, 1.28, 1.4]},
+        index=pd.date_range(
+            "2026-11-05",
+            periods=3,
+            tz=EASTERN,
+        ),
+    )
+    handle = FakeTicker(frame, daily)
+    handle.fast_info = {"previousClose": extended_close}
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda _: handle)
+
+    values = quotes._fetch_quote(symbol, datetime(2026, 11, 7, 11, tzinfo=UTC))
+
+    assert values["price"] == price
+    assert values["previous_close"] == regular_close
+    assert values["change_pct"] == expected
+    assert handle.requests[-1]["prepost"] is False
+    assert handle.requests[-1]["auto_adjust"] is False
+
+
+def test_a_failed_regular_close_lookup_keeps_the_observed_price(monkeypatch):
+    from runner_watch import market_data
+
+    class MissingDaily(FakeTicker):
+        def history(self, **kwargs):
+            if kwargs.get("interval") == "1d":
+                raise TimeoutError("daily history")
+            return super().history(**kwargs)
+
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda _: MissingDaily(_minute_frame()))
+    values = quotes._fetch_quote(TICKER, NOW)
+    assert values["status"] == "ok"
+    assert values["price"] == 1.15
+    assert values["change_pct"] is None
+
+
+@pytest.mark.parametrize(
+    ("reference", "rounded", "price", "expected"),
+    [
+        (0.9511, 0.951, 1.28, 34.58),
+        (0.8165, 0.817, 0.9312, 14.05),
+    ],
+)
+@pytest.mark.parametrize("numeric_time", [False, True])
+def test_chart_metadata_preserves_the_regular_close_precision(
+    monkeypatch, reference, rounded, price, expected, numeric_time
+):
+    from runner_watch import market_data
+
+    observed = datetime(2026, 11, 6, 19, 59, tzinfo=EASTERN)
+    start = datetime(2026, 11, 6, 9, 30, tzinfo=EASTERN)
+    handle = FakeTicker(
+        pd.DataFrame({"Close": [price]}, index=pd.DatetimeIndex([observed])),
+        pd.DataFrame({"Close": [rounded]}, index=pd.date_range("2026-11-05", periods=1)),
+    )
+    handle.metadata = {
+        "range": "1d",
+        "dataGranularity": "1m",
+        "chartPreviousClose": reference,
+        "currentTradingPeriod": {
+            "regular": {"start": start.timestamp() if numeric_time else start}
+        },
+    }
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda _: handle)
+    result = quotes._fetch_quote("AAA", datetime(2026, 11, 7, 11, tzinfo=UTC))
+
+    assert result["previous_close"] == reference
+    assert result["change_pct"] == expected
+    assert len(handle.requests) == 1
+
+    with connection() as database:
+        quotes._save_quote(database, "AAA", result)
+        database.execute(
+            "INSERT INTO market_bars(source,ticker,interval,bar_time,close,"
+            "first_collected_at,last_collected_at) VALUES('yahoo','AAA','1d',?,?,?,?)",
+            ("2026-11-05T05:00:00+00:00", rounded, NOW.isoformat(), NOW.isoformat()),
+        )
+    monkeypatch.setattr(
+        market_data.YahooMarketData,
+        "minutes",
+        lambda self, symbols: market_data.DownloadResult(
+            frames={"AAA": handle._frame}, failed=[], warnings=[]
+        ),
+    )
+    refreshed = quotes.refresh_hot_quotes(["AAA"], at=datetime(2026, 11, 7, 11, 1, tzinfo=UTC))
+    assert refreshed["stored"] == 1
+    saved = quotes.fresh_quotes(["AAA"])["AAA"]
+    assert saved["previous_close"] == reference
+    assert saved["change_pct"] == expected
+
+
+@pytest.mark.parametrize("wrong_date", [False, True])
+def test_chart_reference_requires_a_matching_session_and_one_day_range(monkeypatch, wrong_date):
+    from runner_watch import market_data
+
+    handle = FakeTicker(
+        _minute_frame(),
+        pd.DataFrame(
+            {"Close": [1.0]},
+            index=pd.date_range("2026-09-01", periods=1),
+        ),
+    )
+    handle.metadata = {
+        "range": "1d" if wrong_date else "5d",
+        "dataGranularity": "1m",
+        "chartPreviousClose": 2.0,
+        "currentTradingPeriod": {
+            "regular": {
+                "start": datetime(
+                    2026,
+                    9,
+                    3 if wrong_date else 2,
+                    9,
+                    30,
+                    tzinfo=EASTERN,
+                )
+            }
+        },
+    }
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda _: handle)
+    assert quotes._fetch_quote("AAA", NOW)["previous_close"] == 1.0
 
 
 def test_the_shared_resolver_prefers_the_freshest_lane(monkeypatch):
@@ -380,13 +527,15 @@ def test_the_shared_resolver_prefers_the_freshest_lane(monkeypatch):
     with connection() as database:
         only_scan = price_marks(database, TICKER)
     assert [mark[2] for mark in only_scan] == ["scan"]
+    assert market_mark(TICKER, at=NOW, refresh=False)["change_pct"] == 5.0
 
     with connection() as database:
         database.execute(
             """
             INSERT INTO ticker_quotes(
-                ticker,price,observed_at,session,source,status,requested_at,collected_at
-            ) VALUES(?,1.9,?,'PRE-MARKET','yahoo','ok',?,?)
+                ticker,price,observed_at,session,source,status,requested_at,collected_at,
+                previous_close,change_pct
+            ) VALUES(?,1.9,?,'PRE-MARKET','yahoo','ok',?,?,1.0,90.0)
             """,
             (TICKER, quote_at.isoformat(), NOW.isoformat(), NOW.isoformat()),
         )
@@ -397,6 +546,8 @@ def test_the_shared_resolver_prefers_the_freshest_lane(monkeypatch):
     assert mark["price"] == 1.9
     assert mark["source"] == "quote"
     assert mark["age_seconds"] == 120
+    assert mark["change_pct"] == 90.0
+    assert mark["previous_close"] == 1.0
 
 
 def test_the_shared_resolver_ignores_a_price_from_the_future(monkeypatch):

@@ -38,6 +38,49 @@ def open_screen(page, screen, user=None):
     page.goto("http://app.test/")
 
 
+@pytest.mark.parametrize("width", [320, 390, 1280])
+def test_stock_quote_times_stay_visible_and_age_with_focus(page: Page, width, tmp_path):
+    now = datetime(2026, 11, 7, 16, tzinfo=UTC)
+    page.clock.install(time=now)
+    page.set_viewport_size({"width": width, "height": 844})
+    screen = listing(
+        "stocks",
+        [
+            {
+                **fixtures.sample("stocks"),
+                "quote_time": (now - timedelta(seconds=54143)).isoformat(),
+            },
+            {**fixtures.sample("stocks"), "ticker": "NONE", "quote_time": None},
+        ],
+        at=now,
+    )
+    open_screen(page, screen)
+    expect(page.locator(".stock-session-note")).to_contain_text("Stock scanner off")
+    old, unknown = page.locator("[data-quote-time]").all()
+    expect(old).to_contain_text("Quote Nov 06 · 19:57:37 ET")
+    expect(old).to_contain_text("Stale · 15h 2m old")
+    expect(unknown).to_contain_text("Quote time unavailable")
+    expect(unknown).to_contain_text("Age unknown")
+    assert old.bounding_box()["height"] >= 16
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    ticker = page.locator("a.ticker").first
+    ticker.focus()
+    page.clock.fast_forward(120000)
+    expect(ticker).to_be_focused()
+    expect(old).to_contain_text("Stale · 15h 4m old")
+    page.route("http://app.test/", lambda route: route.abort())
+    ticker.evaluate("el => el.blur()")
+    page.clock.fast_forward(60000)
+    expect(old).to_contain_text("Stale · 15h 5m old")
+    links = page.get_by_role("navigation", name="Market").get_by_role("link").all()
+    boxes = [link.bounding_box() for link in links]
+    assert all(
+        left["x"] + left["width"] <= right["x"]
+        for left, right in zip(boxes, boxes[1:], strict=False)
+    )
+    page.screenshot(path=str(tmp_path / f"stock-quote-times-{width}.png"), full_page=True)
+
+
 @pytest.mark.parametrize("width", [390, 1280])
 def test_first_token_search_fills_the_existing_detail_facts(page: Page, width, tmp_path):
     address = "ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem"
@@ -417,18 +460,20 @@ def test_cup_full_page_refresh_keeps_outcome_when_value_moves_to_other_side(page
     expect(page.get_by_role("region", name="International probability history")).to_be_visible()
 
 
-def test_narrow_stock_rows_are_single_line(page: Page):
+def test_narrow_stock_rows_align_values_above_the_quote_time(page: Page):
     page.set_viewport_size({"width": 390, "height": 844})
     open_screen(page, listing("stocks", [fixtures.scored_stock()]))
     row = page.locator(".ticker").first
     expect(row).to_be_visible()
     box = row.bounding_box()
-    assert box is not None and box["height"] <= 62
+    assert box is not None and box["height"] <= 96
     selectors = (".ticker-trend", ".ticker-name", ".ticker-value", ".ticker-score")
     children = [row.locator(selector).bounding_box() for selector in selectors]
     children = [item for item in children if item is not None]
     centers = [item["y"] + item["height"] / 2 for item in children]
     assert max(centers) - min(centers) <= 4
+    timestamp = row.locator("[data-quote-time]").bounding_box()
+    assert timestamp["y"] >= max(item["y"] + item["height"] for item in children)
 
 
 def test_chart_renders_real_points_and_empty_history(page: Page):
