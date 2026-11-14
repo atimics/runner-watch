@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -71,6 +72,31 @@ def test_rejected_exit_stays_unavailable_and_retries_without_releasing_position(
     assert len(ledger.rows("trading_orders", trader.identifier)) == 2
 
 
+@pytest.mark.parametrize("rejection", ["quote", "round_trip"])
+def test_queued_buy_rejection_does_not_poison_later_reserved_buy(trading_db, rejection):
+    trader, clock, board, provider = setup_trader()
+    board[:] = [candidate(token_address=mint, id=mint) for mint in ("rejected", "eligible")]
+    trader.cycle()
+    original_quote = provider.quote
+
+    def quote(input_mint, output_mint, amount, **kwargs):
+        if rejection == "quote" and output_mint == "rejected":
+            raise QuoteRejected("Swap price impact exceeds the limit")
+        result = original_quote(input_mint, output_mint, amount, **kwargs)
+        if rejection == "round_trip" and input_mint == "rejected":
+            return replace(result, output_raw=10_000_000, minimum_raw=10_000_000)
+        return result
+
+    provider.quote = quote
+    clock["at"] += timedelta(seconds=30)
+    health = trader.cycle()
+    assert health["state"] == "ok" and health["errors"] == []
+    orders = {order["mint"]: order for order in ledger.rows("trading_orders", trader.identifier)}
+    assert orders["rejected"]["status"] == "failed"
+    assert orders["eligible"]["status"] == "filled"
+    assert ledger.account(trader.identifier)["reserved_usdc"] == 0
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -78,6 +104,9 @@ def test_rejected_exit_stays_unavailable_and_retries_without_releasing_position(
         {"otherAmountThreshold": "98"},
         {"router": "dflow"},
         {"prioritizationFeeLamports": 5_000_001},
+        {"errorCode": "NO_ROUTES_FOUND"},
+        {"errorCode": "TOKEN_NOT_TRADABLE"},
+        {"errorCode": 3},
     ],
 )
 def test_quote_policy_failures_are_distinct_from_service_failures(change):
@@ -97,7 +126,17 @@ def test_quote_policy_failures_are_distinct_from_service_failures(change):
         provider.quote(USDC, "mint", 25_000_000)
 
 
-@pytest.mark.parametrize("change", [{"inAmount": "1"}, {"otherAmountThreshold": "102"}])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"inAmount": "1"},
+        {"otherAmountThreshold": "102"},
+        {"router": None},
+        {"errorCode": 1},
+        {"errorCode": 500},
+        {"error": "service unavailable"},
+    ],
+)
 def test_inconsistent_provider_response_still_reports_provider_failure(change):
     raw = {
         "inputMint": USDC,

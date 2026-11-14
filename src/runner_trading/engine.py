@@ -7,7 +7,7 @@ from typing import Any
 from runner_trading import ledger
 from runner_trading.config import USDC, Policy, age, stamp
 from runner_trading.providers import Jupiter, ProviderError, QuoteRejected
-from runner_trading.strategy import entry_reasons, exit_reason
+from runner_trading.strategy import entry_reasons, exit_reason, non_swap_entry_reasons
 from runner_web.db import connection
 
 
@@ -29,6 +29,8 @@ class Trader:
         live=None,
         clock=None,
         source=saved_rows,
+        evidence_enricher=None,
+        evidence_cache=None,
     ):
         if mode not in {"paper", "live"} or (mode == "live" and live is None):
             raise ValueError("Live mode requires a configured execution adapter")
@@ -38,6 +40,8 @@ class Trader:
         self.provider = provider or Jupiter(policy, clock=self.clock)
         self.live = live
         self.source = source
+        self.evidence_enricher = evidence_enricher
+        self.evidence_cache = evidence_cache
         self.identifier = ledger.ensure_account(mode, policy, self.clock())["id"]
         self.token = ""
         self.issues: list[str] = []
@@ -178,7 +182,6 @@ class Trader:
         return reasons
 
     def signals(self, board: list[dict]) -> None:
-        created = []
         with ledger.locked(self.identifier, self.token, self.clock()) as db:
             for row in board:
                 mint, observed = row.get("token_address"), row.get("observed_at")
@@ -211,40 +214,74 @@ class Trader:
                             stamp(self.clock() + timedelta(seconds=self.policy.max_hold_seconds)),
                         ),
                     )
-                    created.append({"id": signal_id, "mint": mint, "row": row, "reasons": reasons})
                 db.execute(
                     """INSERT INTO trading_seen VALUES(?,?,?,?,?) ON CONFLICT(account_id,mint)
                            DO UPDATE SET state=excluded.state,observed_at=excluded.observed_at,
                            signal_id=excluded.signal_id""",
                     (self.identifier, mint, state, observed, signal_id),
                 )
-        # Resume decisions saved immediately before a process restart.
+        # Deferred evidence reads and restarts resume the original opportunity.
         with connection() as db:
             waiting = db.execute(
                 "SELECT * FROM trading_signals WHERE account_id=? AND state='observed' "
                 "ORDER BY observed_at LIMIT 200",
                 (self.identifier,),
             ).fetchall()
+        current = {row.get("token_address"): row for row in board}
         created = [
             {
                 "id": s["id"],
                 "mint": s["mint"],
-                "row": json.loads(s["evidence_json"]),
-                "reasons": entry_reasons(json.loads(s["evidence_json"]), self.policy, self.clock()),
+                "observed_at": s["observed_at"],
+                "row": current.get(s["mint"], {}),
             }
             for s in waiting
         ]
-        for index, signal in enumerate(created):
-            reasons = signal["reasons"] + self.entry_health()
-            if index >= self.policy.max_new_signals:
-                reasons.append("Signal quote budget reached")
-            elif (
-                not 0
-                <= age(signal["row"]["observed_at"], self.clock())
+        if self.evidence_enricher:
+            eligible = [
+                signal["row"]
+                for signal in created
+                if not non_swap_entry_reasons(signal["row"], self.policy, self.clock())
+                and 0
+                <= age(signal["observed_at"], self.clock())
                 <= self.policy.entry_timeout_seconds
-            ):
+            ]
+            enriched = {
+                row["token_address"]: row
+                for row in (
+                    self.evidence_enricher(eligible, at=self.clock(), policy=self.policy)
+                    if eligible
+                    else []
+                )
+            }
+            for signal in created:
+                if signal["mint"] in enriched:
+                    signal["row"] = enriched[signal["mint"]]
+        quoted = 0
+        for signal in created:
+            expired = not (
+                0 <= age(signal["observed_at"], self.clock()) <= self.policy.entry_timeout_seconds
+            )
+            deferred = signal["row"].get("_trading_evidence_deferred") and not expired
+            with ledger.locked(self.identifier, self.token, self.clock()) as db:
+                db.execute(
+                    "UPDATE trading_signals SET evidence_json=?,reason=? "
+                    "WHERE id=? AND state='observed'",
+                    (
+                        ledger.encode(signal["row"]),
+                        "Waiting for this pool's swap evidence" if deferred else "Evidence checked",
+                        signal["id"],
+                    ),
+                )
+            if deferred:
+                continue
+            reasons = entry_reasons(signal["row"], self.policy, self.clock()) + self.entry_health()
+            if expired:
                 reasons.append("Entry quote window ended")
+            elif quoted >= self.policy.max_new_signals:
+                reasons.append("Signal quote budget reached")
             else:
+                quoted += 1
                 try:
                     buy = self.provider.quote(USDC, signal["mint"], self.policy.entry_usdc)
                     units = self.provider.paper_output(buy)
@@ -286,9 +323,17 @@ class Trader:
             if recover_only or age(order["ready_at"], self.clock()) < 0:
                 continue
             if order["side"] == "buy":
-                reasons = entry_reasons(board.get(order["mint"], {}), self.policy, self.clock())
+                row = board.get(order["mint"], {})
+                if row and self.evidence_cache:
+                    row = self.evidence_cache(row, at=self.clock())
+                reasons = entry_reasons(row, self.policy, self.clock())
                 reasons += self.entry_health()
-                if age(order["created_at"], self.clock()) > self.policy.entry_timeout_seconds:
+                with connection() as db:
+                    signal = db.execute(
+                        "SELECT observed_at FROM trading_signals WHERE id=?", (order["signal_id"],)
+                    ).fetchone()
+                observed = signal["observed_at"] if signal else order["created_at"]
+                if not 0 <= age(observed, self.clock()) <= self.policy.entry_timeout_seconds:
                     reasons.append("Entry time window ended")
                 if reasons:
                     ledger.fail_order(
@@ -320,6 +365,10 @@ class Trader:
                     ):
                         raise QuoteRejected("The size-specific return quote exceeds the cost limit")
                 quote.require_fresh(self.policy, self.clock())
+                if buying and not (
+                    0 <= age(observed, self.clock()) <= self.policy.entry_timeout_seconds
+                ):
+                    raise QuoteRejected("Entry time window ended")
                 if self.live:
                     self.live.prepare(self.identifier, self.token, order, quote, self.clock())
                     # Submission follows the durable commit in the same cycle.

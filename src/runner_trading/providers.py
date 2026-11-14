@@ -21,6 +21,18 @@ class QuoteRejected(ProviderError):
     """This route is ineligible; the provider can still serve other candidates."""
 
 
+# Published Metis routing errors, not arbitrary provider error text.
+ROUTE_REJECTIONS = frozenset(
+    {
+        "NO_ROUTES_FOUND",
+        "COULD_NOT_FIND_ANY_ROUTE",
+        "ROUTE_PLAN_DOES_NOT_CONSUME_ALL_THE_AMOUNT",
+        "MARKET_NOT_FOUND",
+        "TOKEN_NOT_TRADABLE",
+    }
+)
+
+
 def positive_int(value: Any) -> int:
     if isinstance(value, bool) or not str(value).isdigit():
         raise ProviderError("Provider amount is invalid")
@@ -127,6 +139,12 @@ class Jupiter:
             params["taker"] = taker
         raw = self.request("order?" + urlencode(params))
         if raw.get("errorCode") or raw.get("error"):
+            if (
+                str(raw.get("errorCode")) in ROUTE_REJECTIONS
+                or str(raw.get("error")) in ROUTE_REJECTIONS
+                or (raw.get("router") == "metis" and raw.get("errorCode") == 3)
+            ):
+                raise QuoteRejected("A swap route is unavailable for this order")
             raise ProviderError("A swap route is unavailable")
         if (
             raw.get("inputMint") != input_mint
@@ -136,7 +154,9 @@ class Jupiter:
         ):
             raise ProviderError("Swap route differs from the order")
         if raw.get("router") != "metis":
-            raise QuoteRejected("The swap router is outside the supported route policy")
+            if raw.get("router") in {"jupiterz", "dflow", "okx"}:
+                raise QuoteRejected("The swap router is outside the supported route policy")
+            raise ProviderError("Swap response has no recognized router")
         output = positive_int(raw.get("outAmount"))
         minimum = positive_int(raw.get("otherAmountThreshold"))
         floor = output * (10_000 - self.policy.slippage_bps) // 10_000
