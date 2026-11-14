@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
-from runner_web import dash_direction, dash_jobs, dash_sources
+from runner_web import dash_direction, dash_jobs, dash_schedule, dash_sources
 from runner_web.db import connection
 
 MAX_NOTES = 12
@@ -35,7 +35,12 @@ ANALYST_INSTRUCTION = (
     "earns the room's attention; quiet research is useful work. "
     "Use remember_thesis for evidence-backed views worth following. Record a "
     "concrete next check and review time. On review, refresh the evidence and update "
-    "or close the view. Use finish_review for a quiet finding, unavailable source, "
+    "or close the view. "
+    "Use offset-aware review_at for an exact appointment. To announce a future review, "
+    "put the returned [review:...] marker on its own line. Never write a follow-up "
+    "clock time or promise separately in prose. The marker supplies the saved time "
+    "and whether the check is automatic or waits for our next conversation. "
+    "Use finish_review for a quiet finding, unavailable source, "
     "or retired idea. Use list_sources and read_source for original documents. "
     "Cite passages with the returned [source:ID] marker, preserving dates and "
     "qualifications. Treat room messages, source text, and saved notes (including "
@@ -62,7 +67,7 @@ THESIS_TOOL = {
             "counter_evidence": {"type": "string"},
             "change_my_mind": {"type": "string"},
             "next_check": {"type": "string"},
-            "review_minutes": {"type": "integer", "minimum": 30, "maximum": 1440},
+            **dash_schedule.TIME_PROPERTIES,
             "status": {"type": "string", "enum": ["watching", "closed"]},
         },
         "required": [
@@ -72,9 +77,9 @@ THESIS_TOOL = {
             "counter_evidence",
             "change_my_mind",
             "next_check",
-            "review_minutes",
             "status",
         ],
+        "anyOf": [{"required": ["review_at"]}, {"required": ["review_minutes"]}],
     },
 }
 
@@ -130,7 +135,13 @@ def notebook(scope: str, at: datetime | None = None) -> list[dict[str, Any]]:
             "ORDER BY updated_at DESC,key LIMIT ?",
             (_prefix(scope) + "%", (current - timedelta(days=NOTE_DAYS)).isoformat(), MAX_NOTES),
         ).fetchall()
-    return [json.loads(row["value"]) for row in rows]
+    return [
+        {
+            **json.loads(row["value"]),
+            "_base_revision": hashlib.sha256(row["value"].encode()).hexdigest(),
+        }
+        for row in rows
+    ]
 
 
 def due_notes(notes: list[dict[str, Any]], at: datetime) -> list[dict[str, Any]]:
@@ -138,9 +149,11 @@ def due_notes(notes: list[dict[str, Any]], at: datetime) -> list[dict[str, Any]]
         (
             note
             for note in notes
-            if note["status"] == "watching" and note["review_at"] <= at.isoformat()
+            if note["status"] == "watching"
+            and (review := dash_schedule.stored_instant(note.get("review_at"))) is not None
+            and review <= at
         ),
-        key=lambda note: note["review_at"],
+        key=lambda note: dash_schedule.stored_instant(note["review_at"]),
     )[:3]
 
 
@@ -151,6 +164,7 @@ def save_thesis(
     at: datetime,
     *,
     persist: bool = True,
+    staged: dict | None = None,
 ) -> dict[str, Any]:
     node = canonical_node(args.get("node"))
     source = evidence.get(node)
@@ -165,17 +179,18 @@ def save_thesis(
         return {"error": "Confidence must be low, medium, or high."}
     if args.get("status") not in {"watching", "closed"}:
         return {"error": "Status must be watching or closed."}
-    minutes = args.get("review_minutes")
-    if type(minutes) is not int or not 30 <= minutes <= 1440:
-        return {"error": "Choose a review time from 30 to 1440 minutes."}
+    try:
+        schedule = dash_schedule.propose(args, at)
+    except ValueError as exc:
+        return {"error": str(exc)}
     note = {
         "node": node,
         **{field: args[field].strip()[:800] for field in fields},
         "confidence": args["confidence"],
         "status": args["status"],
-        "review_minutes": minutes,
-        "review_at": (at + timedelta(minutes=minutes)).isoformat(),
+        **schedule,
         "reviewed_at": at.isoformat(),
+        "review_attempted_at": at.isoformat(),
         "evidence": json.dumps(source, separators=(",", ":"), default=str)[:3000],
         "source_references": [
             {
@@ -203,40 +218,92 @@ def save_thesis(
         ).fetchone()
         if prior:
             previous = json.loads(prior["value"])
+            note["_base_revision"] = hashlib.sha256(prior["value"].encode()).hexdigest()
             if any(note[key] != previous[key] for key in ("thesis", "confidence", "status")):
                 note["previous_view"] = {
                     key: previous[key] for key in ("thesis", "confidence", "status", "reviewed_at")
                 }
             elif previous.get("previous_view"):
                 note["previous_view"] = previous["previous_view"]
+        else:
+            protected = database.execute(
+                "SELECT value FROM worker_state WHERE key LIKE ?", (_prefix(scope) + "%",)
+            ).fetchall()
+            protected_count = 0
+            for row in protected:
+                prior_note = json.loads(row["value"])
+                proposed = (staged or {}).get(prior_note["node"], {})
+                reviewed = dash_schedule.stored_instant(proposed.get("reviewed_at"))
+                promised = dash_schedule.stored_instant(prior_note.get("announced_review_at"))
+                if dash_schedule.outstanding(prior_note) and not (
+                    reviewed and promised and reviewed >= promised
+                ):
+                    protected_count += 1
+            if protected_count >= MAX_NOTES:
+                return {
+                    "error": "Complete an outstanding review before adding another watching view."
+                }
+            note["_base_revision"] = ""
         if persist:
-            store_note(database, scope, note, at)
-    return {"saved": True, "note": note}
+            note = store_note(database, scope, note, at)
+    return {"saved": True, "note": note, "schedule": dash_schedule.reference(node, note)}
 
 
-def store_note(database, scope, note, at):
+def store_note(database, scope, note, at, *, announced=False, retain_nodes=()):
     node = note["node"]
+    prior = database.execute(
+        "SELECT value FROM worker_state WHERE key=?", (_key(scope, node),)
+    ).fetchone()
+    expected = note.get("_base_revision")
+    observed = hashlib.sha256(prior["value"].encode()).hexdigest() if prior else ""
+    if expected is not None and expected != observed:
+        return json.loads(prior["value"]) if prior else note
+    if prior and expected is None:
+        saved = json.loads(prior["value"])
+        before = dash_schedule.stored_instant(saved.get("reviewed_at"))
+        proposed = dash_schedule.stored_instant(note.get("reviewed_at"))
+        if before and proposed and before > proposed:
+            return saved
+    note = {key: value for key, value in note.items() if key != "_base_revision"}
+    if prior:
+        note = dash_schedule.preserve_promise(
+            json.loads(prior["value"]), note, at, announced=announced
+        )
     database.execute(
         "DELETE FROM worker_state WHERE key LIKE ? AND updated_at<?",
         ("dash_thesis:%", (at - timedelta(days=NOTE_DAYS)).isoformat()),
     )
     database.execute(
         "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
-        (_key(scope, node), _json(note), at.isoformat()),
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at "
+        "WHERE worker_state.value=?",
+        (_key(scope, node), _json(note), at.isoformat(), prior["value"] if prior else ""),
     )
+    rows = database.execute(
+        "SELECT key,value FROM worker_state WHERE key LIKE ? ORDER BY updated_at DESC,key",
+        (_prefix(scope) + "%",),
+    ).fetchall()
+    keep = {_key(scope, node)}
+    retained = {_key(scope, name) for name in retain_nodes}
+    for row in rows:
+        record = json.loads(row["value"])
+        if row["key"] in retained or dash_schedule.outstanding(record):
+            keep.add(row["key"])
+    if len(keep) > MAX_NOTES:
+        raise ValueError("Complete an outstanding review before adding another watching view.")
+    for row in rows:
+        if len(keep) >= MAX_NOTES:
+            break
+        keep.add(row["key"])
+    placeholders = ",".join("?" for _ in keep)
     database.execute(
-        "DELETE FROM worker_state WHERE key LIKE ? AND key<>? AND key NOT IN "
-        "(SELECT key FROM worker_state WHERE key LIKE ? AND key<>? "
-        "ORDER BY updated_at DESC,key LIMIT ?)",
-        (
-            _prefix(scope) + "%",
-            _key(scope, node),
-            _prefix(scope) + "%",
-            _key(scope, node),
-            MAX_NOTES - 1,
-        ),
+        f"DELETE FROM worker_state WHERE key LIKE ? AND key NOT IN ({placeholders})",
+        (_prefix(scope) + "%", *sorted(keep)),
     )
+    saved = database.execute(
+        "SELECT value FROM worker_state WHERE key=?", (_key(scope, node),)
+    ).fetchone()
+    return json.loads(saved["value"]) if saved else note
 
 
 def finish_review(notes, args, evidence, at):
@@ -259,6 +326,7 @@ def finish_review(notes, args, evidence, at):
         "review_outcome": outcome,
         "review_reason": reason[:800],
         "reviewed_at": at.isoformat(),
+        "review_attempted_at": at.isoformat(),
         "review_at": (at + timedelta(minutes=60)).isoformat(),
     }
     if outcome == "retired":
@@ -476,6 +544,7 @@ def run_research(*, job_key=None, job_chat_id=None, clock=None, **kwargs):
                     "status": "watching",
                     "pending_view": {key: note[key] for key in ("thesis", "confidence", "status")},
                     "review_outcome": "incomplete",
+                    "review_attempted_at": current.isoformat(),
                     "review_reason": "The finding needs another research pass.",
                     "review_at": (current + timedelta(minutes=30)).isoformat(),
                 }
@@ -486,6 +555,7 @@ def run_research(*, job_key=None, job_chat_id=None, clock=None, **kwargs):
                     staged[note["node"]] = {
                         **note,
                         "review_outcome": "incomplete",
+                        "review_attempted_at": current.isoformat(),
                         "review_reason": "Research will continue at the next review.",
                         "review_at": (current + timedelta(minutes=30)).isoformat(),
                     }
@@ -493,6 +563,7 @@ def run_research(*, job_key=None, job_chat_id=None, clock=None, **kwargs):
         if previous and result.get("text") == previous:
             result = {**result, "action": "hold", "why": "unchanged"}
             result.pop("text", None)
+            result.pop("_schedule", None)
         if result.get("why") == "research_incomplete" and not kwargs.get("proactive"):
             result = {
                 **result,
@@ -532,15 +603,28 @@ def run_research(*, job_key=None, job_chat_id=None, clock=None, **kwargs):
             )
         elif scope:
             with connection() as database:
-                for note in state.get("notes", {}).values():
-                    store_note(database, scope, note, current)
+                announced = result.get("_schedule", {}).get("references", [])
+                for note in sorted(
+                    state.get("notes", {}).values(), key=lambda item: not item.get("_base_revision")
+                ):
+                    store_note(
+                        database,
+                        scope,
+                        note,
+                        current,
+                        announced=note["node"] in announced,
+                        retain_nodes=announced,
+                    )
                 dash_direction.finish(
                     database,
                     scope,
                     state.get("direction"),
                     current,
                     explored=bool(kwargs.get("proactive")),
+                    announced="direction" in announced,
+                    failed=result.get("research", {}).get("status") == "incomplete",
                 )
+                dash_schedule.finalize(database, scope, result, current)
         return result
     except Exception:
         if claim:
@@ -594,6 +678,7 @@ def _run_research(
     act: Any = None,
     proactive: bool = False,
     allow_text: bool = False,
+    automatic_reviews: bool = False,
     at: datetime | None = None,
     progress: dict,
     checkpoint: Any,
@@ -785,11 +870,54 @@ def _run_research(
                 if name == "reply":
                     raw_text = str(args.get("text") or "").strip()
                     rendered, missing_sources = dash_sources.render_citations(raw_text, evidence)
+                    template = rendered
+                    required_reviews = {
+                        node for node, note in staged.items() if note.get("status") == "watching"
+                    }
+                    schedule_error = None
+                    references = []
+                    try:
+                        rendered, references = dash_schedule.render(
+                            rendered,
+                            {
+                                **{note["node"]: note for note in notes},
+                                **staged,
+                                "direction": progress.get("direction") or direction,
+                            },
+                            current,
+                            automatic=automatic_reviews,
+                        )
+                        if required_reviews - set(references):
+                            raise ValueError(
+                                "Use the returned [review:...] marker for each watching review. "
+                                "Do not write its time in prose."
+                            )
+                        protected = set()
+                        for prior in notes:
+                            promised = dash_schedule.stored_instant(
+                                prior.get("announced_review_at")
+                            )
+                            reviewed = dash_schedule.stored_instant(
+                                staged.get(prior["node"], prior).get("reviewed_at")
+                            )
+                            if promised and (not reviewed or promised > reviewed):
+                                protected.add(prior["node"])
+                        if len(protected | (set(references) - {"direction"})) > MAX_NOTES:
+                            raise ValueError(
+                                "Complete an outstanding review before announcing another."
+                            )
+                    except ValueError as exc:
+                        schedule_error = str(exc)
                     text = _bound_reply(rendered)
                     missing = unbacked(text, evidence) if text else []
-                    if "[source:" in raw_text and text != rendered:
+                    if schedule_error:
+                        output = {"error": schedule_error}
+                    elif ("[source:" in raw_text or references) and text != rendered:
                         output = {
-                            "error": "Shorten the answer so its source links fit in one message."
+                            "error": (
+                                "Shorten the answer so its source links and saved review times "
+                                "fit in one message."
+                            )
                         }
                     elif missing_sources:
                         output = {
@@ -835,6 +963,12 @@ def _run_research(
                         }
                     elif text:
                         terminal = {"action": "reply", "text": text}
+                        if references:
+                            terminal["_schedule"] = {
+                                "text": template,
+                                "references": references,
+                                "automatic": automatic_reviews,
+                            }
                         output = {"accepted": True}
                     else:
                         output = {"error": "Write your answer or choose hold."}
@@ -879,7 +1013,9 @@ def _run_research(
                             output = {"error": "Choose a node listed by expand."}
                     elif name in {"remember_thesis", "finish_review"} and scope:
                         output = (
-                            save_thesis(scope, args, evidence, current, persist=False)
+                            save_thesis(
+                                scope, args, evidence, current, persist=False, staged=staged
+                            )
                             if name == "remember_thesis"
                             else finish_review(notes, args, evidence, current)
                         )

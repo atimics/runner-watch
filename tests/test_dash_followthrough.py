@@ -260,7 +260,15 @@ def test_unavailable_review_and_ready_finding_finish_independently():
                     },
                 ),
                 ("remember_thesis", thesis()),
-                ("reply", {"text": "The fresh evidence supports my view."}),
+                (
+                    "reply",
+                    {
+                        "text": (
+                            "The fresh evidence supports my view.\n"
+                            "[review:ticker:TEST]\n[review:ticker:GONE]"
+                        )
+                    },
+                ),
             ),
         ],
         proactive=True,
@@ -392,7 +400,7 @@ def test_full_source_tool_path_saves_reference_with_the_view():
                     {
                         "text": "The payment depends on approval. [source:"
                         + ref["evidence_id"]
-                        + "]"
+                        + "]\n[review:ticker:TEST]"
                     },
                 ),
             ),
@@ -506,7 +514,10 @@ def test_quiet_review_retains_its_outcome_beside_a_material_finding():
                     {"node": "ticker:QUIET", "outcome": "reviewed_quiet", "reason": "Same view."},
                 ),
                 ("remember_thesis", thesis()),
-                ("reply", {"text": "A useful change."}),
+                (
+                    "reply",
+                    {"text": "A useful change.\n[review:ticker:TEST]\n[review:ticker:QUIET]"},
+                ),
             ),
         ],
         proactive=True,

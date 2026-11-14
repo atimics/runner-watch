@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 
+from runner_web import dash_schedule
 from runner_web.db import connection
 
 EXPLORE_HOURS = 6
@@ -24,9 +25,10 @@ DIRECTION_TOOL = {
             "voice": {"type": "string", "maxLength": 500},
             "focus": {"type": "string", "maxLength": 700},
             "question": {"type": "string", "maxLength": 500},
-            "review_minutes": {"type": "integer", "minimum": 30, "maximum": 1440},
+            **dash_schedule.TIME_PROPERTIES,
         },
-        "required": ["voice", "focus", "question", "review_minutes"],
+        "required": ["voice", "focus", "question"],
+        "anyOf": [{"required": ["review_at"]}, {"required": ["review_minutes"]}],
     },
 }
 
@@ -44,9 +46,10 @@ def read(scope):
 
 
 def propose(args, at):
-    minutes = args.get("review_minutes")
-    if type(minutes) is not int or not 30 <= minutes <= 1440:
-        return {"error": "Choose a review time from 30 to 1440 minutes."}
+    try:
+        schedule = dash_schedule.propose(args, at)
+    except ValueError as exc:
+        return {"error": str(exc)}
     fields = {}
     for name, limit in (("voice", 500), ("focus", 700), ("question", 500)):
         value = args.get(name)
@@ -58,31 +61,67 @@ def propose(args, at):
         "direction": {
             **fields,
             "updated_at": at.isoformat(),
-            "review_at": (at + timedelta(minutes=minutes)).isoformat(),
+            **schedule,
         },
+        "schedule": dash_schedule.reference("direction", schedule),
     }
 
 
-def due(scope, at):
+def next_review(scope):
     direction = read(scope)
     with connection() as database:
-        row = database.execute(
-            "SELECT value FROM worker_state WHERE key=?", (_key(scope, "explored"),)
-        ).fetchone()
-    last = datetime.fromisoformat(row["value"]) if row else None
-    review = datetime.fromisoformat(direction["review_at"]) if direction else None
+        rows = database.execute(
+            "SELECT key,value FROM worker_state WHERE key IN (?,?)",
+            (_key(scope, "explored"), _key(scope, "retry_at")),
+        ).fetchall()
+    values = {row["key"]: row["value"] for row in rows}
+    last = dash_schedule.stored_instant(values.get(_key(scope, "explored")))
+    retry = dash_schedule.stored_instant(values.get(_key(scope, "retry_at")))
+    review = dash_schedule.stored_instant(direction.get("review_at"))
     if review and (last is None or review > last):
-        return at >= review
-    return last is None or at >= last + timedelta(hours=EXPLORE_HOURS)
+        return max(review, retry) if retry else review
+    next_at = last + timedelta(hours=EXPLORE_HOURS) if last else None
+    return max(next_at, retry) if next_at and retry else next_at or retry
 
 
-def finish(database, scope, direction, at, *, explored=False):
+def due(scope, at):
+    review = next_review(scope)
+    return review is None or at >= review
+
+
+def finish(
+    database,
+    scope,
+    direction,
+    at,
+    *,
+    explored=False,
+    announced=False,
+    explored_at=None,
+    failed=False,
+):
     """Commit personal notes and desk progress alongside the research result."""
     rows = []
-    if direction:
+    if direction and not failed:
+        prior = database.execute(
+            "SELECT value FROM worker_state WHERE key=?", (_key(scope, "notes"),)
+        ).fetchone()
+        if prior:
+            direction = dash_schedule.preserve_promise(
+                json.loads(prior["value"]), direction, at, announced=announced
+            )
         rows.append((_key(scope, "notes"), json.dumps(direction), direction["updated_at"]))
     if explored:
-        rows.append((_key(scope, "explored"), at.isoformat(), at.isoformat()))
+        if failed:
+            rows.append(
+                (_key(scope, "retry_at"), (at + timedelta(minutes=30)).isoformat(), at.isoformat())
+            )
+        else:
+            rows.append((_key(scope, "explored"), (explored_at or at).isoformat(), at.isoformat()))
+            database.execute(
+                "DELETE FROM worker_state WHERE key=? AND updated_at<=?",
+                (_key(scope, "retry_at"), at.isoformat()),
+            )
     for row in rows:
         database.execute(
             "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "

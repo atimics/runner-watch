@@ -2350,6 +2350,11 @@ def _generate_telegram_turn(message: Any, transcript: list[dict[str, Any]]) -> d
         job_key=f"telegram:{message.update_id}",
         act=lambda name, args: _dash_research_action(message, name, args),
         allow_text=True,
+        automatic_reviews=(
+            DASH_DESK_NOTES_ENABLED
+            and message.chat_id == telegram_room_chat_id()
+            and not message.message_thread_id
+        ),
     )
 
 
@@ -2507,6 +2512,11 @@ def _write_telegram_reply(
         act=act,
         allow_text=True,
         at=now,
+        automatic_reviews=(
+            DASH_DESK_NOTES_ENABLED
+            and message.chat_id == telegram_room_chat_id()
+            and not message.message_thread_id
+        ),
     )
 
 
@@ -2657,13 +2667,16 @@ def _generate_desk_note(world: dict[str, Any], *, clock: Any = None) -> dict[str
         job_chat_id=world.get("research_chat_id"),
         proactive=True,
         allow_text=True,
+        automatic_reviews=True,
         at=_stamp(world.get("research_time")),
         clock=clock,
     )
     return result
 
 
-def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
+def post_dash_desk_note(
+    *, at: datetime | None = None, scheduled_only: bool = False
+) -> dict[str, Any]:
     """Research changes and due ideas, then share material findings with the room."""
 
     if not DASH_DESK_NOTES_ENABLED or not OPENROUTER_API_KEY:
@@ -2684,8 +2697,33 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
         return at or now()
 
     room_config = replace(config, chat_id=str(chat_id))
+    scope = dash_research.research_scope(chat_id)
+    active = dash_jobs.active_desk_key(scope)
+    due = dash_research.due_notes(dash_research.notebook(scope, current), current)
+    curiosity_due = dash_direction.due(scope, current)
 
     def deliver():
+        with connection() as database:
+            last_sent = database.execute(
+                "SELECT MAX(o.updated_at) FROM telegram_outbox o JOIN telegram_outbox_items i "
+                "ON i.outbox_id=o.id WHERE o.chat_id=? AND o.status='sent' "
+                "AND i.kind='dash_research'",
+                (str(chat_id),),
+            ).fetchone()[0]
+            queued = database.execute(
+                "SELECT 1 FROM telegram_outbox o JOIN telegram_outbox_items i ON i.outbox_id=o.id "
+                "WHERE o.chat_id=? AND o.status IN ('pending','retry') "
+                "AND i.kind='dash_research' LIMIT 1",
+                (str(chat_id),),
+            ).fetchone()
+        sent_at = _stamp(last_sent)
+        if (
+            queued
+            and sent_at
+            and (clock() - sent_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS
+        ):
+            return {"status": "waiting", "sent": 0, "items": []}
+
         def sender(target, text):
             with connection() as database:
                 body, preview = _dash_reply_markup(database, text)
@@ -2704,8 +2742,11 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
 
     # Recover frozen findings before considering new research or quiet-time gates.
     pending = deliver()
-    if pending["status"] != "empty":
+    needs_review = bool(active or due or (curiosity_due and dash_direction.next_review(scope)))
+    if pending["status"] != "empty" and not needs_review:
         return pending
+    if scheduled_only and not needs_review:
+        return {"status": "quiet"}
     with connection() as database:
         rows = database.execute(
             "SELECT key,value FROM worker_state "
@@ -2727,17 +2768,15 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
             finding["updated_at"] if finding["status"] == "sent" else finding["created_at"],
         )
     last_at = _stamp(saved.get("dash_desk_note_last_at"))
-    scope = dash_research.research_scope(chat_id)
-    active = dash_jobs.active_desk_key(scope)
     if (
         not active
+        and not due
+        and not curiosity_due
         and last_at
         and (current - last_at).total_seconds() < DASH_DESK_NOTE_MIN_GAP_SECONDS
     ):
         return {"status": "waiting"}
     world = dash_world(current)
-    due = dash_research.due_notes(dash_research.notebook(scope, current), current)
-    curiosity_due = dash_direction.due(scope, current)
     if not active and not world["changes"]["any"] and not due and not curiosity_due:
         return {"status": "quiet"}
     if (
@@ -2767,10 +2806,14 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
     research = result.get("research", {})
     metadata = {"research_job": identity, "research": research}
     if research.get("status") == "incomplete" and result["action"] != "retry":
-        return {"status": "research_incomplete", **metadata}
+        return {"status": "research_incomplete", "researched": True, **metadata}
     note = str(result.get("text") or "") if result["action"] == "reply" else ""
     if not note or note == saved.get("dash_desk_note_last_note"):
-        return {"status": "pending" if dash_jobs.active_desk_key(scope) else "held", **metadata}
+        return {
+            "status": "pending" if dash_jobs.active_desk_key(scope) else "held",
+            "researched": True,
+            **metadata,
+        }
     # The research completion enqueues atomically. This also accepts alternate generators.
     with connection() as database:
         enqueue_cards(
@@ -2786,25 +2829,29 @@ def post_dash_desk_note(*, at: datetime | None = None) -> dict[str, Any]:
             ],
             at=clock(),
         )
-    return {**deliver(), **metadata}
+    return {**deliver(), "researched": True, **metadata}
 
 
 async def dash_desk_note_worker() -> None:
     if not DASH_DESK_NOTES_ENABLED:
         return
-    await asyncio.sleep(180)
+    await asyncio.sleep(60)
+    ordinary_at = now()
     while True:
         result = {"status": "error"}
         try:
-            result = await run_in_threadpool(post_dash_desk_note)
+            scheduled_only = now() < ordinary_at
+            result = await run_in_threadpool(post_dash_desk_note, scheduled_only=scheduled_only)
+            if not scheduled_only or result.get("researched"):
+                ordinary_at = now() + timedelta(seconds=DASH_DESK_NOTE_SECONDS)
             worker_state("dash_desk_note_last_run", json.dumps(result, separators=(",", ":")))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             worker_state("dash_desk_note_last_error", str(exc)[:500])
-        delay = DASH_DESK_NOTE_SECONDS
+        delay = min(DASH_DESK_NOTE_SECONDS, 60)
         if result.get("status") in {"pending", "retry", "error", "waiting"}:
-            delay = min(delay, 60)
+            ordinary_at = min(ordinary_at, now() + timedelta(seconds=60))
         await asyncio.sleep(delay)
 
 
