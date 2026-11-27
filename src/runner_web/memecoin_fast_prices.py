@@ -143,6 +143,7 @@ def refresh_watched_prices(*, at: datetime | None = None, rpc: Rpc | None = None
         prices[row["id"]] = {
             "price": quote["price"],
             "liquidity_usd": quote["liquidity_usd"],
+            "pool_address": row["pool_address"],
             "observed_at": current.isoformat(),
         }
         quotes.append({"coin_id": row["id"], "price": quote["price"]})

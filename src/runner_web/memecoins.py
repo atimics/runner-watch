@@ -263,6 +263,7 @@ def normalize_chain_pools(payload: Any, *, at: datetime) -> list[dict[str, Any]]
                 "total_supply": None,
                 "max_supply": None,
             }
+            row = _with_pool_change_basis(row)
             previous = rows.get(coin_id)
             # One representative pool per token; keep its price and volume together.
             if previous is None or (liquidity, volume, address) > (
@@ -808,27 +809,36 @@ def _price_check(rows: list[dict[str, Any]], chain: dict[str, Any], at: datetime
     }
 
 
-def _history_changes(coin_ids: list[str], at: datetime) -> dict[str, dict[str, float]]:
-    """Our own saved price 1, 6 and 24 hours ago, for coins GeckoTerminal did not window."""
+def _history_changes(
+    pools: dict[str, str], at: datetime
+) -> dict[str, dict[str, tuple[float, datetime]]]:
+    """Use saved prices from the same pool, at or just before each window start."""
 
-    found: dict[str, dict[str, float]] = {}
-    if not coin_ids:
+    found: dict[str, dict[str, tuple[float, datetime]]] = {}
+    if not pools:
         return found
-    marks = ",".join("?" * len(coin_ids))
+    marks = ",".join("?" * len(pools))
     with connection() as database:
         for label, hours in (("h1", 1), ("h6", 6), ("24h", 24)):
             target = at - timedelta(hours=hours)
             for row in database.execute(
-                f"SELECT coin_id,observed_at,price FROM memecoin_quote_history "
+                f"SELECT coin_id,observed_at,price,features_json FROM memecoin_quote_history "
                 f"WHERE coin_id IN ({marks}) AND observed_at>=? AND observed_at<=? "
-                "ORDER BY observed_at",
+                "AND features_json IS NOT NULL ORDER BY observed_at DESC",
                 (
-                    *coin_ids,
+                    *pools,
                     (target - timedelta(minutes=10)).isoformat(),
-                    (target + timedelta(minutes=10)).isoformat(),
+                    target.isoformat(),
                 ),
             ).fetchall():
-                found.setdefault(row["coin_id"], {})[label] = float(row["price"])
+                coin_id = row["coin_id"]
+                try:
+                    pool = json.loads(row["features_json"]).get("pool_address")
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                observed = _time(row["observed_at"])
+                if pool == pools[coin_id] and observed and observed <= target:
+                    found.setdefault(coin_id, {}).setdefault(label, (float(row["price"]), observed))
     return found
 
 
@@ -910,12 +920,23 @@ def _with_chain_prices(
                 total_supply=supply, fully_diluted_valuation=quote["price"] * supply
             )
     merged = list(by_pool.values())
-    history = _history_changes([row["id"] for row in merged if row.get("change_h1") is None], at)
+    windows = (("h1", "change_h1"), ("h6", "change_h6"), ("24h", "change_24h"))
+    history = _history_changes(
+        {
+            row["id"]: row["pool_address"]
+            for row in merged
+            if any(row.get(key) is None for _, key in windows)
+        },
+        at,
+    )
     for row in merged:
-        for label, key in (("h1", "change_h1"), ("h6", "change_h6"), ("24h", "change_24h")):
-            before = history.get(row["id"], {}).get(label)
-            if row.get(key) is None and before:
+        for label, key in windows:
+            baseline = history.get(row["id"], {}).get(label)
+            created = _time(row.get("pool_created_at"))
+            if row.get(key) is None and baseline and created and created <= baseline[1]:
+                before, basis_at = baseline
                 row[key] = round((row["price"] / before - 1) * 100, 3)
+                row[f"{key}_basis_at"] = basis_at.isoformat()
     return sorted(merged, key=lambda row: (-(row.get("volume_24h") or 0), row["id"]))
 
 
@@ -1283,8 +1304,47 @@ def _market_states(*, keys: tuple[str, ...] | None = None) -> dict[str, Any]:
     return states
 
 
-def _quote_display(row: dict[str, Any], collected_at: Any, at: datetime) -> dict[str, Any]:
+def _with_pool_change_basis(row: dict[str, Any]) -> dict[str, Any]:
+    """Gate each pool return against the age of the pool when it was measured."""
     row = dict(row)
+    observed = _time(row.get("change_observed_at") or row.get("observed_at"))
+    created = _time(row.get("pool_created_at"))
+    age = (observed - created).total_seconds() if observed and created else None
+    row["pool_age_seconds"] = int(age) if age is not None and age >= 0 else None
+    if not row.get("pool_address") and created is None:
+        row["change_24h_basis"] = (
+            "provider_token_24h" if row.get("change_24h") is not None else None
+        )
+        return row
+    for key, seconds in (
+        ("change_m5", 300),
+        ("change_h1", 3600),
+        ("change_h6", 21600),
+        ("change_24h", 86400),
+    ):
+        baseline = _time(row.get(f"{key}_basis_at"))
+        local_change = row.get("source") == "Solana (Helius)" and not row.get("activity_source")
+        if (
+            age is None
+            or age < seconds
+            or (local_change and baseline is None)
+            or (
+                baseline is not None
+                and (baseline < created or (observed - baseline).total_seconds() < seconds)
+            )
+        ):
+            row[key] = None
+    row["change_observed_at"] = observed.isoformat() if observed else None
+    row["change_24h_basis"] = (
+        ("same_pool_saved_prices" if row.get("change_24h_basis_at") else "provider_pool_24h")
+        if row.get("change_24h") is not None
+        else None
+    )
+    return row
+
+
+def _quote_display(row: dict[str, Any], collected_at: Any, at: datetime) -> dict[str, Any]:
+    row = _with_pool_change_basis(row)
     observed = _time(row.get("observed_at"))
     collected = _time(collected_at)
     row["stale"] = (

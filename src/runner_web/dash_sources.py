@@ -6,15 +6,18 @@ import gzip
 import hashlib
 import io
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlsplit
 
+from runner_watch.edgar import MAX_SEC_RESPONSE_BYTES, EdgarClient, EdgarFiling
 from runner_web.db import connection
+from runner_web.quotes import normalize_ticker
 
 MAX_DOCUMENT_BYTES = 2_000_000
 MAX_PASSAGE_CHARS = 1800
+DOCUMENT_QUEUE = "dash_sec_document:"
 SOURCE_TOOLS = [
     {
         "name": "list_sources",
@@ -60,7 +63,18 @@ def _filing_prefix(url: str) -> str:
     if parsed.hostname not in {"www.sec.gov", "sec.gov"}:
         return ""
     match = re.match(r"^/Archives/edgar/data/\d+/\d+/", parsed.path)
-    return f"https://{parsed.hostname}{match[0]}" if match else ""
+    return f"https://www.sec.gov{match[0]}" if match else ""
+
+
+def _filing_body(url: str) -> bool:
+    if not _filing_prefix(url):
+        return False
+    name = urlsplit(url).path.rsplit("/", 1)[-1].lower()
+    return (
+        name.endswith((".htm", ".html", ".txt", ".xml"))
+        and name not in {"index.htm", "index.html", "filingsummary.xml"}
+        and not name.endswith(("-index.htm", "-index.html", "_index.htm", "_index.html"))
+    )
 
 
 # A raw document is readable only through an approved run for that exact version.
@@ -75,14 +89,14 @@ EXISTS (SELECT 1 FROM ingestion_runs r JOIN source_registry s
 
 
 def list_sources(ticker: str, *, at: datetime | None = None) -> dict[str, Any]:
-    symbol = str(ticker).strip().upper().lstrip("$")
-    if not re.fullmatch(r"[A-Z]{1,6}", symbol):
+    symbol = normalize_ticker(ticker)
+    if not symbol:
         return {"error": "Choose a stock ticker."}
     current = (at or datetime.now(UTC)).isoformat()
     with connection() as database:
         filings = database.execute(
-            "SELECT filing_url,filed_at,form,title FROM sec_filings WHERE ticker=? "
-            "AND filed_at<=? ORDER BY filed_at DESC LIMIT 20",
+            "SELECT accession,filing_url,filed_at,form,title FROM sec_filings WHERE ticker=? "
+            "AND filed_at<=? ORDER BY filed_at DESC,accession DESC LIMIT 20",
             (symbol, current),
         ).fetchall()
         events = database.execute(
@@ -96,6 +110,7 @@ def list_sources(ticker: str, *, at: datetime | None = None) -> dict[str, Any]:
             origins.append(
                 {
                     "url": row["filing_url"],
+                    "accession": row["accession"],
                     "published_at": row["filed_at"],
                     "title": f"{row['form']}: {row['title']}",
                     "prefix": _filing_prefix(row["filing_url"]),
@@ -105,8 +120,8 @@ def list_sources(ticker: str, *, at: datetime | None = None) -> dict[str, Any]:
             for url in (row["source_url"], row["locator"]):
                 origins.append({"url": url, "event_at": row["event_at"], "title": "Source record"})
         origins = [o for o in origins if _safe_url(str(o["url"] or ""))]
-        if not origins:
-            return {"ticker": symbol, "checked_at": current, "sources": []}
+        if not origins and not filings:
+            return {"ticker": symbol, "checked_at": current, "filings": [], "sources": []}
         clauses, values = [], []
         for origin in origins:
             clauses.append("d.source_url=?")
@@ -117,16 +132,20 @@ def list_sources(ticker: str, *, at: datetime | None = None) -> dict[str, Any]:
         rows = database.execute(
             "SELECT d.source,d.source_url,d.content_hash,d.content_type,"
             "d.first_collected_at,d.last_collected_at FROM source_documents d WHERE ("
-            + " OR ".join(clauses)
+            + (" OR ".join(clauses) or "1=0")
             + ") AND "
             + APPROVED_DOCUMENT
-            + " AND d.first_collected_at<=? ORDER BY d.last_collected_at DESC LIMIT 30",
+            + " AND d.first_collected_at<=? "
+            + "ORDER BY CASE WHEN d.source='sec' THEN 0 ELSE 1 END,"
+            "d.last_collected_at DESC LIMIT 60",
             (*values, current),
         ).fetchall()
     sources = []
     for row in rows:
         item = dict(row)
-        if not _safe_url(item["source_url"]):
+        if not _safe_url(item["source_url"]) or (
+            item["source"] == "sec" and not _filing_body(item["source_url"])
+        ):
             continue
         origin = next(
             o
@@ -141,12 +160,93 @@ def list_sources(ticker: str, *, at: datetime | None = None) -> dict[str, Any]:
                 "evidence_id": _identity(item["source_url"], item["content_hash"]),
                 "ticker": symbol,
                 "title": origin["title"],
+                "accession": origin.get("accession"),
                 "published_at": origin.get("published_at"),
                 "event_at": origin.get("event_at"),
                 "checked_at": current,
             }
         )
-    return {"ticker": symbol, "checked_at": current, "sources": sources}
+    filing_status = []
+    queued = []
+    for index, filing in enumerate(filings):
+        accession = filing["accession"]
+        matches = [item["evidence_id"] for item in sources if item["accession"] == accession]
+        status = "ready" if matches else "text_unavailable"
+        if not matches and index < 3 and _filing_prefix(filing["filing_url"]):
+            queued.append((DOCUMENT_QUEUE + accession, accession, current))
+            status = "queued"
+        filing_status.append(
+            {
+                "accession": accession,
+                "form": filing["form"],
+                "title": filing["title"],
+                "published_at": filing["filed_at"],
+                "source_url": filing["filing_url"],
+                "text_status": status,
+                "evidence_ids": matches,
+            }
+        )
+    if queued:
+        with connection() as database:
+            database.executemany(
+                "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
+                "ON CONFLICT DO NOTHING",
+                queued,
+            )
+    return {"ticker": symbol, "checked_at": current, "filings": filing_status, "sources": sources}
+
+
+def archive_queued_filings(client: EdgarClient, *, at: datetime, limit: int = 2) -> int:
+    """Stage requested primary text on the EDGAR worker's existing rate-limited client."""
+    with connection() as database:
+        rows = database.execute(
+            "SELECT w.key,w.updated_at AS eligible_at,f.* FROM worker_state w "
+            "JOIN sec_filings f ON f.accession=w.value "
+            "WHERE w.key>=? AND w.key<? AND w.updated_at<=? ORDER BY w.updated_at,w.key LIMIT ?",
+            (DOCUMENT_QUEUE, DOCUMENT_QUEUE + "~", at.isoformat(), limit),
+        ).fetchall()
+    archived = 0
+    for row in rows:
+        with connection() as database:
+            claimed = database.execute(
+                "UPDATE worker_state SET updated_at=? WHERE key=? AND updated_at=?",
+                ((at + timedelta(hours=6)).isoformat(), row["key"], row["eligible_at"]),
+            ).rowcount
+        if not claimed:
+            continue
+        url = row["filing_url"]
+        if not _filing_prefix(url):
+            continue
+        # EDGAR stores the canonical host under www.sec.gov.
+        url = url.replace("https://sec.gov/", "https://www.sec.gov/", 1)
+        try:
+            if _filing_body(url):
+                client.get_text(url)
+            else:
+                filing = EdgarFiling(
+                    row["accession"],
+                    row["cik"],
+                    row["form"],
+                    row["title"],
+                    "",
+                    row["filed_at"],
+                    url,
+                )
+                url = client.archive_primary_filing(filing)
+        except (OSError, ValueError):
+            continue
+        if url and _filing_body(url):
+            with connection() as database:
+                ready = database.execute(
+                    "SELECT 1 FROM source_documents d WHERE d.source_url=? AND "
+                    + APPROVED_DOCUMENT
+                    + " LIMIT 1",
+                    (url,),
+                ).fetchone()
+                if ready:
+                    database.execute("DELETE FROM worker_state WHERE key=?", (row["key"],))
+                    archived += 1
+    return archived
 
 
 class _Text(HTMLParser):
@@ -156,13 +256,13 @@ class _Text(HTMLParser):
         self.hidden = 0
 
     def handle_starttag(self, tag, attrs):
-        if tag in {"script", "style", "head"}:
+        if tag in {"script", "style", "head", "ix:hidden", "ix:header"}:
             self.hidden += 1
         if tag in {"p", "div", "br", "tr", "li", "h1", "h2", "h3"}:
             self.parts.append("\n")
 
     def handle_endtag(self, tag):
-        if tag in {"script", "style", "head"}:
+        if tag in {"script", "style", "head", "ix:hidden", "ix:header"}:
             self.hidden = max(0, self.hidden - 1)
         if tag in {"p", "div", "tr", "li"}:
             self.parts.append("\n")
@@ -183,23 +283,30 @@ def read_source(reference: dict[str, Any], question: str) -> dict[str, Any]:
         ).fetchone()
     if not row:
         return {"error": "This source version needs approved public access."}
+    sec_filing = row["source"] == "sec" and _filing_body(reference["source_url"])
+    # EDGAR ingestion already caps accepted SEC bodies at this size. Read the
+    # full version for integrity and passage search while keeping the output small.
+    byte_limit = MAX_SEC_RESPONSE_BYTES if sec_filing else MAX_DOCUMENT_BYTES
     raw = bytes(row["content"])
-    if len(raw) > MAX_DOCUMENT_BYTES:
+    if len(raw) > byte_limit:
         return {"error": "This document needs a smaller stored extract."}
     try:
         if row["content_encoding"] == "gzip":
             with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
-                raw = stream.read(MAX_DOCUMENT_BYTES + 1)
+                raw = stream.read(byte_limit + 1)
     except (OSError, EOFError):
         return {"error": "The stored source needs a fresh copy."}
-    if len(raw) > MAX_DOCUMENT_BYTES:
+    if len(raw) > byte_limit:
         return {"error": "This document needs a smaller stored extract."}
     if hashlib.sha256(raw).hexdigest() != reference["content_hash"]:
         return {"error": "This source copy needs its version checked."}
     if "pdf" in str(row["content_type"]).lower():
         return {"error": "This PDF needs a stored text extract."}
     text = raw.decode("utf-8", errors="replace")
-    if "html" in str(row["content_type"]).lower() or "<html" in text[:500].lower():
+    content_type = str(row["content_type"]).lower()
+    if any(kind in content_type for kind in ("html", "xml")) or re.search(
+        r"<(?:html|document)\b", text[:10000], re.IGNORECASE
+    ):
         parser = _Text()
         parser.feed(text)
         text = "".join(parser.parts)
@@ -208,14 +315,17 @@ def read_source(reference: dict[str, Any], question: str) -> dict[str, Any]:
     # Split long paragraphs at word boundaries; the returned offsets expose partial passages.
     chunks = []
     for paragraph in paragraphs:
-        while paragraph:
-            end = min(len(paragraph), MAX_PASSAGE_CHARS)
+        offset = 0
+        while offset < len(paragraph):
+            end = min(len(paragraph), offset + MAX_PASSAGE_CHARS)
             if end < len(paragraph):
-                end = paragraph.rfind(" ", 0, end) or end
-                if end < 1:
-                    end = MAX_PASSAGE_CHARS
-            chunks.append(paragraph[:end])
-            paragraph = paragraph[end:].lstrip()
+                boundary = paragraph.rfind(" ", offset, end)
+                if boundary > offset:
+                    end = boundary
+            chunks.append(paragraph[offset:end])
+            offset = end
+            while offset < len(paragraph) and paragraph[offset].isspace():
+                offset += 1
     terms = set(re.findall(r"[a-z0-9]{3,}", str(question).lower()[:300])) - {
         "the",
         "and",
@@ -230,8 +340,9 @@ def read_source(reference: dict[str, Any], question: str) -> dict[str, Any]:
         "are",
     }
     scores = [len(terms & set(re.findall(r"[a-z0-9]{3,}", chunk.lower()))) for chunk in chunks]
-    ranked = sorted(range(len(chunks)), key=lambda i: (-scores[i], i))
-    anchor = ranked[0] if ranked and scores[ranked[0]] else 0
+    if not chunks:
+        return {"error": "This source version has no readable text."}
+    anchor = max(range(len(chunks)), key=scores.__getitem__)
     # Include neighboring text so qualifications stay beside the selected terms.
     chosen = range(max(0, anchor - 1), min(len(chunks), max(0, anchor - 1) + 3))
     passages = [{"passage": i + 1, "text": chunks[i]} for i in chosen]

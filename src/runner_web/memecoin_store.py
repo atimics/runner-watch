@@ -34,9 +34,16 @@ def with_fast_price(
         seen = datetime.fromisoformat(entry["observed_at"])
         before = datetime.fromisoformat(row["observed_at"]) if row.get("observed_at") else None
         price = float(entry["price"])
-        if price <= 0 or (before is not None and before >= seen):
+        if (
+            price <= 0
+            or (before is not None and before >= seen)
+            or (entry.get("pool_address") and entry["pool_address"] != row.get("pool_address"))
+        ):
             return row, collected_at
         merged = {**row, "price": price, "observed_at": entry["observed_at"]}
+        merged["change_observed_at"] = row.get("change_observed_at") or row.get("observed_at")
+        if row.get("source") != "Solana (Helius)":
+            merged["activity_source"] = row.get("source")
         merged["liquidity_usd"] = entry.get("liquidity_usd", row.get("liquidity_usd"))
         merged["time_basis"] = "chain_read"
         merged["source"] = "Solana (Helius)"
@@ -132,10 +139,11 @@ def save_memecoin_snapshot(
                     **early.get("features", {}),
                     "score": early.get("score"),
                     "state": early.get("state"),
+                    "pool_address": row.get("pool_address"),
                 },
                 allow_nan=False,
             )
-            if early
+            if early or row.get("pool_address")
             else None
         )
         points.append((row["id"], observed, collected, row["price"], run_id, features))

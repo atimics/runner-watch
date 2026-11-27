@@ -517,10 +517,14 @@ def refresh_edgar() -> dict[str, Any]:
     _state("edgar_last_refresh", timestamp)
     _state("edgar_last_error", "")
     _state("edgar_last_new_events", str(len(new_events)))
+    from runner_web.dash_sources import archive_queued_filings
+
+    staged_documents = archive_queued_filings(client, at=datetime.now(UTC))
     return {
         "companies": company_count,
         "feed_filings": len(filings),
         "new_events": len(new_events),
+        "requested_filing_documents_staged": staged_documents,
         "restored_map_filings": restored_map_filings,
         "issuer_facts": int(fact_result.get("facts") or 0),
         "filing_people_staged": int(people_result.get("people_staged") or 0),
