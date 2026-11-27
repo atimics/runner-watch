@@ -300,6 +300,7 @@ from runner_web.quotes import (
 from runner_web.quotes import (
     fresh_quotes,
     market_mark,
+    normalize_ticker,
     refresh_hot_quotes,
     ticker_quote,
 )
@@ -2301,7 +2302,7 @@ def _dash_research_unbacked(text: str, evidence: dict[str, Any]) -> list[str]:
 def _dash_research_action(message: Any, name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "my_standing":
         return {"budget": dash_budget(), "open_calls": dash_open_calls()}
-    ticker = str(args.get("ticker") or "").strip().upper().lstrip("$")
+    ticker = normalize_ticker(args.get("ticker"))
     if name == "make_call":
         return dash_once(message.update_id, name, ticker, lambda: dash_make_call(ticker))
     if name == "close_call":
@@ -2493,8 +2494,8 @@ def _write_telegram_reply(
 
     def act(name: str, args: dict[str, Any]) -> dict[str, Any]:
         if name != "my_standing":
-            ticker = str(args.get("ticker") or "").strip().upper().lstrip("$")
-            if name != plan.mutation or ticker != str(plan.ticker).upper():
+            ticker = normalize_ticker(args.get("ticker"))
+            if name != plan.mutation or ticker != normalize_ticker(plan.ticker):
                 return {"error": "This action is scoped to the planned ticker."}
         return _dash_research_action(message, name, args)
 
@@ -4738,6 +4739,7 @@ def _apply_market_marks(
             change_pct=change,
             quote_time=observed_at.isoformat(),
             mark_source="quote",
+            price_source=mark.get("source"),
             mark_age_seconds=max(0, int((current - observed_at).total_seconds())),
         )
         upgraded += 1
@@ -5096,6 +5098,11 @@ PUBLIC_PULSE_ROW_FIELDS = (
     "quote_time",
     "mark_source",
     "mark_age_seconds",
+    "price_source",
+    "dollar_volume",
+    "recent_dollar_volume",
+    "average_dollar_volume",
+    "captured_at",
     "momentum_15m_pct",
     "relative_volume",
     "section",

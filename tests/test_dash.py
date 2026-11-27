@@ -25,6 +25,7 @@ def _fresh() -> str:
 @pytest.fixture(autouse=True)
 def dash_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dash.db")
+    monkeypatch.setattr("runner_web.quotes._claim_budget", lambda _: False)
     init_db()
 
 
@@ -685,6 +686,7 @@ def test_lookup_keeps_the_quote_fields_together_and_updates_age_text(monkeypatch
         "captured_at": "2026-11-07T01:00:00+00:00",
         "risks": ["quote is about 187m old", "Thin float"],
     }
+    monkeypatch.setattr(telegram_chat, "_utc", lambda: datetime(2026, 11, 7, 11, 4, tzinfo=UTC))
     monkeypatch.setattr(web_main, "_public_ticker_detail_data", lambda _: {"current": current})
     monkeypatch.setattr(
         quotes,
@@ -693,6 +695,7 @@ def test_lookup_keeps_the_quote_fields_together_and_updates_age_text(monkeypatch
             "price": 0.9312,
             "change_pct": change,
             "previous_close": 0.8165,
+            "previous_close_basis": "regular_session",
             "observed_at": "2026-11-07T00:59:00+00:00",
             "age_seconds": 36300,
             "source": "quote",
@@ -704,13 +707,55 @@ def test_lookup_keeps_the_quote_fields_together_and_updates_age_text(monkeypatch
 
     looked = telegram_chat.look_up_ticker("OCGN")
 
-    assert (looked["price"], looked["change_pct"]) == (0.9312, change)
+    assert (looked["price"], looked["change_pct"]) == (0.9312, None)
+    assert looked["historical_change_pct"] == change
+    assert looked["quote_freshness"] == "stale"
     assert looked["previous_close"] == 0.8165
     assert looked["price_as_of"] == "2026-11-07T00:59:00+00:00"
     assert looked["price_age_seconds"] == 36300
     assert looked["risks"] == ["quote is about 605m old", "Thin float"]
     assert looked["assessment_as_of"] == current["captured_at"]
     assert current["risks"][0] == "quote is about 187m old"
+
+
+def test_off_board_share_class_resolves_from_quote_store_and_compares_second_feed(monkeypatch):
+    from runner_web import quotes, telegram_chat
+    from runner_web.dash_research import canonical_node, render_quote_tags
+
+    stamp = (NOW - timedelta(minutes=2)).isoformat()
+    monkeypatch.setattr(telegram_chat, "_utc", lambda: NOW)
+    monkeypatch.setattr(quotes, "_utc", lambda at=None: at or NOW)
+    with connection() as database:
+        quotes._save_quote(
+            database,
+            "BRK-B",
+            {
+                "price": 521.40,
+                "observed_at": stamp,
+                "requested_at": NOW.isoformat(),
+                "previous_close": 520,
+                "previous_close_basis": "regular_session",
+                "change_pct": 0.27,
+                "volume": 10000,
+                "status": "ok",
+                "source": "yahoo",
+            },
+        )
+        database.execute(
+            "INSERT INTO market_bars(source,ticker,interval,bar_time,close,"
+            "first_collected_at,last_collected_at) VALUES('massive','BRK-B','1m',?,521.42,?,?)",
+            (stamp, stamp, stamp),
+        )
+    assert canonical_node("ticker:$brk.b") == "ticker:BRK-B"
+    row = dash.dash_expand("ticker:$brk.b")
+    assert row["known"] and row["quote_as_of"] == stamp
+    assert row["trade_state"] is None
+    assert row["price_source"] == "yahoo" and row["quote_confidence"] == "corroborated"
+    assert row["quote_day_dollar_volume_estimate_usd"] == 5214000
+    assert row["change_pct"] == 0.27
+    tagged, missing = render_quote_tags("[quote:BRK.B]", {"ticker:BRK-B": row})
+    assert not missing
+    assert "$BRK-B $521.4" in tagged and "yahoo · fresh · corroborated" in tagged
 
 
 def test_a_saved_target_comes_back_with_its_result():
@@ -854,13 +899,35 @@ def test_closed_board_carries_each_quotes_time_and_age(monkeypatch):
         },
     )
 
-    board = dash.market_now(at=closed)
+    board = dash.market_now(at=closed, page=1)
 
     assert board["data_state"] == "stored_session"
     assert board["updated_at"] == quoted_at
     assert board["generated_at"] == closed.isoformat()
-    assert board["leaders"][0]["quote_as_of"] == quoted_at
-    assert board["leaders"][0]["price_age_seconds"] == 36420
+    assert not board["leaders"] and board["fresh_names"] == 0
+    assert board["rows"][0]["quote_as_of"] == quoted_at
+    assert board["rows"][0]["price_age_seconds"] == 36420
+    assert board["rows"][0]["change_pct"] is None
+    assert board["rows"][0]["historical_change_pct"] == 34.58
+
+
+def test_dash_board_pages_through_more_than_twenty_names(monkeypatch):
+    universe = [
+        {"ticker": f"X{index}", "quote_time": NOW.isoformat(), "price": 20, "change_pct": 0}
+        for index in range(65)
+    ]
+
+    def pulse(*, limit, offset):
+        return {
+            "rows": universe[offset : offset + limit],
+            "has_more": offset + limit < len(universe),
+        }
+
+    monkeypatch.setattr("runner_web.main._public_pulse_data", pulse)
+    first = dash.market_now(NOW, page=1)
+    second = dash.market_now(NOW, page=2)
+    assert len(first["rows"]) == 50 and first["next_node"] == "board:2"
+    assert len(second["rows"]) == 15 and second["rows"][0]["ticker"] == "X50"
 
 
 def test_the_world_is_one_snapshot_of_everything():
@@ -1044,9 +1111,11 @@ def test_dash_sees_why_a_halt_happened_when_it_reopens_and_what_followed():
 
     tdic = halts["TDIC"]["halts"][0]
     assert tdic["reason"] == "news pending"
-    assert tdic["state"] == "halted, no resume time yet"
+    assert tdic["state"] == "resolution unknown, no resume recorded"
     assert tdic["resumes_at"] is None
-    assert tdic["minutes_halted"] == 10
+    assert tdic["minutes_halted"] is None
+    assert tdic["minutes_since_halt"] == 10
+    assert tdic["resolution"]["feed_gap"] is True
     assert tdic["after_reopen"] is None
 
 
@@ -1082,7 +1151,7 @@ def test_updated_halt_versions_share_one_current_state():
     assert active["payload"]["reason_code"] == "LUDP"
     (entry,) = dash.recent_halts(at=NOW)
     assert entry["halts_today"] == 2
-    assert entry["halts"][0]["state"] == "halted, no resume time yet"
+    assert entry["halts"][0]["state"] == "resolution unknown, no resume recorded"
     assert len(dash.recent_events(at=NOW)) == 1
 
 
@@ -1124,6 +1193,7 @@ def test_unresolved_halts_survive_an_empty_feed_and_the_weekend():
     assert halt["resolution"] == {
         "status": "unresolved",
         "resume_at": None,
+        "feed_gap": True,
         "evidence": "no_source_resume",
     }
     assert halt["carried_over"] is True
@@ -1168,6 +1238,7 @@ def test_halt_first_seen_survives_reason_and_resume_updates():
     assert halt["resolution"] == {
         "status": "resumed",
         "resume_at": "2026-09-11T14:40:00+00:00",
+        "feed_gap": False,
         "evidence": "source_trade_resume_time",
     }
     assert halt["source"] == "nasdaq_trader"
@@ -1209,6 +1280,7 @@ def test_friday_resolved_halts_remain_visible_on_saturday():
     assert halt["resolution"] == {
         "status": "resumed",
         "resume_at": "2026-09-11T14:30:00+00:00",
+        "feed_gap": False,
         "evidence": "source_trade_resume_time",
     }
     assert halt["after_reopen"]["reopen"] == 2.2
@@ -1341,9 +1413,40 @@ def test_dash_sees_live_games_whats_next_with_the_pregame_lean_and_finals():
         "lean": "New York Mets",
         "market_home_win_pct": 55.0,
         "edge_pct": 4.0,
+        "observed_at": (NOW - timedelta(minutes=5)).isoformat(),
+        "market_disagreement_home_pp": 4.0,
     }
     assert sports["finals"][0]["score"] == "CHC 7, NYM 1"
     assert sports["model_record"]["settled"] == 0
+
+
+def test_dash_sports_grades_the_pregame_lean_with_its_observed_line():
+    start = NOW - timedelta(hours=4)
+    seen = start - timedelta(minutes=10)
+    _seed_game("mlb:done", "post", start, 3, 4, "Final")
+    _seed_prediction("mlb:done", seen, 0.59)
+    _seed_prediction("mlb:done", start + timedelta(minutes=1), 0.2, selection="away")
+    with connection() as database:
+        database.execute("UPDATE sports_events SET completed=1 WHERE id='mlb:done'")
+        database.execute(
+            "INSERT INTO sports_odds_snapshots(id,event_id,provider,sportsbook,market,home_odds,"
+            "away_odds,snapshot_hash,observed_at) VALUES"
+            "('early','mlb:done','espn','Book','moneyline',-110,110,'early',?),"
+            "('late','mlb:done','espn','Book','moneyline',-300,200,'late',?)",
+            (seen.isoformat(), (start + timedelta(minutes=2)).isoformat()),
+        )
+        database.execute(
+            "UPDATE sports_predictions SET home_market_probability=0.52381 "
+            "WHERE event_id='mlb:done' AND observed_at=?",
+            (seen.isoformat(),),
+        )
+    sports = dash.sports_now(at=NOW, league="mlb")
+    (final,) = sports["finals"]
+    assert final["model"]["lean"] == "New York Mets" and final["model"]["result"] == "win"
+    assert final["market_line"]["home_odds"] == -110
+    assert final["market_line"]["observed_at"] == seen.isoformat()
+    assert sports["model_record"]["wins"] == sports["model_record"]["priced"] == 1
+    assert sports["model_record"]["roi_pct"] == 90.9
 
 
 def test_an_unknown_league_is_named_rather_than_empty():
@@ -1396,6 +1499,30 @@ def test_dash_sees_the_memecoin_board_movers_and_flags(monkeypatch):
     assert [coin["id"] for coin in coins["top_losers"]] == ["dogecoin"]
     assert coins["flagged"][0]["flags"] == ["Bundled launch"]
     assert coins["calls"] == []
+
+
+def test_young_pool_uses_a_full_shorter_window_and_displays_liquidity():
+    from runner_web.memecoins import _quote_display
+
+    quote = {
+        "id": "coin-a",
+        "symbol": "A",
+        "price": 1,
+        "volume_24h": 100000,
+        "market_cap": None,
+        "pool_address": "pool-a",
+        "liquidity_usd": 25000,
+        "observed_at": NOW.isoformat(),
+        "pool_created_at": (NOW - timedelta(hours=2)).isoformat(),
+        "change_24h": 500,
+        "change_h6": 300,
+        "change_h1": 4,
+    }
+    row = dash._coin(_quote_display(quote, NOW.isoformat(), NOW))
+    assert row["pool_age_seconds"] == 7200
+    assert row["change_24h_pct"] is None and row["change_24h_basis"] is None
+    assert row["change_window"] == "1h" and row["change_window_pct"] == 4
+    assert row["liquidity_usd"] == 25000
 
 
 def test_a_disabled_memecoin_feed_says_so(monkeypatch):

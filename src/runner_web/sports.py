@@ -40,7 +40,6 @@ from runner_web.odds_api import (
     Quota,
     apply_moneylines,
     can_spend,
-    clear_event_odds,
     fetch_moneylines,
     last_recorded_quota,
     mark_refresh_attempt,
@@ -214,7 +213,17 @@ def normalize_event(league: str, event: dict[str, Any]) -> dict[str, Any] | None
     home = _team(home_raw)
     away = _team(away_raw)
     odds_list = competition.get("odds") or []
-    odds = odds_list[0] if odds_list else {}
+    odds = next(
+        (
+            market
+            for market in odds_list
+            if all(
+                _american(_close_value((market.get("moneyline") or {}).get(side) or {}, "odds"))
+                for side in ("home", "away")
+            )
+        ),
+        odds_list[0] if odds_list else {},
+    )
     moneyline = odds.get("moneyline") or {}
     home_market = moneyline.get("home") or {}
     away_market = moneyline.get("away") or {}
@@ -1967,7 +1976,7 @@ def refresh_sports(at: datetime | None = None) -> dict[str, Any]:
         try:
             events = fetch_league(league, at)
             if odds_config.active:
-                clear_event_odds(events)
+                # Keep scoreboard prices for events without a usable Odds API match.
                 decision = refresh_decision(
                     league,
                     events,

@@ -544,8 +544,62 @@ def test_document_version_and_approval_are_both_required():
 def test_document_size_budget_covers_compressed_content(monkeypatch):
     store_source(text="<p>" + "Large document. " * 1000 + "</p>")
     ref = dash_sources.list_sources("TEST")["sources"][0]
-    monkeypatch.setattr(dash_sources, "MAX_DOCUMENT_BYTES", 1000)
+    monkeypatch.setattr(dash_sources, "MAX_SEC_RESPONSE_BYTES", 1000)
     assert "smaller stored extract" in dash_sources.read_source(ref, "document")["error"]
+
+
+def test_large_sec_body_returns_small_passages_from_the_verified_version(monkeypatch):
+    monkeypatch.setattr(dash_sources, "MAX_DOCUMENT_BYTES", 1000)
+    store_source(
+        text="<html><p>"
+        + "Background. " * 1000
+        + "</p><p>Milestone payment: $2 million.</p><p>Subject to regulatory approval.</p></html>"
+    )
+    listing = dash_sources.list_sources("TEST")
+    assert listing["filings"][0]["text_status"] == "ready"
+    read = dash_sources.read_source(listing["sources"][0], "milestone payment")
+    assert read["query_matched"] and read["partial"]
+    assert len(read["passages"]) == 3
+    assert "regulatory approval" in read["passages"][-1]["text"]
+
+
+def test_filing_lookup_queues_missing_primary_text_and_worker_makes_it_readable():
+    url = store_source()
+    with connection() as database:
+        database.execute("DELETE FROM source_documents")
+    first = dash_sources.list_sources("TEST", at=NOW)
+    assert first["sources"] == [] and first["filings"][0]["text_status"] == "queued"
+
+    class Edgar:
+        def archive_primary_filing(self, filing):
+            assert filing.accession == "TEST"
+            return store_source()
+
+    assert dash_sources.archive_queued_filings(Edgar(), at=NOW) == 1
+    assert dash_sources.archive_queued_filings(Edgar(), at=NOW) == 0
+    ready = dash_sources.list_sources("TEST", at=NOW)
+    assert ready["filings"][0]["text_status"] == "ready"
+    assert dash_sources.read_source(ready["sources"][0], "payment")["source_url"] == url
+
+
+def test_reply_quote_tag_uses_stored_source_age_and_confidence():
+    result, _ = run(
+        [
+            turn(("reply", {"text": "Saved print: [quote:TEST]"})),
+        ],
+        evidence={
+            "ticker:TEST": {
+                "known": True,
+                "price": 2,
+                "quote_as_of": NOW.isoformat(),
+                "price_source": "yahoo",
+                "quote_freshness": "stale",
+                "quote_confidence": "uncorroborated",
+            }
+        },
+    )
+    assert "$TEST $2" in result["text"]
+    assert "UTC · yahoo · stale · uncorroborated" in result["text"]
 
 
 def test_waiting_research_leaves_room_for_new_questions():

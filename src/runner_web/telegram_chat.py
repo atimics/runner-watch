@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from runner_web.quotes import normalize_ticker
+
 LOG = logging.getLogger(__name__)
 
 ENGAGEMENT_REPLIES = max(1, int(os.getenv("TELEGRAM_ENGAGEMENT_REPLIES", "3")))
@@ -39,11 +41,11 @@ TURNS_PER_HOUR = max(1, int(os.getenv("TELEGRAM_TURNS_PER_HOUR", "60")))
 MAX_TEXT_CHARS = 3500
 MAX_UPDATE_ATTEMPTS = 3
 
-TICKER_PATTERN = re.compile(r"\$([A-Za-z]{1,6})\b")
+TICKER_PATTERN = re.compile(r"\$([A-Za-z][A-Za-z0-9]*(?:[.-][A-Za-z0-9]+)*)\b")
 # A bare word only counts as a ticker when it is written in capitals and the
 # market's own company map knows the symbol. "what is MSGM doing" then prefetches
 # the same lookup "$MSGM" always did, while ordinary prose stays prose.
-BARE_TICKER_PATTERN = re.compile(r"\b([A-Z]{3,6})\b")
+BARE_TICKER_PATTERN = re.compile(r"\b([A-Z0-9]+(?:[.-][A-Z0-9]+)*)\b")
 TICKER_STOPWORDS = frozenset(
     {
         "CEO",
@@ -103,15 +105,18 @@ def resolve_tickers(database: Any, text: str, *, limit: int | None = None) -> li
         return []
     found: list[str] = []
     for match in TICKER_PATTERN.findall(text):
-        symbol = match.upper()
-        if symbol not in found:
+        symbol = normalize_ticker(match)
+        if symbol and symbol not in found:
             found.append(symbol)
     # In trial discussions AMD also means age-related macular degeneration.
     bare_text = re.sub(r"\b(?:wet|dry)\s+AMD\b", "", text, flags=re.IGNORECASE)
-    for token in BARE_TICKER_PATTERN.findall(bare_text):
+    for match in BARE_TICKER_PATTERN.findall(bare_text):
         if len(found) >= budget:
             break
-        if token in TICKER_STOPWORDS or token in found:
+        token = normalize_ticker(match)
+        if not token or token in TICKER_STOPWORDS or token in found:
+            continue
+        if len(token) < 3 and text.strip().rstrip("?.!") != match:
             continue
         known = database.execute(
             "SELECT 1 FROM sec_companies WHERE UPPER(ticker)=? LIMIT 1",
@@ -127,7 +132,9 @@ ADDRESS_PATTERN = re.compile(
     r"(?<![1-9A-HJ-NP-Za-km-z])[1-9A-HJ-NP-Za-km-z]{32,44}(?![1-9A-HJ-NP-Za-km-z])"
 )
 ADDRESS_TAIL_PATTERN = re.compile(r"[,.;:!?)]*[ \t]*")
-REPLY_TOKEN_PATTERN = re.compile(ADDRESS_PATTERN.pattern + r"|\$[A-Za-z]{1,6}\b|\b[A-Z]{3,6}\b")
+REPLY_TOKEN_PATTERN = re.compile(
+    ADDRESS_PATTERN.pattern + "|" + TICKER_PATTERN.pattern + "|" + BARE_TICKER_PATTERN.pattern
+)
 
 
 def reply_addresses(text: str) -> list[str]:
@@ -191,8 +198,8 @@ def format_reply(
             parts.append(rendered)
             cursor = tail.end()
             continue
-        if token.lstrip("$").upper() in tickers and (token.startswith("$") or token.isupper()):
-            symbol = token.lstrip("$").upper()
+        symbol = normalize_ticker(token)
+        if symbol in tickers and (token.startswith("$") or token.isupper()):
             url = f"{base}/stock/{symbol}"
             rendered = f'<a href="{url}">{html.escape(token)}</a>'
             pages.append(("stock", url))
@@ -305,7 +312,13 @@ def parse_update(
         text=text.strip()[:MAX_TEXT_CHARS],
         addressed=chat["type"] == "private" or mentioned or reply_to_bot,
         reply_to_bot=reply_to_bot,
-        tickers=tuple(dict.fromkeys(match.upper() for match in TICKER_PATTERN.findall(text))),
+        tickers=tuple(
+            dict.fromkeys(
+                symbol
+                for match in TICKER_PATTERN.findall(text)
+                if (symbol := normalize_ticker(match))
+            )
+        ),
         sent_at=sent_at,
         chat_type=chat["type"],
         addresses=addresses,
@@ -538,7 +551,7 @@ TOOL_SCHEMA = (
             "carries the session, the board summary, new runners, recent events, "
             "community activity, your own book and what changed. Use this when you "
             "need the detail behind one of those nodes before you say anything. "
-            "Nodes: board, runners, events, halts, community, sector:<name>, "
+            "Nodes: board, board:<page>, runners, events, halts, community, sector:<name>, "
             "sports, sports:<league>, memecoins, coin:<contract address or id>, "
             "report:pre, report:post, ticker:<SYM>."
         ),
@@ -604,44 +617,59 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
     """
 
     from runner_web.main import _public_ticker_detail_data
-    from runner_web.quotes import market_mark
+    from runner_web.quotes import corroborate_quote, dash_quote_fields, market_mark
 
-    symbol = str(ticker).strip().upper().lstrip("$")
+    symbol = normalize_ticker(ticker)
     if not symbol:
         return {"ticker": ticker, "known": False}
-    detail = _public_ticker_detail_data(symbol)
-    if not detail:
-        return {"ticker": symbol, "known": False}
-    current = detail.get("current") or {}
+    detail = _public_ticker_detail_data(symbol) or {}
     mark = market_mark(symbol)
+    if not detail and mark is None:
+        return {"ticker": symbol, "known": False, "quote_freshness": "unavailable"}
+    current = detail.get("current") or {}
     quote = mark if mark is not None else current
-    observed_at = quote.get("observed_at") or quote.get("quote_time")
-    age = quote.get("age_seconds")
-    if age is None and observed_at:
-        try:
-            age = max(0, int((_utc() - _utc(datetime.fromisoformat(observed_at))).total_seconds()))
-        except (TypeError, ValueError):
-            pass
+    price_fields = dash_quote_fields(quote, at=_utc(), lane=(mark or {}).get("source", "scan"))
+    price_fields.update(corroborate_quote(symbol, price_fields))
     risks = [
         str(risk)
         for risk in current.get("risks") or []
         if not str(risk).startswith("quote is about ")
     ]
-    if age is not None and age > 15 * 60:
-        risks.insert(0, f"quote is about {age / 60:.0f}m old")
+    if price_fields["quote_freshness"] == "stale":
+        risks.insert(0, f"quote is about {price_fields['price_age_seconds'] / 60:.0f}m old")
     gate = detail.get("evidence_gate") or {}
+    basis = quote.get("previous_close_basis")
+    if not mark and current.get("quote_time"):
+        basis = "regular_session"
+    halt = (detail.get("external_context") or {}).get("active_halt")
+    resume_at = ((halt or {}).get("payload") or {}).get("trade_resume_at")
+    halt_status = (
+        "resume_scheduled"
+        if resume_at
+        else "resolution_unknown"
+        if halt
+        else "no_unresolved_halt_reported"
+        if detail
+        else "unavailable"
+    )
+    volume = quote.get("volume")
+    quoted_dollar_volume = (
+        volume * price_fields["price"]
+        if isinstance(volume, (int, float)) and volume >= 0 and price_fields["price"] is not None
+        else None
+    )
     return {
         "ticker": symbol,
         "known": True,
         "company": detail.get("company"),
-        "price": quote.get("price"),
-        "price_as_of": observed_at,
-        "price_age_seconds": age,
-        "price_source": (mark or {}).get("source", "scan"),
-        "change_pct": quote.get("change_pct"),
+        **price_fields,
+        "price_as_of": price_fields["quote_as_of"],
         "previous_close": quote.get("previous_close"),
-        "change_basis": "previous regular-session close",
+        "change_basis": "previous regular-session close" if basis == "regular_session" else basis,
         "assessment_as_of": current.get("captured_at"),
+        "session_dollar_volume_estimate_usd": current.get("dollar_volume"),
+        "quote_day_dollar_volume_estimate_usd": quoted_dollar_volume,
+        "average_daily_dollar_volume_estimate_usd": current.get("average_dollar_volume"),
         "assessment_quote_as_of": current.get("quote_time"),
         "relative_volume": current.get("relative_volume"),
         "momentum_15m_pct": current.get("momentum_15m_pct"),
@@ -655,7 +683,8 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         "signals": list(current.get("signals") or [])[:4],
         "risks": risks[:4],
         "model_view": _model_view(detail),
-        "halted": bool((detail.get("external_context") or {}).get("active_halt")),
+        "halt_status": halt_status,
+        "halt_resume_at": resume_at,
         "filings": _recent_filings(detail),
         "research_report": _research_report(symbol),
         "avatar_comments": _avatar_comments(symbol),
@@ -777,6 +806,7 @@ def _recent_filings(detail: dict[str, Any]) -> list[dict[str, Any]]:
             "form": event.get("form"),
             "filed_at": event.get("filed_at"),
             "what": event.get("evidence_text") or event.get("title"),
+            "source_url": event.get("filing_url"),
         }
         for event in (detail.get("events") or [])[:3]
     ]

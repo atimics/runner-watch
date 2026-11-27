@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import threading
 from collections import deque
 from datetime import UTC, date, datetime, timedelta
@@ -26,6 +27,8 @@ QUOTE_TTL_SECONDS = max(5, int(os.getenv("TICKER_QUOTE_TTL_SECONDS", "30")))
 QUOTE_CALLS_PER_MINUTE = max(1, int(os.getenv("TICKER_QUOTE_CALLS_PER_MINUTE", "40")))
 QUOTE_TIMEOUT_SECONDS = max(2.0, float(os.getenv("TICKER_QUOTE_TIMEOUT_SECONDS", "8")))
 QUOTE_MAX_AGE = timedelta(minutes=int(os.getenv("TICKER_QUOTE_MAX_AGE_MINUTES", "30")))
+DASH_QUOTE_MAX_AGE_SECONDS = 60 * max(1, int(os.getenv("DASH_QUOTE_MAX_AGE_MINUTES", "15")))
+_TICKER = re.compile(r"(?=.{1,12}$)[A-Z0-9]+(?:-[A-Z0-9]+)*")
 
 _BUDGET_LOCK = threading.Lock()
 _BUDGET_CALLS: deque[datetime] = deque()
@@ -43,6 +46,71 @@ def _stamp(value: Any) -> datetime | None:
         return _utc(datetime.fromisoformat(str(value).replace("Z", "+00:00")))
     except (TypeError, ValueError):
         return None
+
+
+def normalize_ticker(value: Any) -> str:
+    symbol = str(value or "").strip().upper().removeprefix("$").replace(".", "-")
+    return symbol if _TICKER.fullmatch(symbol) and any(c.isalpha() for c in symbol) else ""
+
+
+def dash_quote_fields(quote: dict[str, Any], *, at: datetime, lane: str) -> dict[str, Any]:
+    """A stored print and its price basis. Only timely moves count as current."""
+    from runner_web.attention import finite_number
+
+    price = finite_number(quote.get("price"))
+    if price is not None and price <= 0:
+        price = None
+    observed = _stamp(quote.get("observed_at") or quote.get("quote_time"))
+    age = (at - observed).total_seconds() if price is not None and observed else None
+    if age is None:
+        freshness = "unavailable" if price is None else "timestamp_unknown"
+    elif age < 0:
+        freshness = "timestamp_unknown"
+    else:
+        freshness = "stale" if age > DASH_QUOTE_MAX_AGE_SECONDS else "fresh"
+    source = quote.get("price_source") or ("yahoo" if lane == "scan" else None)
+    return {
+        "price": price,
+        "quote_as_of": observed.isoformat() if observed else None,
+        "price_age_seconds": int(age) if age is not None and age >= 0 else None,
+        "price_source": source,
+        "price_lane": lane if price is not None else None,
+        "quote_freshness": freshness,
+        "quote_confidence": ("uncorroborated" if source else "source_unknown") if price else None,
+        "change_pct": quote.get("change_pct") if freshness == "fresh" else None,
+        "historical_change_pct": quote.get("change_pct") if freshness == "stale" else None,
+    }
+
+
+def corroborate_quote(ticker: str, quote: dict[str, Any]) -> dict[str, Any]:
+    """Compare a saved close from the same interval and a different provider."""
+    source, observed, price = (quote[key] for key in ("price_source", "quote_as_of", "price"))
+    if not source or not observed or not price or quote["quote_freshness"] == "timestamp_unknown":
+        return {}
+    interval = "5m" if quote["price_lane"] == "scan" else "1m"
+    with connection() as database:
+        matches = database.execute(
+            "SELECT source,close FROM market_bars WHERE ticker=? AND bar_time=? "
+            "AND interval=? AND source<>? AND source IN ('yahoo','massive') ORDER BY source",
+            (ticker, observed, interval, source),
+        ).fetchall()
+    for match in matches:
+        other = _positive_price(match["close"])
+        if other is not None:
+            return {
+                "quote_confidence": (
+                    "corroborated"
+                    if math.isclose(price, other, rel_tol=0.005)
+                    else "sources_differ"
+                ),
+                "corroboration": {
+                    "source": match["source"],
+                    "price": other,
+                    "observed_at": observed,
+                    "interval": interval,
+                },
+            }
+    return {}
 
 
 def _claim_budget(now: datetime) -> bool:
@@ -89,14 +157,24 @@ def _save_quote(database: Any, ticker: str, values: dict[str, Any]) -> None:
         "collected_at",
     )
     assignments = ",".join(f"{name}=excluded.{name}" for name in columns)
-    database.execute(
+    saved = database.execute(
         f"""
         INSERT INTO ticker_quotes(ticker,{",".join(columns)})
         VALUES({",".join("?" for _ in range(len(columns) + 1))})
         ON CONFLICT(ticker) DO UPDATE SET {assignments}
+        WHERE ticker_quotes.status<>'ok'
+           OR (excluded.status='ok' AND (
+               ticker_quotes.observed_at IS NULL OR excluded.observed_at>=ticker_quotes.observed_at
+           ))
         """,
         (ticker, *(values.get(name) for name in columns)),
     )
+    if not saved.rowcount:
+        database.execute(
+            "UPDATE ticker_quotes SET requested_at=?,last_error=? "
+            "WHERE ticker=? AND (requested_at IS NULL OR requested_at<=?)",
+            (values["requested_at"], values.get("last_error"), ticker, values["requested_at"]),
+        )
 
 
 def _change_pct(price: Any, previous_close: Any) -> float | None:
@@ -193,20 +271,12 @@ def ticker_quote(
         _INFLIGHT.add(symbol)
     try:
         values = _fetch_quote(symbol, now)
+        with connection() as database:
+            _save_quote(database, symbol, values)
+            saved = _stored_quote(database, symbol)
     finally:
         with _INFLIGHT_LOCK:
             _INFLIGHT.discard(symbol)
-    if values["status"] != "ok" and stored and stored.get("status") == "ok":
-        with connection() as database:
-            database.execute(
-                "UPDATE ticker_quotes SET requested_at=?,last_error=? WHERE ticker=?",
-                (now.isoformat(), values.get("last_error"), symbol),
-            )
-        refreshed = {**stored, "requested_at": now.isoformat()}
-        return _public_quote(refreshed, now)
-    with connection() as database:
-        _save_quote(database, symbol, values)
-        saved = _stored_quote(database, symbol)
     return _public_quote(saved, now)
 
 
@@ -394,13 +464,17 @@ def _price_observations(
                 "observed_at": observed_at,
                 "price": price,
                 "source": source,
+                "price_source": row["price_source"],
                 "change_pct": row["change_pct"],
                 "previous_close": row["previous_close"],
+                "previous_close_basis": row["previous_close_basis"],
+                "volume": row["volume"],
             }
         )
 
     quote = database.execute(
-        "SELECT price,observed_at,change_pct,previous_close FROM ticker_quotes "
+        "SELECT price,observed_at,change_pct,previous_close,previous_close_basis,volume,"
+        "source AS price_source FROM ticker_quotes "
         "WHERE ticker=? AND status='ok'",
         (symbol,),
     ).fetchone()
@@ -408,7 +482,9 @@ def _price_observations(
         offer(quote["price"], quote["observed_at"], "quote", quote)
     snapshot = database.execute(
         """
-        SELECT price,quote_time,change_pct,NULL AS previous_close FROM scan_snapshots
+        SELECT price,quote_time,change_pct,NULL AS previous_close,NULL AS volume,
+               'regular_session' AS previous_close_basis,'yahoo' AS price_source
+        FROM scan_snapshots
         WHERE ticker=? ORDER BY captured_at DESC LIMIT 1
         """,
         (symbol,),

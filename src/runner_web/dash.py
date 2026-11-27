@@ -99,7 +99,7 @@ def dash_wallet(at: datetime | None = None) -> dict[str, Any]:
     return wallet
 
 
-def market_now(at: datetime | None = None) -> dict[str, Any]:
+def market_now(at: datetime | None = None, *, page: int | None = None) -> dict[str, Any]:
     """What is going on right now, in the terms the board already uses.
 
     This is assembled from stored scanner output and the frozen session reports
@@ -110,11 +110,24 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
     from runner_web.main import _public_pulse_data
     from runner_web.market_clock import market_clock
     from runner_web.market_reports import market_reports_overview
+    from runner_web.quotes import DASH_QUOTE_MAX_AGE_SECONDS, dash_quote_fields
 
     current = at or datetime.now(UTC)
     clock = market_clock(current)
-    board = _public_pulse_data(limit=20)
-    rows = list(board.get("rows") or [])
+    page_size = 50
+    board = _public_pulse_data(limit=page_size, offset=((page or 1) - 1) * page_size)
+    rows = [
+        {
+            "ticker": row.get("ticker"),
+            "company": row.get("company"),
+            **dash_quote_fields(row, at=current, lane=row.get("mark_source") or "scan"),
+            "relative_volume": row.get("relative_volume"),
+            "session_dollar_volume_estimate_usd": row.get("dollar_volume"),
+            "liquidity_as_of": row.get("feature_as_of") or row.get("captured_at"),
+            "pulse_label": row.get("pulse_label"),
+        }
+        for row in board.get("rows") or []
+    ]
     changes = [
         float(row["change_pct"]) for row in rows if isinstance(row.get("change_pct"), (int, float))
     ]
@@ -123,8 +136,7 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
         key=lambda row: float(row["change_pct"]),
         reverse=True,
     )
-    overview = market_reports_overview(at, history_limit=0)
-    featured = overview.get("featured")
+    featured = market_reports_overview(current, history_limit=0).get("featured")
     return {
         "session": clock["label"],
         "session_note": clock["data_note"],
@@ -139,33 +151,18 @@ def market_now(at: datetime | None = None) -> dict[str, Any]:
             else clock["data_note"]
         ),
         "board_size": len(rows),
+        "scanner_names": (board.get("stats") or {}).get("runners", len(rows)),
+        "priced_names": sum(row["price"] is not None for row in rows),
+        "fresh_names": sum(row["quote_freshness"] == "fresh" for row in rows),
+        "quote_max_age_minutes": DASH_QUOTE_MAX_AGE_SECONDS // 60,
+        "next_node": f"board:{(page or 1) + 1}" if board.get("has_more") else None,
+        **({"page": page, "rows": rows} if page is not None else {}),
         "green": sum(value > 0 for value in changes),
         "red": sum(value < 0 for value in changes),
         "average_change_pct": round(sum(changes) / len(changes), 2) if changes else None,
         "updated_at": board.get("updated_at"),
-        "leaders": [
-            {
-                "ticker": row.get("ticker"),
-                "company": row.get("company"),
-                "change_pct": row.get("change_pct"),
-                "relative_volume": row.get("relative_volume"),
-                "price": row.get("price"),
-                "quote_as_of": row.get("quote_time"),
-                "price_age_seconds": (
-                    max(0, int((current - stamp).total_seconds()))
-                    if (stamp := _when(row.get("quote_time")))
-                    else None
-                ),
-                "price_source": row.get("mark_source", "scan"),
-                "pulse_label": row.get("pulse_label"),
-            }
-            for row in movers[:5]
-        ],
-        "laggards": [
-            {"ticker": row.get("ticker"), "change_pct": row.get("change_pct")}
-            for row in movers[-3:][::-1]
-            if float(row.get("change_pct") or 0) < 0
-        ],
+        "leaders": [row for row in movers[:5] if row["change_pct"] > 0],
+        "laggards": [row for row in reversed(movers[-3:]) if row["change_pct"] < 0],
         "latest_report": (
             {
                 "label": featured.get("label"),
@@ -189,9 +186,17 @@ def sector_now(sector: str | None = None, at: datetime | None = None) -> dict[st
     """
 
     from runner_web.main import _public_pulse_data
+    from runner_web.quotes import dash_quote_fields
     from runner_web.sectors import sector_board
 
-    rows = list((_public_pulse_data(limit=50)).get("rows") or [])
+    current = at or datetime.now(UTC)
+    rows = [
+        {
+            **row,
+            **dash_quote_fields(row, at=current, lane=row.get("mark_source") or "scan"),
+        }
+        for row in _public_pulse_data(limit=50).get("rows") or []
+    ]
     with connection() as database:
         board = sector_board(database, rows)
     if sector:
@@ -581,6 +586,7 @@ def session_report(which: str | None = None) -> dict[str, Any]:
 
 WORLD_NODES = (
     "board",
+    "board:<page>",
     "runners",
     "events",
     "halts",
@@ -887,11 +893,7 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
             carried_over = halt["halted_at"] < day_start
             if resumed_at is None:
                 resolution = "unresolved"
-                state = (
-                    "resolution unknown, no resume recorded"
-                    if carried_over
-                    else "halted, no resume time yet"
-                )
+                state = "resolution unknown, no resume recorded"
             elif resumed_at > current:
                 resolution = "scheduled"
                 state = "resume scheduled"
@@ -915,13 +917,14 @@ def recent_halts(limit: int = 8, at: datetime | None = None) -> list[dict[str, A
                     "resolution": {
                         "status": resolution,
                         "resume_at": resumed_at.isoformat() if resumed_at else None,
+                        "feed_gap": resumed_at is None,
                         "evidence": (
                             "source_trade_resume_time" if resumed_at else "no_source_resume"
                         ),
                     },
                     "minutes_halted": (
                         None
-                        if carried_over and resumed_at is None
+                        if resumed_at is None
                         else round(
                             (
                                 min(resumed_at or current, current) - halt["halted_at"]
@@ -1003,7 +1006,38 @@ def _eastern_time(value: Any) -> str | None:
     return moment.astimezone(EASTERN).strftime("%a %H:%M ET") if moment else None
 
 
-def _game(row: dict[str, Any], prediction: dict[str, Any] | None) -> dict[str, Any]:
+def _game_outcome(row: dict[str, Any], selection: str) -> str | None:
+    home, away = row.get("home_score"), row.get("away_score")
+    if (
+        not row.get("completed")
+        or home is None
+        or away is None
+        or selection not in {"home", "away"}
+    ):
+        return None
+    if not (home or away):
+        return None
+    if home == away:
+        return "push"
+    return "win" if (home > away) == (selection == "home") else "loss"
+
+
+DASH_SPORTS_PREDICTION = """
+SELECT p.id FROM sports_predictions p
+WHERE p.event_id=e.id AND p.observed_at<=e.start_time AND p.observed_at<=?
+ORDER BY p.observed_at DESC,p.id DESC LIMIT 1
+"""
+DASH_SPORTS_LINE = """
+SELECT o.id FROM sports_odds_snapshots o
+WHERE o.event_id=e.id AND o.observed_at<=e.start_time AND o.observed_at<={cutoff}
+  AND o.home_odds<>0 AND o.away_odds<>0
+ORDER BY o.observed_at DESC,o.id DESC LIMIT 1
+"""
+
+
+def _game(row: dict[str, Any]) -> dict[str, Any]:
+    from runner_web.sports import no_vig_probabilities
+
     away = str(row["away_abbreviation"] or row["away_team_name"])
     home = str(row["home_abbreviation"] or row["home_team_name"])
     game: dict[str, Any] = {
@@ -1014,24 +1048,98 @@ def _game(row: dict[str, Any], prediction: dict[str, Any] | None) -> dict[str, A
         "home": {"name": row["home_team_name"], "record": row["home_record"]},
         "starts_at": _eastern_time(row["start_time"]),
         "status": row["status_detail"],
+        "market_line": {"status": "unavailable"},
     }
+    if row["line_as_of"]:
+        market_home, market_away = no_vig_probabilities(row["home_odds"], row["away_odds"])
+        game["market_line"] = {
+            "status": "available",
+            "provider": row["line_provider"],
+            "sportsbook": row["sportsbook"],
+            "observed_at": row["line_as_of"],
+            "home_odds": row["home_odds"],
+            "away_odds": row["away_odds"],
+            "home_win_pct_no_vig": round(market_home * 100, 1),
+            "away_win_pct_no_vig": round(market_away * 100, 1),
+        }
     if row["status"] != "pre" and row["away_score"] is not None and row["home_score"] is not None:
         game["score"] = f"{away} {row['away_score']:g}, {home} {row['home_score']:g}"
-    if prediction:
-        side = str(prediction["selection"])
+    if row["prediction_as_of"]:
+        side = str(row["selection"])
         model = {
-            "home_win_pct": round(float(prediction["home_probability"]) * 100, 1),
-            "signal": prediction["signal"],
+            "home_win_pct": round(float(row["home_probability"]) * 100, 1),
+            "signal": row["signal"],
             "lean": row[f"{side}_team_name"] if side in {"home", "away"} else "pass",
+            "observed_at": row["prediction_as_of"],
         }
-        if prediction["home_market_probability"] is not None:
-            model["market_home_win_pct"] = round(
-                float(prediction["home_market_probability"]) * 100, 1
+        if (probability := row["home_market_probability"]) is not None:
+            model["market_home_win_pct"] = round(float(probability) * 100, 1)
+            model["market_disagreement_home_pp"] = round(
+                (float(row["home_probability"]) - float(probability)) * 100, 1
             )
-        if prediction["edge"] is not None:
-            model["edge_pct"] = round(float(prediction["edge"]) * 100, 1)
+        if row["edge"] is not None:
+            model["edge_pct"] = round(float(row["edge"]) * 100, 1)
+        if result := _game_outcome(row, side):
+            model["result"] = result
         game["model"] = model
     return game
+
+
+def _sports_lean_record(database: Any, current: datetime, league: str | None) -> dict[str, Any]:
+    from runner_web.odds_api import CONSENSUS_SPORTSBOOK
+    from runner_web.sports import HISTORY_TARGET_DAYS, _american_profit, no_vig_probabilities
+
+    cutoff = (current - timedelta(days=HISTORY_TARGET_DAYS)).isoformat()
+    rows = database.execute(
+        f"""
+        SELECT e.completed,e.home_score,e.away_score,p.selection,p.home_market_probability,
+               o.home_odds,o.away_odds,o.sportsbook
+        FROM sports_events e
+        JOIN sports_predictions p ON p.id=({DASH_SPORTS_PREDICTION})
+        LEFT JOIN sports_odds_snapshots o ON o.id=(
+            {DASH_SPORTS_LINE.format(cutoff="p.observed_at")}
+        )
+        WHERE e.start_time>=? AND e.completed=1 AND p.selection IN ('away','home')
+            AND e.status='post' AND e.season_type NOT IN ('preseason','pre-season')
+            {"AND e.league=?" if league else ""}
+        """,
+        (current.isoformat(), cutoff, *((league,) if league else ())),
+    ).fetchall()
+    results = {"win": 0, "loss": 0, "push": 0}
+    lined = priced = 0
+    units = 0.0
+    for row in rows:
+        side = row["selection"]
+        result = _game_outcome(dict(row), side)
+        if result is None:
+            continue
+        results[result] += 1
+        prediction_market = row["home_market_probability"]
+        if prediction_market is None:
+            continue
+        lined += 1
+        line_market, _ = no_vig_probabilities(row["home_odds"], row["away_odds"])
+        if (
+            line_market is None
+            or abs(line_market - prediction_market) > 0.001
+            or row["sportsbook"] == CONSENSUS_SPORTSBOOK
+        ):
+            continue
+        profit = _american_profit(row[f"{side}_odds"])
+        if profit is not None:
+            priced += 1
+            units += profit if result == "win" else -1.0 if result == "loss" else 0.0
+    return {
+        "basis": "Last saved pregame model lean per completed regular-season or playoff game",
+        "window_start": cutoff,
+        "settled": sum(results.values()),
+        "wins": results["win"],
+        "losses": results["loss"],
+        "pushes": results["push"],
+        "paired_model_and_market": lined,
+        "priced": priced,
+        "roi_pct": round(units / priced * 100, 1) if priced else None,
+    }
 
 
 def sports_now(
@@ -1043,11 +1151,13 @@ def sports_now(
     Sports board uses, so a lean is never rewritten after the game begins.
     """
 
-    from runner_web.sports import LEAGUES, sports_pick_stats
+    from runner_web.sports import LEAGUES
 
     current = at or datetime.now(UTC)
     cap = max(1, min(int(limit), 20))
     parameters: list[Any] = [
+        current.isoformat(),
+        current.isoformat(),
         (current - timedelta(hours=12)).isoformat(),
         (current + timedelta(hours=24)).isoformat(),
     ]
@@ -1056,19 +1166,25 @@ def sports_now(
         key = league.strip().lower()
         if key not in LEAGUES:
             return {"error": "unknown league", "leagues": sorted(LEAGUES)}
-        league_filter = " AND league=?"
+        league_filter = " AND e.league=?"
         parameters.append(key)
+        league = key
     with connection() as database:
         rows = [
             dict(row)
             for row in database.execute(
                 f"""
-                SELECT id,league,start_time,status,status_detail,
-                       home_team_name,home_abbreviation,home_record,home_score,
-                       away_team_name,away_abbreviation,away_record,away_score
-                FROM sports_events
-                WHERE start_time>=? AND start_time<=?{league_filter}
-                ORDER BY start_time,id LIMIT 200
+                SELECT e.id,e.league,e.start_time,e.status,e.status_detail,e.completed,
+                       e.home_team_name,e.home_abbreviation,e.home_record,e.home_score,
+                       e.away_team_name,e.away_abbreviation,e.away_record,e.away_score,
+                       p.selection,p.home_probability,p.home_market_probability,p.edge,p.signal,
+                       p.observed_at AS prediction_as_of,o.observed_at AS line_as_of,
+                       o.provider AS line_provider,o.sportsbook,o.home_odds,o.away_odds
+                FROM sports_events e
+                LEFT JOIN sports_predictions p ON p.id=({DASH_SPORTS_PREDICTION})
+                LEFT JOIN sports_odds_snapshots o ON o.id=({DASH_SPORTS_LINE.format(cutoff="?")})
+                WHERE e.start_time>=? AND e.start_time<=?{league_filter}
+                ORDER BY e.start_time,e.id LIMIT 200
                 """,
                 tuple(parameters),
             ).fetchall()
@@ -1076,30 +1192,12 @@ def sports_now(
         live = [row for row in rows if row["status"] == "in"][:cap]
         upcoming = [row for row in rows if row["status"] == "pre"][:cap]
         finals = [row for row in reversed(rows) if row["status"] == "post"][:cap]
-        predictions: dict[str, dict[str, Any]] = {}
-        ids = [row["id"] for row in (*live, *upcoming, *finals)]
-        if ids:
-            placeholders = ",".join("?" for _ in ids)
-            for row in database.execute(
-                f"""
-                SELECT * FROM (
-                    SELECT p.event_id,p.selection,p.home_probability,
-                           p.home_market_probability,p.edge,p.signal,
-                           ROW_NUMBER() OVER(
-                               PARTITION BY p.event_id ORDER BY p.observed_at DESC,p.id DESC
-                           ) AS latest_rank
-                    FROM sports_predictions p JOIN sports_events e ON e.id=p.event_id
-                    WHERE p.event_id IN ({placeholders}) AND p.observed_at<=e.start_time
-                ) latest WHERE latest_rank=1
-                """,
-                tuple(ids),
-            ).fetchall():
-                predictions[str(row["event_id"])] = dict(row)
+        record = _sports_lean_record(database, current, league)
     return {
-        "live": [_game(row, predictions.get(row["id"])) for row in live],
-        "up_next": [_game(row, predictions.get(row["id"])) for row in upcoming],
-        "finals": [_game(row, predictions.get(row["id"])) for row in finals],
-        "model_record": sports_pick_stats(),
+        "live": [_game(row) for row in live],
+        "up_next": [_game(row) for row in upcoming],
+        "finals": [_game(row) for row in finals],
+        "model_record": record,
     }
 
 
@@ -1107,6 +1205,19 @@ def _coin(row: dict[str, Any]) -> dict[str, Any]:
     from runner_web.memecoin_chain_parser import display_claim
 
     claimed = display_claim(row)
+    window, change = next(
+        (
+            (label, row[key])
+            for label, key in (
+                ("24h", "change_24h"),
+                ("6h", "change_h6"),
+                ("1h", "change_h1"),
+                ("5m", "change_m5"),
+            )
+            if row.get(key) is not None
+        ),
+        (None, None),
+    )
     return {
         "id": row["id"],
         "contract_address": row.get("token_address"),
@@ -1114,6 +1225,19 @@ def _coin(row: dict[str, Any]) -> dict[str, Any]:
         # Launch text is the creator's own claim and can copy a famous coin.
         "creator_set_name_unverified": claimed,
         "price": row.get("price_label") or row.get("price"),
+        "quote_as_of": row.get("observed_at"),
+        "price_source": row.get("source"),
+        "quote_confidence": "uncorroborated" if row.get("source") else "source_unknown",
+        "quote_freshness": "stale" if row.get("stale") else "fresh",
+        "pool_created_at": row.get("pool_created_at"),
+        "pool_age_seconds": row.get("pool_age_seconds"),
+        "change_window": window,
+        "change_window_pct": round(float(change), 2) if change is not None else None,
+        "change_as_of": row.get("change_observed_at") or row.get("observed_at"),
+        "change_24h_basis": row.get("change_24h_basis"),
+        "change_24h_basis_at": row.get("change_24h_basis_at"),
+        "liquidity_usd": row.get("liquidity_usd"),
+        "liquidity": row.get("liquidity_label"),
         "change_24h_pct": (
             round(float(row["change_24h"]), 2) if row.get("change_24h") is not None else None
         ),
@@ -1229,7 +1353,6 @@ def coin_detail(query: str, *, at: datetime | None = None) -> dict[str, Any]:
         "requested": requested,
         "stale": bool(coin.get("stale")) or detail["status"] != "ok",
         "observed_at": coin.get("observed_at"),
-        "liquidity": coin.get("liquidity_label"),
         "real_liquidity_usd": coin.get("real_liquidity_usd"),
         "attention_score": coin.get("attention_score"),
         "assessment": coin.get("memecoin_assessment"),
@@ -1375,7 +1498,9 @@ def dash_expand(node: str | None) -> dict[str, Any]:
     if key in {"", "world", "all"}:
         return dash_world()
     if key in {"board", "market", "market_now"}:
-        return market_now()
+        return market_now(page=1)
+    if key.startswith("board:") and key[6:].isdigit() and len(key[6:]) <= 4:
+        return market_now(page=max(1, int(key[6:])))
     if key.startswith("sector"):
         asked = key.split(":", 1)[1].strip() if ":" in key else None
         return sector_now(asked or None)
@@ -1398,8 +1523,8 @@ def dash_expand(node: str | None) -> dict[str, Any]:
     if key.startswith("report"):
         which = key.split(":", 1)[1].strip() if ":" in key else None
         return session_report(which or None)
-    if key.startswith("ticker"):
-        symbol = key.split(":", 1)[1].strip().lstrip("$")
+    if key == "ticker" or key.startswith("ticker:"):
+        symbol = key.partition(":")[2].strip()
         if not symbol:
             return {"error": "ticker node needs a symbol, e.g. ticker:MSGM"}
         from runner_web.telegram_chat import look_up_ticker
