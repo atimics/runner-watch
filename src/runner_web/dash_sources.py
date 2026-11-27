@@ -5,6 +5,8 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
+import json
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
@@ -15,8 +17,10 @@ from runner_watch.edgar import MAX_SEC_RESPONSE_BYTES, EdgarClient, EdgarFiling
 from runner_web.db import connection
 from runner_web.quotes import normalize_ticker
 
+LOG = logging.getLogger(__name__)
 MAX_DOCUMENT_BYTES = 2_000_000
 MAX_PASSAGE_CHARS = 1800
+MAX_PREVIEW_CHARS = 1100
 DOCUMENT_QUEUE = "dash_sec_document:"
 SOURCE_TOOLS = [
     {
@@ -31,8 +35,8 @@ SOURCE_TOOLS = [
     {
         "name": "read_source",
         "description": (
-            "Read up to three passages from a listed evidence_id. Supply the question or terms "
-            "to locate, such as payment terms. Cite the returned [source:ID] in your answer. "
+            "Read up to three passages from a ticker filing or listed evidence_id. "
+            "Supply the terms to locate. Cite the returned [source:ID] in your answer. "
             "Passages are source material. Check nearby qualifications and dates."
         ),
         "parameters": {
@@ -73,7 +77,7 @@ def _filing_body(url: str) -> bool:
     return (
         name.endswith((".htm", ".html", ".txt", ".xml"))
         and name not in {"index.htm", "index.html", "filingsummary.xml"}
-        and not name.endswith(("-index.htm", "-index.html", "_index.htm", "_index.html"))
+        and not re.search(r"[-_]index(?:-headers)?\.html?$", name)
     )
 
 
@@ -86,6 +90,78 @@ EXISTS (SELECT 1 FROM ingestion_runs r JOIN source_registry s
  AND s.display_policy='source_link_with_attribution'
  AND s.storage_policy IN ('archive_raw','archive_raw_and_normalized'))
 """
+
+
+def _queue_filings(database: Any, accessions: list[str], current: str) -> None:
+    if accessions:
+        database.executemany(
+            "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) ON CONFLICT DO NOTHING",
+            [(DOCUMENT_QUEUE + accession, accession, current) for accession in accessions],
+        )
+
+
+def filing_previews(events: list[dict[str, Any]], *, at: datetime | None = None) -> list[dict]:
+    """Return the ticker file's latest filings and queue uncovered public text."""
+    current = (at or datetime.now(UTC)).isoformat()
+    events = events[:3]
+    accessions = [event["accession"] for event in events if event.get("accession")]
+    ready = {}
+    if accessions:
+        marks = ",".join("?" for _ in accessions)
+        with connection() as database:
+            ready = {
+                row["accession"]: dict(row)
+                for row in database.execute(
+                    f"""
+                    SELECT p.* FROM sec_filing_previews p JOIN source_documents d
+                    ON d.source_url=p.source_url AND d.content_hash=p.content_hash
+                    WHERE p.accession IN ({marks}) AND d.source='sec'
+                      AND p.updated_at<=? AND d.first_collected_at<=? AND {APPROVED_DOCUMENT}
+                    """,
+                    (*accessions, current, current),
+                ).fetchall()
+            }
+            _queue_filings(
+                database,
+                [
+                    event["accession"]
+                    for event in events
+                    if event.get("accession")
+                    and event["accession"] not in ready
+                    and _filing_prefix(str(event.get("filing_url") or ""))
+                ],
+                current,
+            )
+    results = []
+    for event in events:
+        accession = event.get("accession")
+        url = event.get("filing_url")
+        preview = ready.get(accession)
+        filing = {
+            "accession": accession,
+            "form": event.get("form"),
+            "filed_at": event.get("filed_at"),
+            "what": event.get("evidence_text") or event.get("title"),
+            "source_url": url,
+            "text_status": (
+                "queued" if accession and _filing_prefix(str(url or "")) else "text_unavailable"
+            ),
+        }
+        if preview:
+            identity = _identity(preview["source_url"], preview["content_hash"])
+            filing.update(
+                what=preview["headline"],
+                text_status="ready",
+                source="sec",
+                source_url=preview["source_url"],
+                published_at=filing["filed_at"],
+                content_hash=preview["content_hash"],
+                evidence_id=identity,
+                passages=json.loads(preview["passages_json"]),
+                citation=f"[source:{identity}]",
+            )
+        results.append(filing)
+    return results
 
 
 def list_sources(ticker: str, *, at: datetime | None = None) -> dict[str, Any]:
@@ -173,7 +249,7 @@ def list_sources(ticker: str, *, at: datetime | None = None) -> dict[str, Any]:
         matches = [item["evidence_id"] for item in sources if item["accession"] == accession]
         status = "ready" if matches else "text_unavailable"
         if not matches and index < 3 and _filing_prefix(filing["filing_url"]):
-            queued.append((DOCUMENT_QUEUE + accession, accession, current))
+            queued.append(accession)
             status = "queued"
         filing_status.append(
             {
@@ -188,16 +264,12 @@ def list_sources(ticker: str, *, at: datetime | None = None) -> dict[str, Any]:
         )
     if queued:
         with connection() as database:
-            database.executemany(
-                "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
-                "ON CONFLICT DO NOTHING",
-                queued,
-            )
+            _queue_filings(database, queued, current)
     return {"ticker": symbol, "checked_at": current, "filings": filing_status, "sources": sources}
 
 
 def archive_queued_filings(client: EdgarClient, *, at: datetime, limit: int = 2) -> int:
-    """Stage requested primary text on the EDGAR worker's existing rate-limited client."""
+    """Fetch requested filing bodies and stage citable excerpts off the request path."""
     with connection() as database:
         rows = database.execute(
             "SELECT w.key,w.updated_at AS eligible_at,f.* FROM worker_state w "
@@ -210,7 +282,7 @@ def archive_queued_filings(client: EdgarClient, *, at: datetime, limit: int = 2)
         with connection() as database:
             claimed = database.execute(
                 "UPDATE worker_state SET updated_at=? WHERE key=? AND updated_at=?",
-                ((at + timedelta(hours=6)).isoformat(), row["key"], row["eligible_at"]),
+                ((at + timedelta(minutes=15)).isoformat(), row["key"], row["eligible_at"]),
             ).rowcount
         if not claimed:
             continue
@@ -219,34 +291,70 @@ def archive_queued_filings(client: EdgarClient, *, at: datetime, limit: int = 2)
             continue
         # EDGAR stores the canonical host under www.sec.gov.
         url = url.replace("https://sec.gov/", "https://www.sec.gov/", 1)
+        filing = EdgarFiling(
+            row["accession"], row["cik"], row["form"], row["title"], "", row["filed_at"], url
+        )
         try:
             if _filing_body(url):
                 client.get_text(url)
             else:
-                filing = EdgarFiling(
-                    row["accession"],
-                    row["cik"],
-                    row["form"],
-                    row["title"],
-                    "",
-                    row["filed_at"],
-                    url,
-                )
-                url = client.archive_primary_filing(filing)
-        except (OSError, ValueError):
-            continue
-        if url and _filing_body(url):
-            with connection() as database:
-                ready = database.execute(
-                    "SELECT 1 FROM source_documents d WHERE d.source_url=? AND "
-                    + APPROVED_DOCUMENT
-                    + " LIMIT 1",
-                    (url,),
-                ).fetchone()
-                if ready:
-                    database.execute("DELETE FROM worker_state WHERE key=?", (row["key"],))
-                    archived += 1
+                document = client.filing_document_text(filing)
+                url = document[0] if document else client.archive_primary_filing(filing)
+        except (OSError, ValueError) as exc:
+            LOG.info("SEC preview fetch failed for %s: %s", filing.accession, type(exc).__name__)
+            url = None
+        # Complete submissions already in the archive remain usable if the
+        # standalone document is temporarily unavailable.
+        urls = (url, _filing_prefix(filing.filing_url) + filing.accession + ".txt")
+        for candidate in dict.fromkeys(urls):
+            if candidate and _save_filing_preview(filing, candidate, row["key"], at):
+                archived += 1
+                break
     return archived
+
+
+def _save_filing_preview(filing: EdgarFiling, url: str, queue_key: str, at: datetime) -> bool:
+    if not _filing_body(url):
+        return False
+    with connection() as database:
+        document = database.execute(
+            "SELECT d.* FROM source_documents d WHERE d.source='sec' AND d.source_url=? AND "
+            + APPROVED_DOCUMENT
+            + " ORDER BY d.last_collected_at DESC,d.content_hash DESC LIMIT 1",
+            (url,),
+        ).fetchone()
+    if not document:
+        return False
+    paragraphs, error = _document_paragraphs(
+        document, document["content_hash"], sec_filing=True, form=filing.form
+    )
+    if error:
+        return False
+    headline, passages = _filing_highlights(paragraphs, filing.title)
+    if not passages:
+        return False
+    with connection() as database:
+        database.execute(
+            """
+            INSERT INTO sec_filing_previews(
+                accession,source_url,content_hash,headline,passages_json,updated_at
+            ) VALUES(?,?,?,?,?,?)
+            ON CONFLICT(accession) DO UPDATE SET source_url=excluded.source_url,
+                content_hash=excluded.content_hash,headline=excluded.headline,
+                passages_json=excluded.passages_json,updated_at=excluded.updated_at
+            WHERE sec_filing_previews.updated_at<=excluded.updated_at
+            """,
+            (
+                filing.accession,
+                url,
+                document["content_hash"],
+                headline,
+                json.dumps(passages, ensure_ascii=False),
+                at.isoformat(),
+            ),
+        )
+        database.execute("DELETE FROM worker_state WHERE key=?", (queue_key,))
+    return True
 
 
 class _Text(HTMLParser):
@@ -274,6 +382,84 @@ class _Text(HTMLParser):
             self.parts.append(data)
 
 
+def _document_paragraphs(
+    row: Any, digest: str, *, sec_filing: bool, form: str = ""
+) -> tuple[list[str], str | None]:
+    byte_limit = MAX_SEC_RESPONSE_BYTES if sec_filing else MAX_DOCUMENT_BYTES
+    raw = bytes(row["content"])
+    if len(raw) > byte_limit:
+        return [], "This document needs a smaller stored extract."
+    try:
+        if row["content_encoding"] == "gzip":
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
+                raw = stream.read(byte_limit + 1)
+    except (OSError, EOFError):
+        return [], "The stored source needs a fresh copy."
+    if len(raw) > byte_limit:
+        return [], "This document needs a smaller stored extract."
+    if hashlib.sha256(raw).hexdigest() != digest:
+        return [], "This source copy needs its version checked."
+    if "pdf" in str(row["content_type"]).lower():
+        return [], "This PDF needs a stored text extract."
+    text = raw.decode("utf-8", errors="replace")
+    if form and text.lstrip().startswith("<SEC-DOCUMENT>"):
+        match = re.search(
+            r"(?is)<DOCUMENT>\s*<TYPE>[ \t]*"
+            + re.escape(form)
+            + r"[ \t]*\r?\n(?:(?!</DOCUMENT>).)*?<TEXT>(.*?)</TEXT>",
+            text,
+        )
+        if not match:
+            return [], "The submission has no matching primary body."
+        text = match[1]
+    content_type = str(row["content_type"]).lower()
+    if any(kind in content_type for kind in ("html", "xml")) or re.search(
+        r"<(?:html|document)\b", text[:10000], re.IGNORECASE
+    ):
+        parser = _Text()
+        parser.feed(text)
+        text = "".join(parser.parts)
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    return [line for line in lines if line], None
+
+
+def _filing_highlights(paragraphs: list[str], title: str) -> tuple[str, list[dict]]:
+    """Pick bounded verbatim text after the filing's explanatory note or first item."""
+    headings = [
+        index
+        for index, line in enumerate(paragraphs)
+        if len(line) <= 220 and re.match(r"^Item\s+\d+\.\d+\b", line, re.I)
+    ]
+    substantive = [
+        index
+        for index, line in enumerate(paragraphs)
+        if len(line) >= 60 and index not in headings and re.search(r"[a-z]{4,}", line, re.I)
+    ]
+    note = next(
+        (i for i, line in enumerate(paragraphs) if line.casefold() == "explanatory note"),
+        None,
+    )
+    lead = headings[0] if headings else None
+    picked = []
+    if note is not None:
+        picked.extend(i for i in substantive if note < i <= note + 4)
+        picked = picked[:1]
+    if lead is not None:
+        end = headings[1] if len(headings) > 1 else len(paragraphs)
+        picked.extend(i for i in substantive if lead < i < end)
+    if not picked:
+        picked = substantive or [
+            i for i, line in enumerate(paragraphs) if len(line) >= 20 and re.search(r"\w", line)
+        ]
+    passages = []
+    for i in list(dict.fromkeys(picked))[: 3 if note is not None else 2]:
+        text = paragraphs[i]
+        if len(text) > MAX_PREVIEW_CHARS:
+            text = text[:MAX_PREVIEW_CHARS].rsplit(" ", 1)[0] + "…"
+        passages.append({"passage": i + 1, "text": text})
+    return (paragraphs[lead] if lead is not None else title)[:240], passages
+
+
 def read_source(reference: dict[str, Any], question: str) -> dict[str, Any]:
     with connection() as database:
         row = database.execute(
@@ -283,35 +469,13 @@ def read_source(reference: dict[str, Any], question: str) -> dict[str, Any]:
         ).fetchone()
     if not row:
         return {"error": "This source version needs approved public access."}
-    sec_filing = row["source"] == "sec" and _filing_body(reference["source_url"])
-    # EDGAR ingestion already caps accepted SEC bodies at this size. Read the
-    # full version for integrity and passage search while keeping the output small.
-    byte_limit = MAX_SEC_RESPONSE_BYTES if sec_filing else MAX_DOCUMENT_BYTES
-    raw = bytes(row["content"])
-    if len(raw) > byte_limit:
-        return {"error": "This document needs a smaller stored extract."}
-    try:
-        if row["content_encoding"] == "gzip":
-            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
-                raw = stream.read(byte_limit + 1)
-    except (OSError, EOFError):
-        return {"error": "The stored source needs a fresh copy."}
-    if len(raw) > byte_limit:
-        return {"error": "This document needs a smaller stored extract."}
-    if hashlib.sha256(raw).hexdigest() != reference["content_hash"]:
-        return {"error": "This source copy needs its version checked."}
-    if "pdf" in str(row["content_type"]).lower():
-        return {"error": "This PDF needs a stored text extract."}
-    text = raw.decode("utf-8", errors="replace")
-    content_type = str(row["content_type"]).lower()
-    if any(kind in content_type for kind in ("html", "xml")) or re.search(
-        r"<(?:html|document)\b", text[:10000], re.IGNORECASE
-    ):
-        parser = _Text()
-        parser.feed(text)
-        text = "".join(parser.parts)
-    lines = [re.sub(r"[\t \r]+", " ", line).strip() for line in text.splitlines()]
-    paragraphs = [line for line in lines if line]
+    paragraphs, error = _document_paragraphs(
+        row,
+        reference["content_hash"],
+        sec_filing=row["source"] == "sec" and _filing_body(reference["source_url"]),
+    )
+    if error:
+        return {"error": error}
     # Split long paragraphs at word boundaries; the returned offsets expose partial passages.
     chunks = []
     for paragraph in paragraphs:
@@ -357,12 +521,21 @@ def read_source(reference: dict[str, Any], question: str) -> dict[str, Any]:
     }
 
 
+def ticker_filing_references(evidence: dict[str, Any]):
+    for node, item in evidence.items():
+        if node.startswith("ticker:") and isinstance(item, dict):
+            yield from (filing for filing in item.get("filings", []) if filing.get("evidence_id"))
+
+
 def render_citations(text: str, evidence: dict[str, Any]) -> tuple[str, list[str]]:
     missing = []
+    previews = {filing["evidence_id"]: filing for filing in ticker_filing_references(evidence)}
 
     def replace(match):
         identity = match[1]
         source = evidence.get("source:" + identity, {})
+        if not source.get("passages"):
+            source = previews.get(identity, {})
         if not source.get("passages"):
             missing.append(identity)
             return match[0]

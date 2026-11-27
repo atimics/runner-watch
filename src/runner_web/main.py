@@ -9103,6 +9103,10 @@ def screen_detail_state(
         raise HTTPException(404, "Market not found")
     if market != "sports":
         screen = simple_market_detail(market, data, active_call=active)
+    if market == "stocks":
+        from runner_web.dash_sources import filing_previews
+
+        screen["filings"] = filing_previews(data.get("events") or [])
     from runner_web.stories import public_story
 
     try:

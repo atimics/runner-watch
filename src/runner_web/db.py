@@ -4112,6 +4112,25 @@ def _migration_107_quote_reference_basis(db: DatabaseConnection) -> None:
     _ensure_column(db, "ticker_quotes", "previous_close_basis TEXT")
 
 
+def _migration_108_sec_filing_previews(db: DatabaseConnection) -> None:
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sec_filing_previews (
+            accession TEXT PRIMARY KEY REFERENCES sec_filings(accession) ON DELETE CASCADE,
+            source_url TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            headline TEXT NOT NULL,
+            passages_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        "UPDATE worker_state SET updated_at=? WHERE key>=? AND key<?",
+        (datetime.now(UTC).isoformat(), "dash_sec_document:", "dash_sec_document:~"),
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4226,6 +4245,7 @@ MIGRATIONS = (
     Migration(105, "dash_research_jobs", _migration_105_dash_research_jobs),
     Migration(106, "solana_trading", migrate_trading),
     Migration(107, "quote_reference_basis", _migration_107_quote_reference_basis),
+    Migration(108, "sec_filing_previews", _migration_108_sec_filing_previews),
 )
 
 

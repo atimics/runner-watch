@@ -11,8 +11,9 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from defusedxml import ElementTree as DefusedElementTree
 
@@ -246,6 +247,66 @@ class EdgarClient:
             return None
         url = f"{directory_url}/{names[0]}"
         return url, self.get_text(url)
+
+    def filing_document_text(self, filing: EdgarFiling) -> tuple[str, str] | None:
+        """Fetch the filed document identified by the SEC's document table."""
+        directory = filing_directory_url(filing.filing_url)
+        if not re.fullmatch(r"\d{10}-\d{2}-\d{6}", filing.accession):
+            return None
+        index_url = f"{directory}/{filing.accession}-index.htm"
+        index = _FilingDocumentIndex()
+        index.feed(self.get_text(index_url))
+        for form, href in index.documents:
+            if form.casefold() != filing.form.casefold():
+                continue
+            link = urlparse(href)
+            if link.path in {"/ix", "/ixviewer/doc/action"}:
+                link = urlparse(parse_qs(link.query).get("doc", [""])[0])
+            path = urlparse(directory).path + "/"
+            if link.netloc not in {"", "www.sec.gov", "sec.gov"} or not link.path.startswith(path):
+                continue
+            name = link.path[len(path) :]
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.(?:html?|xml|txt)", name, re.I):
+                url = f"{directory}/{name}"
+                return url, self.get_text(url)
+        return None
+
+
+class _FilingDocumentIndex(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.documents: list[tuple[str, str]] = []
+        self.in_table = False
+        self.cells: list[str] = []
+        self.cell: list[str] | None = None
+        self.href = ""
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "table":
+            self.in_table = attrs.get("summary") == "Document Format Files"
+        if not self.in_table:
+            return
+        if tag == "tr":
+            self.cells = []
+            self.href = ""
+        elif tag == "td":
+            self.cell = []
+        elif tag == "a" and len(self.cells) == 2:
+            self.href = attrs.get("href") or ""
+
+    def handle_endtag(self, tag):
+        if tag == "table":
+            self.in_table = False
+        elif self.in_table and tag == "td" and self.cell is not None:
+            self.cells.append("".join(self.cell).strip())
+            self.cell = None
+        elif self.in_table and tag == "tr" and self.href and len(self.cells) >= 4:
+            self.documents.append((self.cells[3], self.href))
+
+    def handle_data(self, data):
+        if self.in_table and self.cell is not None:
+            self.cell.append(data)
 
 
 def parse_company_map(payload: dict[str, Any]) -> list[EdgarCompany]:

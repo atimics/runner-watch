@@ -335,8 +335,10 @@ def _companyfacts_candidate(new_events: list[dict[str, Any]]) -> int | None:
 
 
 def refresh_edgar() -> dict[str, Any]:
+    from runner_web.dash_sources import archive_queued_filings
 
     client = EdgarClient(fetch_recorder=record_source_fetch)
+    staged_documents = archive_queued_filings(client, at=datetime.now(UTC))
     _ensure_parser_version()
     company_count = refresh_company_map(client)
     filings = client.latest_filings()
@@ -517,9 +519,6 @@ def refresh_edgar() -> dict[str, Any]:
     _state("edgar_last_refresh", timestamp)
     _state("edgar_last_error", "")
     _state("edgar_last_new_events", str(len(new_events)))
-    from runner_web.dash_sources import archive_queued_filings
-
-    staged_documents = archive_queued_filings(client, at=datetime.now(UTC))
     return {
         "companies": company_count,
         "feed_filings": len(filings),

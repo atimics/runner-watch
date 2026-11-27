@@ -42,7 +42,8 @@ ANALYST_INSTRUCTION = (
     "clock time or promise separately in prose. The marker supplies the saved time "
     "and whether the check is automatic or waits for our next conversation. "
     "Use finish_review for a quiet finding, unavailable source, "
-    "or retired idea. Use list_sources and read_source for original documents. "
+    "or retired idea. Ticker filings can include citable SEC excerpts. Use read_source "
+    "for a question about that document, or list_sources for more documents. "
     "Cite passages with the returned [source:ID] marker, preserving dates and "
     "qualifications. Use [quote:TICKER] or [quote:coin:ADDRESS] for a price you post. "
     "The marker inserts the saved print, its as-of time, source and confidence. "
@@ -1091,10 +1092,13 @@ def _run_research(
                     elif name == "read_source":
                         identity = str(args.get("evidence_id") or "")
                         references = [
-                            item
-                            for key, result in evidence.items()
-                            if key.startswith("sources:")
-                            for item in result.get("sources", [])
+                            *dash_sources.ticker_filing_references(evidence),
+                            *(
+                                item
+                                for key, result in evidence.items()
+                                if key.startswith("sources:")
+                                for item in result.get("sources", [])
+                            ),
                         ]
                         reference = next(
                             (item for item in references if item["evidence_id"] == identity), None
@@ -1120,7 +1124,10 @@ def _run_research(
                             )
                             evidence["source:" + identity] = output
                         else:
-                            output = {"error": "Choose an evidence_id returned by list_sources."}
+                            output = {
+                                "error": "Choose an evidence_id returned by list_sources "
+                                "or the ticker filing."
+                            }
                     elif act:
                         node = canonical_node("ticker:" + str(args.get("ticker") or ""))
                         source = evidence.get(node)

@@ -8,6 +8,7 @@ from urllib.error import HTTPError
 
 import pytest
 
+from runner_watch.edgar import EdgarClient
 from runner_watch.ingestion import SourceFetch
 from runner_watch.source_catalog import DEFAULT_SOURCE_POLICIES
 from runner_web import dash_jobs, dash_research, dash_sources, db, main
@@ -571,15 +572,96 @@ def test_filing_lookup_queues_missing_primary_text_and_worker_makes_it_readable(
     assert first["sources"] == [] and first["filings"][0]["text_status"] == "queued"
 
     class Edgar:
-        def archive_primary_filing(self, filing):
+        def filing_document_text(self, filing):
             assert filing.accession == "TEST"
-            return store_source()
+            return store_source(), ""
 
     assert dash_sources.archive_queued_filings(Edgar(), at=NOW) == 1
     assert dash_sources.archive_queued_filings(Edgar(), at=NOW) == 0
     ready = dash_sources.list_sources("TEST", at=NOW)
     assert ready["filings"][0]["text_status"] == "ready"
     assert dash_sources.read_source(ready["sources"][0], "payment")["source_url"] == url
+
+
+def test_ticker_filing_queues_and_cites_standalone_edgar_document(monkeypatch):
+    from runner_web import telegram_chat
+
+    accession = "0001477932-26-007314"
+    prefix = "https://www.sec.gov/Archives/edgar/data/1590715/000147793226007314/"
+    index_url = prefix + accession + "-index.htm"
+    body_url = prefix + "arec_8ka.htm"
+    event = {
+        "accession": accession,
+        "form": "8-K/A",
+        "filed_at": NOW.isoformat(),
+        "title": "Form 8-K/A",
+        "filing_url": index_url,
+        "evidence_text": "Open the filing for details.",
+    }
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sec_filings(accession,cik,ticker,company,form,kind,sentiment,score,title,"
+            "filed_at,filing_url,created_at,updated_at) "
+            "VALUES(?,1590715,'AREC','American Resources','8-K/A','filing','neutral',"
+            "0,'Form 8-K/A',?,?,?,?)",
+            (accession, NOW.isoformat(), index_url, NOW.isoformat(), NOW.isoformat()),
+        )
+    monkeypatch.setattr(main, "_public_ticker_detail_data", lambda _: {"events": [event]})
+    monkeypatch.setattr("runner_web.quotes.market_mark", lambda _: None)
+    assert telegram_chat.look_up_ticker("AREC")["filings"][0]["text_status"] == "queued"
+
+    index = (
+        '<table summary="Document Format Files">'
+        f'<tr><td>1</td><td>Current report</td><td><a href="/ix?doc='
+        f'{body_url.removeprefix("https://www.sec.gov")}">'
+        "arec_8ka.htm</a></td><td>8-K/A</td></tr>"
+        f'<tr><td></td><td>Complete submission</td><td><a href="{prefix}{accession}.txt">'
+        "Full submission</a></td><td></td></tr></table>"
+    ).encode()
+    body = (
+        b"<html><p>Explanatory Note</p><p>This amendment corrects the reference to the "
+        b"annual report for the fiscal year ended December 31, 2024.</p>"
+        b"<p>Item 4.02 Non-Reliance on Previously-Issued Financial Statements</p>"
+        b"<p>The Audit Committee determined that the consolidated financial statements for "
+        b"the year ended December 31, 2025 should no longer be relied upon.</p>"
+        b"<p>The required restatement was identified during a reaudit of the company's "
+        b"consolidated financial statements.</p></html>"
+    )
+    requested = []
+
+    def download(request, timeout):
+        requested.append(request.full_url)
+        return BytesIO({index_url: index, body_url: body}[request.full_url])
+
+    monkeypatch.setattr("runner_watch.edgar.urllib.request.urlopen", download)
+    client = EdgarClient(fetch_recorder=record_source_fetch, max_requests_per_second=1_000_000)
+    assert dash_sources.archive_queued_filings(client, at=main.now()) == 1
+    assert requested == [index_url, body_url]
+    looked = telegram_chat.look_up_ticker("AREC")
+    (preview,) = looked["filings"]
+    assert preview["text_status"] == "ready" and preview["source_url"] == body_url
+    assert preview["what"].startswith("Item 4.02")
+    assert len(preview["passages"]) == 3
+    assert "corrects" in preview["passages"][0]["text"]
+    assert "no longer be relied upon" in preview["passages"][1]["text"]
+
+    result, _ = run(
+        [turn(("reply", {"text": "The filing describes a restatement " + preview["citation"]}))],
+        evidence={"ticker:AREC": looked},
+    )
+    assert body_url in result["text"]
+    result, _ = run(
+        [
+            turn(("read_source", {"evidence_id": preview["evidence_id"], "question": "reaudit"})),
+            turn(("reply", {"text": "The filing describes a reaudit " + preview["citation"]})),
+        ],
+        evidence={"ticker:AREC": looked},
+    )
+    assert body_url in result["text"]
+
+    with connection() as database:
+        database.execute("UPDATE source_registry SET enabled=0 WHERE source='sec'")
+    assert "passages" not in telegram_chat.look_up_ticker("AREC")["filings"][0]
 
 
 def test_reply_quote_tag_uses_stored_source_age_and_confidence():
