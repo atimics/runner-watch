@@ -616,6 +616,7 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
     number the cheetah repeats is a number the rest of the product would show.
     """
 
+    from runner_web.dash_sources import filing_previews
     from runner_web.main import _public_ticker_detail_data
     from runner_web.quotes import corroborate_quote, dash_quote_fields, market_mark
 
@@ -685,7 +686,7 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         "model_view": _model_view(detail),
         "halt_status": halt_status,
         "halt_resume_at": resume_at,
-        "filings": _recent_filings(detail),
+        "filings": filing_previews(detail.get("events") or []),
         "research_report": _research_report(symbol),
         "avatar_comments": _avatar_comments(symbol),
         "community": _community_for(symbol),
@@ -798,18 +799,6 @@ def _model_view(detail: dict[str, Any]) -> dict[str, Any] | None:
         "horizon": thesis.get("horizon"),
         "expected_return_pct": thesis.get("expected_return_pct"),
     }
-
-
-def _recent_filings(detail: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "form": event.get("form"),
-            "filed_at": event.get("filed_at"),
-            "what": event.get("evidence_text") or event.get("title"),
-            "source_url": event.get("filing_url"),
-        }
-        for event in (detail.get("events") or [])[:3]
-    ]
 
 
 def _research_report(ticker: str) -> dict[str, Any] | None:
