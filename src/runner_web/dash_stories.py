@@ -232,7 +232,7 @@ def _pilot_draft(database, session, close, now):
           AND {APPROVED_DOCUMENT}
           AND NOT EXISTS(SELECT 1 FROM dash_story_pilot s
                          WHERE s.story_key='filing:' || f.accession)
-        ORDER BY CASE WHEN f.form LIKE '%/A' THEN 0 ELSE 1 END,f.score DESC,p.updated_at DESC
+        ORDER BY CASE WHEN f.form LIKE ? THEN 0 ELSE 1 END,f.score DESC,p.updated_at DESC
         LIMIT 1
         """,
         (
@@ -240,6 +240,7 @@ def _pilot_draft(database, session, close, now):
             cut.isoformat(),
             (close - FILING_LOOKBACK).isoformat(),
             cut.isoformat(),
+            "%/A",
         ),
     ).fetchone()
     filing_draft = None
