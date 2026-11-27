@@ -134,6 +134,78 @@ def test_a_revised_view_keeps_its_previous_take_and_can_close():
     assert research.due_notes(notes, later + timedelta(days=1)) == []
 
 
+@pytest.mark.parametrize("node", ("AREC", "$arec", "stock:AREC", "ticker: $AREC"))
+def test_notebook_reuses_expanded_arec_and_keeps_the_monday_open(node):
+    friday = datetime(2026, 11, 27, 15, tzinfo=UTC)
+    monday_open = datetime(2026, 11, 30, 14, 30, tzinfo=UTC)
+    note_args = thesis(node, review_at="2026-11-30T09:30:00-05:00")
+    note_args.pop("review_minutes")
+    filing = {
+        "evidence_id": "filing-a",
+        "source_url": "https://www.sec.gov/Archives/arec.htm",
+        "content_hash": "archived-filing",
+        "published_at": "2026-11-25T22:15:00+00:00",
+        "passages": [{"text": "The Audit Committee determined a restatement is required."}],
+    }
+    read_nodes = []
+
+    def expand(key):
+        read_nodes.append(key)
+        return {"known": True, "price": 0.74, "quote_freshness": "stale", "filings": [filing]}
+
+    result, _ = run(
+        [
+            turn(("expand", {"node": "ticker:AREC"})),
+            turn(
+                ("remember_thesis", note_args),
+                ("reply", {"text": "Watching the next open.\n[review:ticker:AREC]"}),
+            ),
+        ],
+        expand=expand,
+        job_key="telegram:arec",
+        automatic_reviews=True,
+        at_override=friday,
+    )
+
+    assert read_nodes == ["ticker:AREC"]
+    assert result["review_schedule"] == {"ticker:AREC": monday_open.isoformat()}
+    assert "Nov 30, 2026 at 09:30 EST" in result["text"]
+    (stored,) = research.notebook(SCOPE, friday)
+    assert stored["node"] == "ticker:AREC"
+    assert stored["source_references"][0]["source_url"] == filing["source_url"]
+    assert research.due_notes([stored], monday_open - timedelta(seconds=1)) == []
+    assert research.due_notes([stored], monday_open) == [stored]
+
+
+def test_notebook_fetches_a_missing_typed_ticker_once_in_the_save_call():
+    reads = []
+    result, _ = run(
+        [
+            turn(
+                ("remember_thesis", thesis("ticker:$AREC")),
+                ("reply", {"text": "Watching AREC.\n[review:ticker:AREC]"}),
+            ),
+        ],
+        expand=lambda node: reads.append(node) or {"known": True, "price": 0.74},
+    )
+    assert result["action"] == "reply"
+    assert reads == ["ticker:AREC"]
+    assert research.notebook(SCOPE, NOW)[0]["node"] == "ticker:AREC"
+
+
+def test_notebook_does_not_save_when_the_implicit_lookup_is_unavailable():
+    result, _ = run(
+        [turn(("remember_thesis", thesis("ticker:AREC")), ("hold", {"why": "No evidence."}))],
+        expand=lambda _: {"known": False},
+    )
+    assert result["action"] == "hold"
+    assert research.notebook(SCOPE, NOW) == []
+    assert any(
+        item["node"] == "ticker:AREC" and item["code"] == "source_unavailable"
+        for item in result["research"]["failures"]
+    )
+
+
 @pytest.mark.parametrize(
     "changes,evidence",
     [
