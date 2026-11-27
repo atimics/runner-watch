@@ -324,6 +324,56 @@ class MassiveDailyCache:
             )
         return output
 
+    def closing_breadth(self, session: date, prior_session: date) -> dict[str, Any] | None:
+        """Compare every non-OTC symbol with a traded close in both sessions."""
+        try:
+            with self._lock:
+                row = (
+                    self._connect()
+                    .execute(
+                        """
+                    SELECT
+                        SUM(CASE WHEN day.close>prior.close THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN day.close<prior.close THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN day.close=prior.close THEN 1 ELSE 0 END),
+                        COUNT(prior.symbol),COUNT(*),
+                        (SELECT fetched_at FROM fetched_dates WHERE session_date=?),
+                        (SELECT fetched_at FROM fetched_dates WHERE session_date=?)
+                    FROM daily_bars day
+                    LEFT JOIN daily_bars prior
+                           ON prior.symbol=day.symbol AND prior.session_date=?
+                          AND prior.close>0 AND prior.volume>0
+                    WHERE day.session_date=? AND day.close>0 AND day.volume>0
+                    """,
+                        (
+                            session.isoformat(),
+                            prior_session.isoformat(),
+                            prior_session.isoformat(),
+                            session.isoformat(),
+                        ),
+                    )
+                    .fetchone()
+                )
+        except sqlite3.Error as exc:
+            raise MassiveAPIError(f"Massive daily cache breadth failed: {exc}") from exc
+        if row is None or not row[3] or not row[5] or not row[6]:
+            return None
+        return dict(
+            zip(
+                (
+                    "advancing",
+                    "declining",
+                    "unchanged",
+                    "matched_symbols",
+                    "eligible_symbols",
+                    "session_collected_at",
+                    "prior_session_collected_at",
+                ),
+                row,
+                strict=True,
+            )
+        )
+
     def prune_before(self, cutoff: date) -> int:
         try:
             with self._lock:

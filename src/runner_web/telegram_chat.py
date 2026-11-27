@@ -479,7 +479,8 @@ CHEETAH_PERSONA = (
     "Let your personality come through naturally. You choose how to express a view. "
     "You can challenge the room, change your mind, follow a hunch, or sit with an "
     "open question. Ground market claims in evidence and make uncertainty clear. "
-    "Your world state covers the market session, stock board, runners, events, halts, "
+    "Your world state covers the market session, stock board, U.S. macro and breadth, "
+    "runners, events, halts, "
     "sports, memecoins, community, your public book, and recent changes. Use expand "
     "to investigate. Current lookups supply prices and trading status. Earlier "
     "replies and saved notes supply history. Attribute a speaker's news to them "
@@ -552,6 +553,7 @@ TOOL_SCHEMA = (
             "community activity, your own book and what changed. Use this when you "
             "need the detail behind one of those nodes before you say anything. "
             "Nodes: board, board:<page>, runners, events, halts, community, sector:<name>, "
+            "macro, macro:rates, macro:inflation, macro:credit, macro:breadth, "
             "sports, sports:<league>, memecoins, coin:<contract address or id>, "
             "report:pre, report:post, ticker:<SYM>."
         ),

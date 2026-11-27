@@ -32,6 +32,11 @@ SOURCE_CAPABILITIES = (
         core=True,
     ),
     SourceCapability(
+        "macro",
+        "U.S. macro and breadth",
+        "Published rates, inflation and corporate spreads, plus daily closing breadth.",
+    ),
+    SourceCapability(
         "filings",
         "Company filings",
         "Regulatory filings and their source documents.",
@@ -96,6 +101,8 @@ _CAPABILITY_BY_FEED = {
     "company_map": "market_universe",
     "market_bars": "market_bars",
     "ticker_quote": "market_bars",
+    "us_macro": "macro",
+    "us_equity_breadth": "macro",
     "current_filings": "filings",
     "filing_index": "filings",
     "filing_document": "filings",

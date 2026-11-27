@@ -36,6 +36,7 @@ DESK_NOTE_MIN_SCORE = _env_float("DASH_DESK_NOTE_MIN_SCORE", 2.0)
 
 NEEDS_NODES = {
     "board": "board",
+    "macro": "macro",
     "runners": "runners",
     "events": "events",
     "halts": "halts",
@@ -75,6 +76,7 @@ TURN_QUESTIONS: dict[str, dict[str, Any]] = {
         {
             "none": "No market data; small talk, a greeting, or a question about Dash.",
             "board": "The stock board: what is moving, green or red, the leaders.",
+            "macro": "U.S. rates, inflation, corporate credit spreads, and closing breadth.",
             "runners": "Stocks that just entered the board as new runners.",
             "events": "Recent news, coverage, or social spikes.",
             "halts": "Trading halts today, why, and how stocks traded after reopening.",
