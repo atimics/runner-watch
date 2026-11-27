@@ -43,7 +43,14 @@ from runner_watch.models import ScanSettings
 from runner_watch.risk import RiskInput, assess_risk
 from runner_watch.scanner import RunnerScanner
 from runner_watch.universe import penny_runner_universe
-from runner_web import attention, dash_direction, dash_jobs, dash_research, pulse_scoring
+from runner_web import (
+    attention,
+    dash_direction,
+    dash_jobs,
+    dash_research,
+    macro_feed,
+    pulse_scoring,
+)
 from runner_web import db as runner_db
 from runner_web import decisions as openrouter_decisions
 from runner_web.account_routes import (
@@ -1004,6 +1011,17 @@ def _start_worker_tasks(
         asyncio.create_task(dash_desk_note_worker(), name="dash-desk-notes"),
         asyncio.create_task(telegram_alert_sweep_worker(), name="telegram-alert-sweep"),
         asyncio.create_task(massive_backfill_worker(), name="massive-backfill"),
+        asyncio.create_task(
+            macro_feed.collect_macro(macro_feed.refresh_fred, macro_feed.FRED_REFRESH_SECONDS),
+            name="macro-fred",
+        ),
+        asyncio.create_task(
+            macro_feed.collect_macro(
+                macro_feed.refresh_breadth,
+                macro_feed.BREADTH_REFRESH_SECONDS,
+            ),
+            name="macro-breadth",
+        ),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
         asyncio.create_task(privacy_prune_worker(), name="privacy-prune"),
@@ -1271,6 +1289,12 @@ def version_api() -> dict[str, str]:
         "build_sha": APP_BUILD_SHA,
         "static_version": STATIC_VERSION,
     }
+
+
+@app.get("/api/macro")
+def macro_api(request: Request) -> dict[str, Any]:
+    enforce_rate(request, "macro", limit=60, seconds=60)
+    return macro_feed.macro_snapshot()
 
 
 def now() -> datetime:

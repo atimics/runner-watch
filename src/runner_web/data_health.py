@@ -52,6 +52,21 @@ def stock_session_open_for_day(day_iso: str) -> datetime | None:
     return calendar.session_open(day_iso).to_pydatetime()
 
 
+def recent_stock_closes(at: datetime, *, count: int) -> list[tuple[date, datetime]]:
+    """Completed regular sessions in reverse order, including holidays and early closes."""
+    closes = []
+    session = at.astimezone(EASTERN).date()
+    while len(closes) < count:
+        calendar = _calendar(session.year)
+        day = session.isoformat()
+        if calendar.is_session(day):
+            close = calendar.session_close(day).to_pydatetime()
+            if close <= at:
+                closes.append((session, close))
+        session -= timedelta(days=1)
+    return closes
+
+
 def stock_settlement_close(at: datetime) -> datetime:
     """UTC close time of the trading session that settles a stock Call opened at `at`.
 

@@ -587,6 +587,11 @@ def session_report(which: str | None = None) -> dict[str, Any]:
 WORLD_NODES = (
     "board",
     "board:<page>",
+    "macro",
+    "macro:rates",
+    "macro:inflation",
+    "macro:credit",
+    "macro:breadth",
     "runners",
     "events",
     "halts",
@@ -1467,6 +1472,7 @@ def dash_world(at: datetime | None = None) -> dict[str, Any]:
     """One snapshot of everything Dash can see this turn."""
 
     current = at or datetime.now(UTC)
+    from runner_web.macro_feed import macro_snapshot
     from runner_web.market_clock import market_clock
 
     clock = market_clock(current)
@@ -1480,6 +1486,7 @@ def dash_world(at: datetime | None = None) -> dict[str, Any]:
             "data_note": clock["data_note"],
         },
         "board": market_now(current),
+        "macro": macro_snapshot(current),
         "runners": recent_runners(limit=6, at=current),
         "events": recent_events(limit=6, at=current),
         "halts": halt_context(limit=6, at=current),
@@ -1501,6 +1508,13 @@ def dash_expand(node: str | None) -> dict[str, Any]:
         return market_now(page=1)
     if key.startswith("board:") and key[6:].isdigit() and len(key[6:]) <= 4:
         return market_now(page=max(1, int(key[6:])))
+    if key == "macro" or key.startswith("macro:"):
+        from runner_web.macro_feed import MACRO_SECTIONS, macro_snapshot
+
+        section = key.partition(":")[2]
+        if section and section not in MACRO_SECTIONS:
+            return {"error": "unknown macro section", "sections": list(MACRO_SECTIONS)}
+        return macro_snapshot(section=section or None)
     if key.startswith("sector"):
         asked = key.split(":", 1)[1].strip() if ":" in key else None
         return sector_now(asked or None)
