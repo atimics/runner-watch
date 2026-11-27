@@ -1000,6 +1000,61 @@ def test_odds_and_predictions_preserve_a_b_a_market_reversals(sports_db) -> None
     assert predictions[0]["input_hash"] != predictions[2]["input_hash"]
 
 
+def test_dash_seals_the_decision_line_and_prices_the_same_lean(sports_db):
+    from runner_web import dash
+    from runner_web.odds_api import CONSENSUS_SPORTSBOOK, PROVIDER
+
+    observed = datetime.now(UTC)
+    event = normalize_event("mlb", sample_event())
+    assert event is not None
+    starts = event["start_time"]
+    event.update(
+        odds_provider=PROVIDER,
+        sportsbook=CONSENSUS_SPORTSBOOK,
+        home_odds=-100,
+        away_odds=100,
+        market_is_consensus=True,
+        market_book_count=3,
+        odds_source_updated_at=observed.isoformat(),
+        bookmaker_moneylines=[
+            {
+                "sportsbook_key": "a",
+                "sportsbook": "Book A",
+                "home_odds": -115,
+                "away_odds": 110,
+                "home_probability": 0.53,
+                "away_probability": 0.47,
+                "last_update": observed.isoformat(),
+            }
+        ],
+    )
+    store_events([event], observed_at=observed)
+    with connection() as database:
+        database.execute(
+            "INSERT INTO sports_odds_snapshots(id,event_id,provider,sportsbook,market,home_odds,"
+            "away_odds,snapshot_hash,observed_at) VALUES('later',?,'espn','Book B','moneyline',"
+            "-300,220,'later',?)",
+            (event["id"], (observed + timedelta(minutes=5)).isoformat()),
+        )
+        database.execute(
+            "UPDATE sports_events SET completed=1,status='post',home_score=5,away_score=3 "
+            "WHERE id=?",
+            (event["id"],),
+        )
+    card = dash.sports_now(at=starts + timedelta(hours=2))
+    (final,) = card["finals"]
+    assert final["market_line"]["home_odds"] == -100
+    assert final["latest_market_line"]["home_odds"] == -300
+    assert final["decision"]["bookmaker_offer"]["odds"] == -115
+    assert final["decision"]["published_at"] == observed.isoformat()
+    assert final["model"]["result"] == "win"
+    ledger = card["model_record"]
+    assert ledger["publication_price_record"]["priced"] == 1
+    assert ledger["publication_price_record"]["roi_pct"] == 87
+    assert ledger["forecast_quality"]["paired_games"] == 1
+    assert ledger["forecast_quality"]["paired_market_brier"] == 0.25
+
+
 def test_canceled_game_voids_an_open_pick(sports_db) -> None:
     event = normalize_event("mlb", sample_event())
     assert event is not None

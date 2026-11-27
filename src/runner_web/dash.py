@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -1055,10 +1056,12 @@ def _game(row: dict[str, Any]) -> dict[str, Any]:
         "status": row["status_detail"],
         "market_line": {"status": "unavailable"},
     }
+    latest_line = None
     if row["line_as_of"]:
         market_home, market_away = no_vig_probabilities(row["home_odds"], row["away_odds"])
-        game["market_line"] = {
+        latest_line = {
             "status": "available",
+            "basis": "latest pregame context",
             "provider": row["line_provider"],
             "sportsbook": row["sportsbook"],
             "observed_at": row["line_as_of"],
@@ -1067,6 +1070,31 @@ def _game(row: dict[str, Any]) -> dict[str, Any]:
             "home_win_pct_no_vig": round(market_home * 100, 1),
             "away_win_pct_no_vig": round(market_away * 100, 1),
         }
+        game["market_line"] = latest_line
+    if receipt := _payload(row.get("decision_receipt_json")):
+        reference = receipt.get("reference")
+        game["decision"] = {
+            "id": row["prediction_id"],
+            "model_version": row["model_version"],
+            "published_at": row["prediction_as_of"],
+            "rule_version": receipt["rule_version"],
+            "price_status": receipt["price_status"],
+            "bookmaker_offer": receipt.get("offer"),
+        }
+        game["market_line"] = {"status": "unavailable", "basis": "at model publication"}
+        if reference:
+            game["market_line"].update(
+                reference,
+                status="available",
+                home_win_pct_no_vig=round(reference["home_probability"] * 100, 1),
+                away_win_pct_no_vig=round((1 - reference["home_probability"]) * 100, 1),
+            )
+        if latest_line and (
+            not reference
+            or row["line_id"] != reference["snapshot_id"]
+            or row["line_source_as_of"] != reference["source_as_of"]
+        ):
+            game["latest_market_line"] = latest_line
     if row["status"] != "pre" and row["away_score"] is not None and row["home_score"] is not None:
         game["score"] = f"{away} {row['away_score']:g}, {home} {row['home_score']:g}"
     if row["prediction_as_of"]:
@@ -1077,17 +1105,55 @@ def _game(row: dict[str, Any]) -> dict[str, Any]:
             "lean": row[f"{side}_team_name"] if side in {"home", "away"} else "pass",
             "observed_at": row["prediction_as_of"],
         }
-        if (probability := row["home_market_probability"]) is not None:
+        if receipt and not receipt.get("reference") and row["home_market_probability"] is not None:
+            model["market_basis_status"] = "comparison as of publication unavailable"
+        elif (probability := row["home_market_probability"]) is not None:
             model["market_home_win_pct"] = round(float(probability) * 100, 1)
             model["market_disagreement_home_pp"] = round(
                 (float(row["home_probability"]) - float(probability)) * 100, 1
             )
-        if row["edge"] is not None:
+        if row["edge"] is not None and "market_basis_status" not in model:
             model["edge_pct"] = round(float(row["edge"]) * 100, 1)
         if result := _game_outcome(row, side):
             model["result"] = result
         game["model"] = model
     return game
+
+
+def _forecast_scores(rows: list[tuple[float, float | None, int]]) -> dict[str, Any]:
+    n = len(rows)
+    paired = [(p, market, outcome) for p, market, outcome in rows if market is not None]
+    bands = defaultdict(list)
+    for p, market, outcome in paired:
+        bands[min(9, int(p * 10))].append((p, market, outcome))
+
+    def brier(sample, column):
+        return (
+            round(sum((row[column] - row[-1]) ** 2 for row in sample) / len(sample), 4)
+            if sample
+            else None
+        )
+
+    return {
+        "games": n,
+        "accuracy_pct": round(100 * sum((p >= 0.5) == outcome for p, _, outcome in rows) / n, 1)
+        if n
+        else None,
+        "brier": brier(rows, 0),
+        "paired_games": len(paired),
+        "paired_model_brier": brier(paired, 0),
+        "paired_market_brier": brier(paired, 1),
+        "calibration": [
+            {
+                "home_probability_band_pct": [10 * band, 10 * (band + 1)],
+                "games": len(sample),
+                "model_home_pct": round(100 * sum(row[0] for row in sample) / len(sample), 1),
+                "market_home_pct": round(100 * sum(row[1] for row in sample) / len(sample), 1),
+                "actual_home_pct": round(100 * sum(row[-1] for row in sample) / len(sample), 1),
+            }
+            for band, sample in sorted(bands.items())
+        ],
+    }
 
 
 def _sports_lean_record(database: Any, current: datetime, league: str | None) -> dict[str, Any]:
@@ -1097,53 +1163,121 @@ def _sports_lean_record(database: Any, current: datetime, league: str | None) ->
     cutoff = (current - timedelta(days=HISTORY_TARGET_DAYS)).isoformat()
     rows = database.execute(
         f"""
-        SELECT e.completed,e.home_score,e.away_score,p.selection,p.home_market_probability,
+        SELECT e.completed,e.home_score,e.away_score,e.league,p.selection,p.signal,p.model_version,
+               p.home_probability,p.home_market_probability,p.decision_receipt_json,
                o.home_odds,o.away_odds,o.sportsbook
         FROM sports_events e
         JOIN sports_predictions p ON p.id=({DASH_SPORTS_PREDICTION})
-        LEFT JOIN sports_odds_snapshots o ON o.id=(
+        LEFT JOIN sports_odds_snapshots o ON p.decision_receipt_json IS NULL AND o.id=(
             {DASH_SPORTS_LINE.format(cutoff="p.observed_at")}
         )
-        WHERE e.start_time>=? AND e.completed=1 AND p.selection IN ('away','home')
+        WHERE e.start_time>=? AND e.start_time<=? AND e.completed=1
             AND e.status='post' AND e.season_type NOT IN ('preseason','pre-season')
             {"AND e.league=?" if league else ""}
         """,
-        (current.isoformat(), cutoff, *((league,) if league else ())),
+        (current.isoformat(), cutoff, current.isoformat(), *((league,) if league else ())),
     ).fetchall()
-    results = {"win": 0, "loss": 0, "push": 0}
-    lined = priced = 0
-    units = 0.0
+
+    directional = Counter()
+    portfolio = Counter()
+    excluded = Counter()
+    legacy_priced = legacy_paired = frozen_paired_leans = 0
+    units = legacy_units = 0.0
+    forecasts: list[tuple[float, float | None, int]] = []
+    cohorts = defaultdict(list)
     for row in rows:
         side = row["selection"]
-        result = _game_outcome(dict(row), side)
-        if result is None:
+        outcome = _game_outcome(dict(row), "home")
+        if outcome is None:
+            excluded["missing_final"] += 1
             continue
-        results[result] += 1
+        receipt = _payload(row["decision_receipt_json"])
+        reference = receipt.get("reference") or {}
+        market = reference.get("home_probability")
+        if outcome == "push":
+            excluded["ties_from_probability_scores"] += 1
+        else:
+            forecast = (row["home_probability"], market, int(outcome == "win"))
+            forecasts.append(forecast)
+            cohorts[(row["league"], row["model_version"])].append(forecast)
+
+        if side == "pass":
+            excluded["pass"] += 1
+            continue
+        result = (
+            outcome
+            if side == "home" or outcome == "push"
+            else ("loss" if outcome == "win" else "win")
+        )
+        directional[result] += 1
+        if receipt:
+            frozen_paired_leans += market is not None
+            offer = receipt.get("offer")
+            profit = _american_profit(offer["odds"]) if offer else None
+            if profit is None:
+                excluded[receipt["price_status"]] += 1
+            else:
+                portfolio[result] += 1
+                units += profit if result == "win" else -1.0 if result == "loss" else 0.0
+            continue
+
+        excluded["no_publication_receipt"] += 1
         prediction_market = row["home_market_probability"]
         if prediction_market is None:
             continue
-        lined += 1
+        legacy_paired += 1
         line_market, _ = no_vig_probabilities(row["home_odds"], row["away_odds"])
         if (
-            line_market is None
-            or abs(line_market - prediction_market) > 0.001
-            or row["sportsbook"] == CONSENSUS_SPORTSBOOK
+            line_market is not None
+            and abs(line_market - prediction_market) <= 0.001
+            and row["sportsbook"] != CONSENSUS_SPORTSBOOK
+            and (profit := _american_profit(row[f"{side}_odds"])) is not None
         ):
-            continue
-        profit = _american_profit(row[f"{side}_odds"])
-        if profit is not None:
-            priced += 1
-            units += profit if result == "win" else -1.0 if result == "loss" else 0.0
+            legacy_priced += 1
+            legacy_units += profit if result == "win" else -1.0 if result == "loss" else 0.0
+
+    priced = sum(portfolio.values())
+    portfolio_roi = round(100 * units / priced, 1) if priced else None
     return {
-        "basis": "Last saved pregame model lean per completed regular-season or playoff game",
+        "basis": "Last saved pregame prediction per completed regular-season or playoff game",
         "window_start": cutoff,
-        "settled": sum(results.values()),
-        "wins": results["win"],
-        "losses": results["loss"],
-        "pushes": results["push"],
-        "paired_model_and_market": lined,
+        "settled": sum(directional.values()),
+        "wins": directional["win"],
+        "losses": directional["loss"],
+        "pushes": directional["push"],
+        "paired_model_and_market": frozen_paired_leans + legacy_paired,
+        "paired_basis": "Leans with a publication reference or saved historical comparator",
         "priced": priced,
-        "roi_pct": round(units / priced * 100, 1) if priced else None,
+        "roi_pct": portfolio_roi,
+        "forecast_quality": {
+            **_forecast_scores(forecasts),
+            "paired_basis": "Same eligible games and reference available at publication",
+            "by_league_and_model": [
+                {
+                    "league": league_key,
+                    "model_version": model,
+                    **{k: v for k, v in _forecast_scores(sample).items() if k != "calibration"},
+                }
+                for (league_key, model), sample in sorted(cohorts.items())
+            ],
+        },
+        "publication_price_record": {
+            "basis": "Flat one-unit paper return at the saved bookmaker offer",
+            "evaluation": "descriptive results; predictive edge unvalidated",
+            "priced": priced,
+            "roi_pct": portfolio_roi,
+            "net_units": round(units, 4) if priced else None,
+            "wins": portfolio["win"],
+            "losses": portfolio["loss"],
+            "pushes": portfolio["push"],
+            "exclusions": dict(excluded),
+        },
+        "historical_price_estimate": {
+            "basis": "Historical reconstruction from matching bookmaker prices",
+            "paired": legacy_paired,
+            "priced": legacy_priced,
+            "roi_pct": round(100 * legacy_units / legacy_priced, 1) if legacy_priced else None,
+        },
     }
 
 
@@ -1183,7 +1317,9 @@ def sports_now(
                        e.home_team_name,e.home_abbreviation,e.home_record,e.home_score,
                        e.away_team_name,e.away_abbreviation,e.away_record,e.away_score,
                        p.selection,p.home_probability,p.home_market_probability,p.edge,p.signal,
-                       p.observed_at AS prediction_as_of,o.observed_at AS line_as_of,
+                       p.id AS prediction_id,p.model_version,p.decision_receipt_json,
+                       p.observed_at AS prediction_as_of,o.id AS line_id,
+                       o.observed_at AS line_as_of,o.source_observed_at AS line_source_as_of,
                        o.provider AS line_provider,o.sportsbook,o.home_odds,o.away_odds
                 FROM sports_events e
                 LEFT JOIN sports_predictions p ON p.id=({DASH_SPORTS_PREDICTION})
@@ -1472,10 +1608,13 @@ def dash_world(at: datetime | None = None) -> dict[str, Any]:
     """One snapshot of everything Dash can see this turn."""
 
     current = at or datetime.now(UTC)
-    from runner_web.macro_feed import macro_snapshot
+    from runner_web.macro_feed import macro_snapshot, material_macro_changes
     from runner_web.market_clock import market_clock
 
     clock = market_clock(current)
+    macro = macro_snapshot(current)
+    changes = recent_changes(at=current)
+    changes["macro"] = material_macro_changes(macro, current - timedelta(hours=1))
     return {
         "session": {
             "label": clock["label"],
@@ -1486,7 +1625,7 @@ def dash_world(at: datetime | None = None) -> dict[str, Any]:
             "data_note": clock["data_note"],
         },
         "board": market_now(current),
-        "macro": macro_snapshot(current),
+        "macro": macro,
         "runners": recent_runners(limit=6, at=current),
         "events": recent_events(limit=6, at=current),
         "halts": halt_context(limit=6, at=current),
@@ -1494,7 +1633,7 @@ def dash_world(at: datetime | None = None) -> dict[str, Any]:
         "memecoins": memecoins_now(limit=5, at=current),
         "community": community_now(limit=6),
         "self": dash_self(current),
-        "changes": recent_changes(at=current),
+        "changes": changes,
     }
 
 

@@ -1445,8 +1445,11 @@ def test_dash_sports_grades_the_pregame_lean_with_its_observed_line():
     assert final["model"]["lean"] == "New York Mets" and final["model"]["result"] == "win"
     assert final["market_line"]["home_odds"] == -110
     assert final["market_line"]["observed_at"] == seen.isoformat()
-    assert sports["model_record"]["wins"] == sports["model_record"]["priced"] == 1
-    assert sports["model_record"]["roi_pct"] == 90.9
+    ledger = sports["model_record"]
+    assert ledger["wins"] == 1 and ledger["priced"] == 0
+    assert ledger["roi_pct"] is None
+    assert ledger["historical_price_estimate"]["priced"] == 1
+    assert ledger["historical_price_estimate"]["roi_pct"] == 90.9
 
 
 def test_an_unknown_league_is_named_rather_than_empty():

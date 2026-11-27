@@ -619,6 +619,7 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
     """
 
     from runner_web.dash_sources import filing_previews
+    from runner_web.dash_stories import filing_windows
     from runner_web.main import _public_ticker_detail_data
     from runner_web.quotes import corroborate_quote, dash_quote_fields, market_mark
 
@@ -661,6 +662,13 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         if isinstance(volume, (int, float)) and volume >= 0 and price_fields["price"] is not None
         else None
     )
+    filings = filing_previews(detail.get("events") or [])
+    comparisons = filing_windows(
+        [filing["accession"] for filing in filings if filing.get("accession")]
+    )
+    for filing in filings:
+        if comparison := comparisons.get(filing.get("accession")):
+            filing["market_comparison"] = comparison
     return {
         "ticker": symbol,
         "known": True,
@@ -688,7 +696,7 @@ def look_up_ticker(ticker: str) -> dict[str, Any]:
         "model_view": _model_view(detail),
         "halt_status": halt_status,
         "halt_resume_at": resume_at,
-        "filings": filing_previews(detail.get("events") or []),
+        "filings": filings,
         "research_report": _research_report(symbol),
         "avatar_comments": _avatar_comments(symbol),
         "community": _community_for(symbol),

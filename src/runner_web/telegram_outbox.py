@@ -244,7 +244,10 @@ def deliver_outbox(
     row, cards, attempts = chosen
     status, error, receipt, retry_at, retry_after = "sent", None, None, None, None
     try:
-        receipt = sender(config, row["text"])
+        if parent := cards[0].get("reply_to_message_id"):
+            receipt = sender(config, row["text"], reply_to_message_id=parent)
+        else:
+            receipt = sender(config, row["text"])
         if type(receipt) is not int or receipt <= 0:
             raise TelegramDeliveryError("uncertain")
     except TelegramDeliveryError as exc:

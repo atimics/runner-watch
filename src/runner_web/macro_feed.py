@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import math
+import re
 import urllib.request
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -43,6 +44,7 @@ SPECS = {
     "CPIAUCNS": ("Headline CPI, not seasonally adjusted", "U.S. Bureau of Labor Statistics"),
 }
 MACRO_SECTIONS = ("rates", "inflation", "credit", "breadth")
+MACRO_TAG = re.compile(r"\[macro:([a-z_0-9]+(?:\.[a-z_0-9]+)?)\]")
 
 
 def _download(url: str) -> bytes:
@@ -84,7 +86,8 @@ def _observations(
     for row in database.execute(
         """
         SELECT * FROM (
-            SELECT series_id,observation_date,vintage_date,value,payload_json,first_collected_at,
+            SELECT series_id,observation_date,vintage_date,value,payload_json,
+                first_collected_at,last_collected_at,
                 ROW_NUMBER() OVER (
                     PARTITION BY series_id,observation_date ORDER BY vintage_date DESC
                 ) AS revision_rank
@@ -157,6 +160,25 @@ def refresh_breadth(*, at: datetime | None = None) -> int:
     closes = recent_stock_closes(current, count=7)
     with connection() as database:
         saved = _observations(database, "massive", BREADTH_FEED, closes[-1][0], current)
+        scanner = {}
+        for session, close in closes[:-1]:
+            rows = database.execute(
+                "SELECT r.id,r.as_of,s.ticker FROM market_session_reports r "
+                "JOIN scan_snapshots s ON s.scan_run_id=r.source_scan_run_id "
+                "WHERE r.report_day=? AND r.report_type='post_market' "
+                "AND r.as_of BETWEEN ? AND ?",
+                (
+                    session.isoformat(),
+                    (close - timedelta(minutes=20)).isoformat(),
+                    min(current, close + timedelta(minutes=10)).isoformat(),
+                ),
+            ).fetchall()
+            if rows:
+                scanner[session] = (
+                    rows[0]["id"],
+                    rows[0]["as_of"],
+                    {row["ticker"] for row in rows},
+                )
     history = saved.get(BREADTH_SERIES, {})
     cache = MassiveDailyCache(path)
     updates = []
@@ -180,6 +202,20 @@ def refresh_breadth(*, at: datetime | None = None) -> int:
                     100 * counts["matched_symbols"] / counts["eligible_symbols"], 2
                 ),
             }
+            if session in scanner:
+                report_id, scan_at, symbols = scanner[session]
+                subset = cache.closing_breadth(session, previous, symbols=symbols)
+                if subset:
+                    payload["scanner_cohort"] = {
+                        "basis": "Same adjusted closes for the saved closing scanner cohort",
+                        "report_id": report_id,
+                        "scan_as_of": scan_at,
+                        "scanner_symbols": len(symbols),
+                        "matched_symbols": subset["matched_symbols"],
+                        "advancing_pct": round(
+                            100 * subset["advancing"] / subset["matched_symbols"], 2
+                        ),
+                    }
             if session in history and json.loads(history[session]["payload_json"]) == payload:
                 continue
             updates.append(
@@ -231,9 +267,15 @@ def _daily(
         "observation_date": latest.isoformat(),
         "observation_age_days": (today - latest).days,
         "collected_at": point["first_collected_at"],
+        "updated_at": point.get("last_collected_at", point["first_collected_at"]),
         "value": round(point["value"] * 100, 1) if credit else point["value"],
         "unit": "basis_points" if credit else "percent",
         "previous_observation_date": previous.isoformat() if previous else None,
+        "previous_value": (
+            round(values[previous]["value"] * 100, 1) if credit else values[previous]["value"]
+        )
+        if previous
+        else None,
         "change_bps": round((point["value"] - values[previous]["value"]) * 100, 1)
         if previous
         else None,
@@ -265,6 +307,7 @@ def _inflation_rate(
             "observation_month": month.strftime("%Y-%m"),
             "comparison_month": baseline.strftime("%Y-%m"),
             "collected_at": point["first_collected_at"],
+            "updated_at": point.get("last_collected_at", point["first_collected_at"]),
             "change_pct": change,
         }
 
@@ -290,7 +333,9 @@ def _inflation_rate(
     }
 
 
-def macro_snapshot(at: datetime | None = None, *, section: str | None = None) -> dict[str, Any]:
+def macro_snapshot(
+    at: datetime | None = None, *, section: str | None = None, breadth_session: date | None = None
+) -> dict[str, Any]:
     current = (at or datetime.now(UTC)).astimezone(UTC)
     today = current.date()
     with connection() as database:
@@ -332,6 +377,12 @@ def macro_snapshot(at: datetime | None = None, *, section: str | None = None) ->
         "baa_treasury_spread": _daily("BAA10Y", fred.get("BAA10Y", {}), today, credit=True),
     }
     expected_date, expected_close = recent_stock_closes(current, count=1)[0]
+    if breadth_session and breadth_session in breadth_history:
+        expected_date = breadth_session
+        item = breadth_history[breadth_session]
+        expected_close = datetime.fromisoformat(
+            json.loads(item["payload_json"])["session_close_at"]
+        )
     breadth: dict[str, Any] = {
         "status": "unavailable",
         "basis": "Provider-adjusted daily closes of U.S. non-OTC symbols that traded on both dates",
@@ -340,8 +391,9 @@ def macro_snapshot(at: datetime | None = None, *, section: str | None = None) ->
         "expected_session_date": expected_date.isoformat(),
         "expected_session_close_at": expected_close.isoformat(),
     }
-    if breadth_history:
-        latest, point = next(iter(breadth_history.items()))
+    if breadth_history and (breadth_session is None or breadth_session in breadth_history):
+        latest = breadth_session or next(iter(breadth_history))
+        point = breadth_history[latest]
         breadth.update(
             status="available" if latest == expected_date else "lagging",
             session_date=latest.isoformat(),
@@ -349,8 +401,22 @@ def macro_snapshot(at: datetime | None = None, *, section: str | None = None) ->
             advancing_pct=round(point["value"], 2),
             **json.loads(point["payload_json"]),
         )
+        previous = date.fromisoformat(breadth["previous_session_date"])
+        if prior := breadth_history.get(previous):
+            breadth["previous_reading"] = {
+                "session_date": previous.isoformat(),
+                "matched_symbols": json.loads(prior["payload_json"])["matched_symbols"],
+                "advancing_pct": round(prior["value"], 2),
+                "change_pp": round(point["value"] - prior["value"], 2),
+            }
     sections = {"rates": rates, "inflation": inflation, "credit": credit, "breadth": breadth}
     selected = sections if section is None else {section: sections[section]}
+    for key, group in selected.items():
+        if key == "breadth":
+            group["citation"] = "[macro:breadth]"
+        else:
+            for name, reading in group.items():
+                reading["citation"] = f"[macro:{key}.{name}]"
     checks = [
         item["status"]
         for key, group in selected.items()
@@ -370,6 +436,87 @@ def macro_snapshot(at: datetime | None = None, *, section: str | None = None) ->
         "checked_at": current.isoformat(),
         **selected,
     }
+
+
+def _macro_citation(reading: dict, key: str) -> str:
+    source = reading.get("source_url") or ", ".join(reading.get("source_urls", ()))
+    status = reading.get("status")
+    if key == "breadth" and "matched_symbols" in reading:
+        sentence = (
+            f"{reading['advancing_pct']:g}% of {reading['matched_symbols']:,} matched U.S. non-OTC "
+            f"symbols advanced at the {reading['session_date']} close"
+        )
+        if status == "lagging":
+            sentence += f" (awaiting {reading['expected_session_date']} close data)"
+        return f"{sentence} ({source})"
+    if "observation_month" in reading:
+        value = reading.get("change_pct")
+        month = reading["observation_month"]
+        label = "year over year" if key.endswith("year_over_year") else "month over month"
+        if value is not None:
+            return f"headline CPI {value:+g}% {label} in {month} ({status}; {source})"
+        fallback = reading.get("last_comparable")
+        previous = (
+            f", latest comparable {fallback['change_pct']:+g}% in {fallback['observation_month']}"
+            if fallback
+            else ""
+        )
+        return f"headline CPI {label} unavailable for {month}{previous} ({source})"
+    if reading.get("value") is not None:
+        unit = " bp" if reading["unit"] == "basis_points" else "%"
+        name = reading.get("name") or "2s10s Treasury spread"
+        freshness = ", stale" if status == "stale" else ""
+        return (
+            f"{name} {reading['value']:g}{unit} as of "
+            f"{reading['observation_date']}{freshness} ({source})"
+        )
+    return f"{reading.get('name') or 'U.S. closing breadth'} unavailable ({source})"
+
+
+def render_macro_citations(text: str, evidence: dict[str, Any]) -> tuple[str, list[str]]:
+    """Render only readings supplied to the model, keeping their basis on the claim."""
+    world = evidence.get("world") or {}
+    macro = {**(world.get("macro") or {}), **(evidence.get("macro") or {})}
+    missing = []
+
+    def replace(match):
+        key = match[1]
+        section, _, name = key.partition(".")
+        expanded = evidence.get("macro:" + section) or {}
+        group = expanded.get(section) or macro.get(section) or {}
+        reading = group if key == "breadth" else group.get(name)
+        if not reading or reading.get("citation") != match[0]:
+            missing.append(key)
+            return match[0]
+        return _macro_citation(reading, key)
+
+    rendered = MACRO_TAG.sub(replace, text)
+    if "[macro:" in MACRO_TAG.sub("", text):
+        missing.append("malformed macro tag")
+    return rendered, missing
+
+
+def material_macro_changes(snapshot: dict, since: datetime) -> list[dict]:
+    """New published observations only, with explicit materiality for daily readings."""
+    stamp = since.isoformat()
+    changes = []
+    for section in ("inflation", "rates", "credit"):
+        for name, reading in snapshot.get(section, {}).items():
+            if (reading.get("updated_at") or "") <= stamp or reading.get("status") != "available":
+                continue
+            threshold = 5
+            if section != "inflation" and abs(reading.get("change_bps") or 0) < threshold:
+                continue
+            changes.append({"reading": name, "section": section, **reading})
+    breadth = snapshot.get("breadth") or {}
+    previous = breadth.get("previous_reading") or {}
+    if (
+        breadth.get("status") == "available"
+        and (breadth.get("collected_at") or "") > stamp
+        and abs(previous.get("change_pp", 0)) >= 8
+    ):
+        changes.append({"section": "breadth", **breadth})
+    return changes
 
 
 async def collect_macro(refresh, interval_seconds: int) -> None:

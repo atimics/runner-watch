@@ -283,11 +283,14 @@ class MassiveDailyCache:
         except sqlite3.Error as exc:
             raise MassiveAPIError(f"Massive daily cache write failed: {exc}") from exc
 
-    def bars_for(self, symbols: set[str]) -> dict[str, list[tuple[date, dict[str, Any]]]]:
+    def bars_for(
+        self, symbols: set[str], *, since: date | None = None
+    ) -> dict[str, list[tuple[date, dict[str, Any]]]]:
         clean = {symbol.strip().upper() for symbol in symbols if symbol.strip()}
         if not clean:
             return {}
         placeholders = ",".join("?" for _ in clean)
+        clause = "AND session_date>=?" if since else ""
         try:
             with self._lock:
                 rows = (
@@ -295,8 +298,8 @@ class MassiveDailyCache:
                     .execute(
                         "SELECT symbol, session_date, open, high, low, close, "
                         "volume, vwap, transactions FROM daily_bars "
-                        f"WHERE symbol IN ({placeholders}) ORDER BY symbol, session_date",
-                        tuple(sorted(clean)),
+                        f"WHERE symbol IN ({placeholders}) {clause} ORDER BY symbol, session_date",
+                        (*sorted(clean), *((since.isoformat(),) if since else ())),
                     )
                     .fetchall()
                 )
@@ -324,14 +327,20 @@ class MassiveDailyCache:
             )
         return output
 
-    def closing_breadth(self, session: date, prior_session: date) -> dict[str, Any] | None:
+    def closing_breadth(
+        self, session: date, prior_session: date, *, symbols: set[str] | None = None
+    ) -> dict[str, Any] | None:
         """Compare every non-OTC symbol with a traded close in both sessions."""
+        if symbols is not None and not symbols:
+            return None
+        selected = sorted(symbols or ())
+        restriction = f"AND day.symbol IN ({','.join('?' for _ in selected)})" if selected else ""
         try:
             with self._lock:
                 row = (
                     self._connect()
                     .execute(
-                        """
+                        f"""
                     SELECT
                         SUM(CASE WHEN day.close>prior.close THEN 1 ELSE 0 END),
                         SUM(CASE WHEN day.close<prior.close THEN 1 ELSE 0 END),
@@ -343,13 +352,14 @@ class MassiveDailyCache:
                     LEFT JOIN daily_bars prior
                            ON prior.symbol=day.symbol AND prior.session_date=?
                           AND prior.close>0 AND prior.volume>0
-                    WHERE day.session_date=? AND day.close>0 AND day.volume>0
+                    WHERE day.session_date=? AND day.close>0 AND day.volume>0 {restriction}
                     """,
                         (
                             session.isoformat(),
                             prior_session.isoformat(),
                             prior_session.isoformat(),
                             session.isoformat(),
+                            *selected,
                         ),
                     )
                     .fetchone()
@@ -373,6 +383,21 @@ class MassiveDailyCache:
                 strict=True,
             )
         )
+
+    def capture_times(self, since: date) -> dict[date, datetime]:
+        try:
+            with self._lock:
+                rows = (
+                    self._connect()
+                    .execute(
+                        "SELECT session_date,fetched_at FROM fetched_dates WHERE session_date>=?",
+                        (since.isoformat(),),
+                    )
+                    .fetchall()
+                )
+        except sqlite3.Error as exc:
+            raise MassiveAPIError(f"Massive daily cache capture-time read failed: {exc}") from exc
+        return {date.fromisoformat(day): datetime.fromisoformat(stamp) for day, stamp in rows}
 
     def prune_before(self, cutoff: date) -> int:
         try:

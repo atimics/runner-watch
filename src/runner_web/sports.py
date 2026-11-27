@@ -51,6 +51,7 @@ from runner_web.sports_identity import participants_ready
 from runner_web.sports_markets import event_readings, refresh_prediction_markets
 
 MODEL_VERSION = "team-form-v1"
+DASH_SIGNAL_RULE_VERSION = "no-vig-gap-v1"
 SOURCE = "espn"
 FEED = "sports_scoreboard_preview"
 HISTORY_FEED = "sports_scoreboard_history"
@@ -1509,6 +1510,78 @@ def _store_bookmaker_moneylines(
         )
 
 
+def _pregame_decision_receipt(database, event, prediction, timestamp):
+    """Freeze the exact comparison and a separately observed bookmaker offer."""
+    decision_time = _parse_time(timestamp)
+    if event.get("status") != "pre" or decision_time >= _parse_time(event["start_time"]):
+        return None
+    side = prediction["selection"]
+    reference = offer = None
+    if prediction["home_market_probability"] is not None:
+        provider = event.get("odds_provider") or SOURCE
+        source_at = event.get("odds_source_updated_at") or timestamp
+        if _parse_time(source_at) <= decision_time:
+            snapshot = database.execute(
+                "SELECT id,observed_at FROM sports_odds_snapshots "
+                "WHERE event_id=? AND provider=? AND sportsbook=? AND observed_at<=? "
+                "AND home_odds=? AND away_odds=? ORDER BY observed_at DESC,id DESC LIMIT 1",
+                (
+                    event["id"],
+                    provider,
+                    event["sportsbook"],
+                    timestamp,
+                    event["home_odds"],
+                    event["away_odds"],
+                ),
+            ).fetchone()
+            reference = {
+                "snapshot_id": snapshot["id"] if snapshot else None,
+                "provider": provider,
+                "sportsbook": event["sportsbook"],
+                "observed_at": snapshot["observed_at"] if snapshot else timestamp,
+                "source_as_of": source_at,
+                "home_odds": event["home_odds"],
+                "away_odds": event["away_odds"],
+                "home_probability": prediction["home_market_probability"],
+                "book_count": event.get("market_book_count"),
+            }
+    price_status = "pass" if side == "pass" else "no_paired_market"
+    if side in {"home", "away"} and reference and prediction["signal"] in PROMOTED_SIGNALS:
+        books = _latest_bookmaker_rows(database, [event["id"]], cutoff=timestamp)
+        timely = [
+            row
+            for row in books
+            if _parse_time(row["source_updated_at"] or row["observed_at"]) <= decision_time
+        ]
+        recent = _fresh_bookmaker_items(timely, decision_time)
+        priceable = [row for row in recent if _american_profit(row[f"{side}_odds"]) is not None]
+        price_status = "no_fresh_bookmaker_price"
+        if priceable:
+            chosen = min(
+                priceable,
+                key=lambda row: (-_parse_time(row["fresh_at"]).timestamp(), row["sportsbook_key"]),
+            )
+            profit = _american_profit(chosen[f"{side}_odds"])
+            offer = {
+                "id": chosen["id"],
+                "provider": chosen["provider"],
+                "sportsbook": chosen["sportsbook"],
+                "odds": chosen[f"{side}_odds"],
+                "observed_at": chosen["observed_at"],
+                "source_as_of": chosen["fresh_at"],
+                "break_even_probability": round(1 / (1 + profit), 6),
+            }
+            price_status = "priced"
+    return _json(
+        {
+            "rule_version": DASH_SIGNAL_RULE_VERSION,
+            "reference": reference,
+            "offer": offer,
+            "price_status": price_status,
+        }
+    )
+
+
 def store_golf_events(
     events: list[dict[str, Any]], observed_at: datetime | None = None
 ) -> dict[str, int]:
@@ -1801,8 +1874,9 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                         id,event_id,model_version,input_hash,input_state_hash,
                         selection,home_probability,away_probability,
                         home_market_probability,away_market_probability,
-                        edge,signal,quality,evidence_json,risks_json,factors_json,observed_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
+                        edge,signal,quality,evidence_json,risks_json,factors_json,observed_at,
+                        decision_receipt_json
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING
                     """,
                     (
                         str(uuid.uuid4()),
@@ -1822,6 +1896,7 @@ def store_events(events: list[dict[str, Any]], observed_at: datetime | None = No
                         _json(prediction["risks"]),
                         _json(prediction["factors"]),
                         timestamp,
+                        _pregame_decision_receipt(database, event, prediction, timestamp),
                     ),
                 )
     if events:
@@ -2133,10 +2208,13 @@ def _bookmaker_odds_item(row: Any) -> dict[str, Any] | None:
     return item
 
 
-def _latest_bookmaker_rows(database: Any, event_ids: list[str]) -> list[Any]:
+def _latest_bookmaker_rows(
+    database: Any, event_ids: list[str], *, cutoff: str | None = None
+) -> list[Any]:
     if not event_ids:
         return []
     placeholders = ",".join("?" for _ in event_ids)
+    cutoff_filter = "AND b.observed_at<=?" if cutoff else ""
     return database.execute(
         f"""
         SELECT * FROM (
@@ -2144,11 +2222,11 @@ def _latest_bookmaker_rows(database: Any, event_ids: list[str]) -> list[Any]:
                 PARTITION BY event_id,sportsbook_key ORDER BY observed_at DESC,id DESC
             ) AS latest_rank
             FROM sports_bookmaker_odds b
-            WHERE event_id IN ({placeholders}) AND provider=?
+            WHERE event_id IN ({placeholders}) AND provider=? {cutoff_filter}
         ) latest
         WHERE latest_rank=1
         """,
-        (*event_ids, ODDS_PROVIDER),
+        (*event_ids, ODDS_PROVIDER, *((cutoff,) if cutoff else ())),
     ).fetchall()
 
 
