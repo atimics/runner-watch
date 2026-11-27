@@ -41,7 +41,7 @@ def stored_instant(value) -> datetime | None:
         return None
 
 
-def propose(args: dict, at: datetime) -> dict:
+def propose(args: dict, at: datetime, *, max_days: int = 1) -> dict:
     """Resolve absolute or legacy relative input to one aware UTC instant."""
     minutes = args.get("review_minutes")
     if minutes is not None and (type(minutes) is not int or not 30 <= minutes <= 1440):
@@ -60,8 +60,9 @@ def propose(args: dict, at: datetime) -> dict:
         review = at + timedelta(minutes=minutes)
     else:
         raise ValueError("Supply review_at with a UTC offset, or legacy review_minutes.")
-    if not at + timedelta(minutes=30) <= review <= at + timedelta(days=1):
-        raise ValueError("Choose a review time from 30 minutes to one day in the future.")
+    if not at + timedelta(minutes=30) <= review <= at + timedelta(days=max_days):
+        horizon = "one day" if max_days == 1 else f"{max_days} days"
+        raise ValueError(f"Choose a review time from 30 minutes to {horizon} in the future.")
     timezone = args.get("review_timezone", DEFAULT_TIMEZONE)
     try:
         ZoneInfo(timezone)

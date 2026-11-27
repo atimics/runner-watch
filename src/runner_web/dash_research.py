@@ -19,6 +19,7 @@ MAX_ROUNDS = 8
 MAX_TOOLS = 12
 TURN_SECONDS = 75
 NOTE_DAYS = 14
+THESIS_REVIEW_DAYS = 7
 
 ANALYST_INSTRUCTION = (
     "Run your own investigation. Pick a question, inspect evidence, decide what it "
@@ -59,7 +60,9 @@ THESIS_TOOL = {
     "name": "remember_thesis",
     "description": (
         "Save or revise your own evidence-backed view for this chat and topic. "
-        "Expand its node first. Record the strongest doubt and the next fact to check. "
+        "Use the node from expand, such as ticker:AREC. "
+        "Record the strongest doubt and the next fact to check. "
+        "Use an exact review_at for dates up to seven days away. "
         "A watching thesis in the main room is revisited by the desk worker. "
         "Other chats and topics revisit their notes during later conversations."
     ),
@@ -113,7 +116,7 @@ def canonical_node(value: Any) -> str:
     kind, _, subject = node.partition(":")
     kind = kind.lower()
     subject = subject.strip()
-    if kind == "ticker" and (symbol := normalize_ticker(subject)):
+    if kind in {"ticker", "stock", "stocks"} and (symbol := normalize_ticker(subject)):
         return "ticker:" + symbol
     if kind == "coin" and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", subject):
         return "coin:" + subject
@@ -124,6 +127,15 @@ def canonical_node(value: Any) -> str:
     if node.lower() in {"board", "runners", "events", "halts", "community", "sports", "memecoins"}:
         return node.lower()
     return ""
+
+
+def _thesis_node(value: Any, evidence: dict[str, Any]) -> str:
+    node = canonical_node(value)
+    if node:
+        return node
+    symbol = normalize_ticker(value)
+    shorthand = f"ticker:{symbol}"
+    return shorthand if symbol and shorthand in evidence else ""
 
 
 def _prefix(scope: str) -> str:
@@ -173,10 +185,12 @@ def save_thesis(
     persist: bool = True,
     staged: dict | None = None,
 ) -> dict[str, Any]:
-    node = canonical_node(args.get("node"))
+    node = _thesis_node(args.get("node"), evidence)
     source = evidence.get(node)
-    if not node or not source:
-        return {"error": "Expand this node before saving its thesis."}
+    if not node:
+        return {"error": "Use a node such as ticker:AREC or a ticker expanded in this turn."}
+    if not source:
+        return {"error": "Expand this node before saving its thesis.", "node": node}
     if isinstance(source, dict) and (source.get("error") or source.get("known") is False):
         return {"error": "This lookup needs usable evidence before a thesis can be saved."}
     fields = ("thesis", "counter_evidence", "change_my_mind", "next_check")
@@ -187,7 +201,7 @@ def save_thesis(
     if args.get("status") not in {"watching", "closed"}:
         return {"error": "Status must be watching or closed."}
     try:
-        schedule = dash_schedule.propose(args, at)
+        schedule = dash_schedule.propose(args, at, max_days=THESIS_REVIEW_DAYS)
     except ValueError as exc:
         return {"error": str(exc)}
     note = {
@@ -199,23 +213,7 @@ def save_thesis(
         "reviewed_at": at.isoformat(),
         "review_attempted_at": at.isoformat(),
         "evidence": json.dumps(source, separators=(",", ":"), default=str)[:3000],
-        "source_references": [
-            {
-                key: item.get(key)
-                for key in (
-                    "evidence_id",
-                    "source_url",
-                    "content_hash",
-                    "published_at",
-                    "event_at",
-                    "checked_at",
-                )
-            }
-            for name, item in evidence.items()
-            if name.startswith("source:")
-            and item.get("passages")
-            and (not node.startswith("ticker:") or item.get("ticker") == node.split(":", 1)[1])
-        ][:12],
+        "source_references": _thesis_sources(node, evidence),
         "review_outcome": "reviewed_quiet",
     }
     with connection() as database:
@@ -254,6 +252,33 @@ def save_thesis(
         if persist:
             note = store_note(database, scope, note, at)
     return {"saved": True, "note": note, "schedule": dash_schedule.reference(node, note)}
+
+
+def _thesis_sources(node: str, evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    symbol = node.split(":", 1)[1] if node.startswith("ticker:") else None
+    read_sources = [
+        item
+        for key, item in evidence.items()
+        if key.startswith("source:")
+        and item.get("passages")
+        and (symbol is None or item.get("ticker") == symbol)
+    ]
+    previews = list(dash_sources.ticker_filing_references({node: evidence[node]}))
+    references = {}
+    for item in [*read_sources, *previews]:
+        if item.get("passages") and (identity := item.get("evidence_id")) not in references:
+            references[identity] = {
+                key: item.get(key)
+                for key in (
+                    "evidence_id",
+                    "source_url",
+                    "content_hash",
+                    "published_at",
+                    "event_at",
+                    "checked_at",
+                )
+            }
+    return list(references.values())[:12]
 
 
 def store_note(database, scope, note, at, *, announced=False, retain_nodes=()):
@@ -314,7 +339,7 @@ def store_note(database, scope, note, at, *, announced=False, retain_nodes=()):
 
 
 def finish_review(notes, args, evidence, at):
-    node = canonical_node(args.get("node"))
+    node = _thesis_node(args.get("node"), evidence)
     prior = next((note for note in notes if note["node"] == node), None)
     outcome = args.get("outcome")
     reason = str(args.get("reason") or "").strip()
@@ -1055,6 +1080,19 @@ def _run_research(
                         else:
                             output = {"error": "Choose a node listed by expand."}
                     elif name in {"remember_thesis", "finish_review"} and scope:
+                        if name == "remember_thesis":
+                            node = _thesis_node(args.get("node"), evidence)
+                            if node.startswith("ticker:") and not evidence.get(node):
+                                evidence[node] = _run_step(
+                                    progress,
+                                    checkpoint,
+                                    stage="lookup",
+                                    tool="expand",
+                                    node=node,
+                                    retry={"tool": "expand", "arguments": {"node": node}},
+                                    read=True,
+                                    call=partial(expand, node),
+                                )
                         output = (
                             save_thesis(
                                 scope, args, evidence, current, persist=False, staged=staged
