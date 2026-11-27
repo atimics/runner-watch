@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from datetime import timedelta
@@ -662,6 +663,45 @@ def test_ticker_filing_queues_and_cites_standalone_edgar_document(monkeypatch):
     with connection() as database:
         database.execute("UPDATE source_registry SET enabled=0 WHERE source='sec'")
     assert "passages" not in telegram_chat.look_up_ticker("AREC")["filings"][0]
+
+
+def test_filing_fetch_failure_reports_retry_and_preserves_filing_identity():
+    url = store_source()
+    with connection() as database:
+        database.execute("DELETE FROM source_documents")
+    event = {"accession": "TEST", "filing_url": url, "filed_at": NOW.isoformat()}
+    assert dash_sources.filing_previews([event], at=NOW)[0]["text_status"] == "queued"
+
+    class Edgar:
+        def filing_document_text(self, filing):
+            raise OSError("temporarily unavailable")
+
+    assert dash_sources.archive_queued_filings(Edgar(), at=NOW) == 0
+    retry = dash_sources.filing_previews([event], at=NOW)[0]
+    assert retry["text_status"] == "upstream_unavailable"
+    assert retry["text_retry_at"] == (NOW + timedelta(minutes=15)).isoformat()
+    assert dash_sources.archive_queued_filings(Edgar(), at=NOW + timedelta(minutes=1)) == 0
+    assert (
+        dash_sources.filing_previews([event], at=NOW + timedelta(minutes=15))[0]["text_status"]
+        == "queued"
+    )
+
+
+def test_filing_worker_polls_the_queue_independently(monkeypatch):
+    calls = []
+
+    async def threadpool(callback, client, *, at):
+        calls.append((callback, client.attempts))
+
+    async def stop(seconds):
+        assert seconds == 15
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(main, "run_in_threadpool", threadpool)
+    monkeypatch.setattr(main.asyncio, "sleep", stop)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main.edgar_filing_text_worker())
+    assert calls == [(dash_sources.archive_queued_filings, 1)]
 
 
 def test_reply_quote_tag_uses_stored_source_age_and_confidence():

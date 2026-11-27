@@ -988,6 +988,7 @@ def _start_worker_tasks(
         return []
     workers = [
         asyncio.create_task(edgar_worker(), name="edgar"),
+        asyncio.create_task(edgar_filing_text_worker(), name="edgar-filing-text"),
         asyncio.create_task(public_screen_warm_worker(), name="public-screens"),
         asyncio.create_task(trading_halt_worker(), name="trading-halts"),
         asyncio.create_task(delisting_notice_worker(), name="delisting-notices"),
@@ -1785,6 +1786,26 @@ async def edgar_worker() -> None:
         except Exception as exc:
             record_edgar_error(exc)
         await asyncio.sleep(45)
+
+
+async def edgar_filing_text_worker() -> None:
+    from runner_watch.edgar import EdgarClient
+    from runner_web.dash_sources import archive_queued_filings
+
+    client = EdgarClient(
+        fetch_recorder=record_source_fetch,
+        max_requests_per_second=2,
+        request_timeout=10,
+        attempts=1,
+    )
+    while True:
+        try:
+            await run_in_threadpool(archive_queued_filings, client, at=now())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOG.exception("SEC filing text worker failed")
+        await asyncio.sleep(15)
 
 
 async def outcome_worker() -> None:

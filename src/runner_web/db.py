@@ -4131,6 +4131,13 @@ def _migration_108_sec_filing_previews(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_109_release_sec_filing_queue(db: DatabaseConnection) -> None:
+    db.execute(
+        "UPDATE worker_state SET updated_at=? WHERE key LIKE ? ESCAPE '!'",
+        (datetime.now(UTC).isoformat(), "dash!_sec!_document:%"),
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4246,6 +4253,7 @@ MIGRATIONS = (
     Migration(106, "solana_trading", migrate_trading),
     Migration(107, "quote_reference_basis", _migration_107_quote_reference_basis),
     Migration(108, "sec_filing_previews", _migration_108_sec_filing_previews),
+    Migration(109, "release_sec_filing_queue", _migration_109_release_sec_filing_queue),
 )
 
 
