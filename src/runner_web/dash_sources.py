@@ -22,6 +22,8 @@ MAX_DOCUMENT_BYTES = 2_000_000
 MAX_PASSAGE_CHARS = 1800
 MAX_PREVIEW_CHARS = 1100
 DOCUMENT_QUEUE = "dash_sec_document:"
+DOCUMENT_QUEUE_PATTERN = DOCUMENT_QUEUE.replace("_", "!_") + "%"
+DOCUMENT_STATUS = "dash_sec_document_result:"
 SOURCE_TOOLS = [
     {
         "name": "list_sources",
@@ -106,6 +108,7 @@ def filing_previews(events: list[dict[str, Any]], *, at: datetime | None = None)
     events = events[:3]
     accessions = [event["accession"] for event in events if event.get("accession")]
     ready = {}
+    pending = {}
     if accessions:
         marks = ",".join("?" for _ in accessions)
         with connection() as database:
@@ -132,6 +135,23 @@ def filing_previews(events: list[dict[str, Any]], *, at: datetime | None = None)
                 ],
                 current,
             )
+            if len(ready) < len(accessions):
+                pending = {
+                    row["key"][len(DOCUMENT_QUEUE) :]: dict(row)
+                    for row in database.execute(
+                        f"""
+                        SELECT q.key,COALESCE(s.value,'fetching') AS state,q.updated_at
+                        FROM worker_state q LEFT JOIN worker_state s
+                        ON s.key=? || q.value AND s.updated_at=q.updated_at
+                        WHERE q.key IN ({marks}) AND q.updated_at>?
+                        """,
+                        (
+                            DOCUMENT_STATUS,
+                            *(DOCUMENT_QUEUE + accession for accession in accessions),
+                            current,
+                        ),
+                    ).fetchall()
+                }
     results = []
     for event in events:
         accession = event.get("accession")
@@ -160,6 +180,9 @@ def filing_previews(events: list[dict[str, Any]], *, at: datetime | None = None)
                 passages=json.loads(preview["passages_json"]),
                 citation=f"[source:{identity}]",
             )
+        elif queued := pending.get(accession):
+            filing["text_status"] = queued["state"]
+            filing["text_retry_at"] = queued["updated_at"]
         results.append(filing)
     return results
 
@@ -274,15 +297,16 @@ def archive_queued_filings(client: EdgarClient, *, at: datetime, limit: int = 2)
         rows = database.execute(
             "SELECT w.key,w.updated_at AS eligible_at,f.* FROM worker_state w "
             "JOIN sec_filings f ON f.accession=w.value "
-            "WHERE w.key>=? AND w.key<? AND w.updated_at<=? ORDER BY w.updated_at,w.key LIMIT ?",
-            (DOCUMENT_QUEUE, DOCUMENT_QUEUE + "~", at.isoformat(), limit),
+            "WHERE w.key LIKE ? ESCAPE '!' AND w.updated_at<=? ORDER BY w.updated_at,w.key LIMIT ?",
+            (DOCUMENT_QUEUE_PATTERN, at.isoformat(), limit),
         ).fetchall()
     archived = 0
     for row in rows:
+        retry_at = (at + timedelta(minutes=15)).isoformat()
         with connection() as database:
             claimed = database.execute(
                 "UPDATE worker_state SET updated_at=? WHERE key=? AND updated_at=?",
-                ((at + timedelta(minutes=15)).isoformat(), row["key"], row["eligible_at"]),
+                (retry_at, row["key"], row["eligible_at"]),
             ).rowcount
         if not claimed:
             continue
@@ -294,6 +318,7 @@ def archive_queued_filings(client: EdgarClient, *, at: datetime, limit: int = 2)
         filing = EdgarFiling(
             row["accession"], row["cik"], row["form"], row["title"], "", row["filed_at"], url
         )
+        error = "archive_unavailable"
         try:
             if _filing_body(url):
                 client.get_text(url)
@@ -303,6 +328,7 @@ def archive_queued_filings(client: EdgarClient, *, at: datetime, limit: int = 2)
         except (OSError, ValueError) as exc:
             LOG.info("SEC preview fetch failed for %s: %s", filing.accession, type(exc).__name__)
             url = None
+            error = "upstream_unavailable"
         # Complete submissions already in the archive remain usable if the
         # standalone document is temporarily unavailable.
         urls = (url, _filing_prefix(filing.filing_url) + filing.accession + ".txt")
@@ -310,6 +336,15 @@ def archive_queued_filings(client: EdgarClient, *, at: datetime, limit: int = 2)
             if candidate and _save_filing_preview(filing, candidate, row["key"], at):
                 archived += 1
                 break
+        else:
+            with connection() as database:
+                database.execute(
+                    "INSERT INTO worker_state(key,value,updated_at) VALUES(?,?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value,"
+                    "updated_at=excluded.updated_at "
+                    "WHERE worker_state.updated_at<=excluded.updated_at",
+                    (DOCUMENT_STATUS + filing.accession, error, retry_at),
+                )
     return archived
 
 
@@ -353,7 +388,10 @@ def _save_filing_preview(filing: EdgarFiling, url: str, queue_key: str, at: date
                 at.isoformat(),
             ),
         )
-        database.execute("DELETE FROM worker_state WHERE key=?", (queue_key,))
+        database.execute(
+            "DELETE FROM worker_state WHERE key IN (?,?)",
+            (queue_key, DOCUMENT_STATUS + filing.accession),
+        )
     return True
 
 
