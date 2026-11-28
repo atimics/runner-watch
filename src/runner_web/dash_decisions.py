@@ -106,7 +106,7 @@ DESK_NOTE_QUESTIONS: dict[str, dict[str, Any]] = {
         [
             "Nothing worth a note: no real change, or the same as the last note.",
             "Minor: small changes most people would not care about.",
-            "Worth a short note: a new runner, a halt, a reopen, or a new report.",
+            "Worth a short note: a new source, material macro data, a halt, or a report.",
             "The room should hear this now: a big move or several things at once.",
         ],
     ),

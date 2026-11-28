@@ -4138,6 +4138,34 @@ def _migration_109_release_sec_filing_queue(db: DatabaseConnection) -> None:
     )
 
 
+def _migration_110_dash_sports_decision_receipts(db: DatabaseConnection) -> None:
+    _ensure_column(db, "sports_predictions", "decision_receipt_json TEXT")
+
+
+def _migration_111_dash_story_pilot(db: DatabaseConnection) -> None:
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS dash_filing_windows (
+            accession TEXT PRIMARY KEY REFERENCES sec_filings(accession) ON DELETE CASCADE,
+            accepted_at TEXT NOT NULL,
+            comparison_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS dash_filing_windows_accepted ON dash_filing_windows(accepted_at);
+        CREATE TABLE IF NOT EXISTS dash_story_pilot (
+            session_date TEXT PRIMARY KEY,
+            story_kind TEXT NOT NULL,
+            draft_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            review_at TEXT NOT NULL,
+            reviewed_at TEXT,
+            review_json TEXT,
+            feedback_json TEXT,
+            story_key TEXT UNIQUE
+        );
+        """
+    )
+
+
 MIGRATIONS = (
     Migration(1, "baseline", _migration_001_baseline),
     Migration(2, "topic_snapshots", _migration_002_topic_snapshots),
@@ -4254,6 +4282,8 @@ MIGRATIONS = (
     Migration(107, "quote_reference_basis", _migration_107_quote_reference_basis),
     Migration(108, "sec_filing_previews", _migration_108_sec_filing_previews),
     Migration(109, "release_sec_filing_queue", _migration_109_release_sec_filing_queue),
+    Migration(110, "dash_sports_decision_receipts", _migration_110_dash_sports_decision_receipts),
+    Migration(111, "dash_story_pilot", _migration_111_dash_story_pilot),
 )
 
 

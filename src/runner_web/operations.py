@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -45,6 +45,8 @@ BASE_REQUIRED_WORKER_NAMES = frozenset(
         "telegram-chat",
         "telegram-alert-sweep",
         "massive-backfill",
+        "dash-filing-windows",
+        "dash-story-pilot",
         "research-jobs",
         "report-release",
         "privacy-prune",
@@ -480,6 +482,27 @@ def workers_health_api() -> JSONResponse:
         {"status": "ok" if healthy else "degraded"},
         status_code=200 if healthy else 503,
     )
+
+
+@router.get("/health/dash-stories")
+def dash_stories_api(_access: None = Depends(require_operations_access)) -> dict[str, Any]:
+    from runner_web.dash_stories import story_pilot_status
+
+    return story_pilot_status()
+
+
+@router.post("/health/dash-stories/{session}/feedback")
+def dash_stories_feedback_api(
+    session: date, payload: dict[str, str], _access: None = Depends(require_operations_access)
+) -> dict[str, str]:
+    from runner_web.dash_stories import save_pilot_feedback
+
+    rating = payload.get("rating", "")
+    if rating not in {"useful", "needs_work"}:
+        raise HTTPException(422, "Choose useful or needs_work")
+    if not save_pilot_feedback(session.isoformat(), rating, payload.get("question_to_follow", "")):
+        raise HTTPException(404, "Draft not found")
+    return {"status": "saved"}
 
 
 @router.get("/health/data")

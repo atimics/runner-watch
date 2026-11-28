@@ -2,14 +2,55 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import timedelta
 from uuid import uuid4
 
 from runner_web.db import connection
-from runner_web.telegram_outbox import enqueue_cards
+from runner_web.telegram_outbox import enqueue_cards, lock_channel
 
 MAX_ATTEMPTS = 3
+
+
+def desk_card(database, scope, identity, chat_id, result, at):
+    card = {
+        "kind": "dash_research",
+        "subject": f"{scope}:{identity}",
+        "text": result["text"],
+        "research_job": identity,
+    }
+    if not (story := result.get("story")):
+        return card
+    topic = hashlib.sha256(story["node"].encode()).hexdigest()[:24]
+    prefix = f"{scope}:story:{topic}:"
+    card["subject"] = prefix + story["version"]
+    parent = database.execute(
+        "SELECT o.message_id FROM telegram_outbox o "
+        "JOIN telegram_outbox_items i ON i.outbox_id=o.id "
+        "WHERE o.chat_id=? AND o.status='sent' AND o.message_id IS NOT NULL AND o.created_at>=? "
+        "AND i.kind='dash_research' AND i.subject LIKE ? AND i.subject<>? "
+        "ORDER BY o.created_at,o.id LIMIT 1",
+        (str(chat_id), (at - timedelta(days=7)).isoformat(), prefix + "%", card["subject"]),
+    ).fetchone()
+    if parent:
+        card["reply_to_message_id"] = parent["message_id"]
+    else:
+        # A direct room answer may have opened the story and saved the review.
+        replies = database.execute(
+            "SELECT result_json FROM dash_research_jobs WHERE scope=? AND kind='chat' "
+            "AND status='complete' AND updated_at>=? ORDER BY updated_at DESC LIMIT 100",
+            (scope, (at - timedelta(days=7)).isoformat()),
+        ).fetchall()
+        for reply in replies:
+            earlier = json.loads(reply["result_json"])
+            delivery = earlier.get("delivery", {})
+            if earlier.get("story", {}).get("node") == story["node"] and (
+                delivery.get("status") == "sent" and delivery.get("message_id")
+            ):
+                card["reply_to_message_id"] = delivery["message_id"]
+                break
+    return card
 
 
 def active_desk_key(scope):
@@ -150,6 +191,21 @@ def finish(
         ).fetchone()
         if not row:
             raise RuntimeError("Research lease changed")
+        card = None
+        if chat_id is not None and result["action"] == "reply":
+            if result.get("story"):
+                lock_channel(database, str(chat_id), at)
+            card = desk_card(database, scope, identity, chat_id, result, at)
+            if (
+                result.get("story")
+                and database.execute(
+                    "SELECT 1 FROM telegram_outbox_items WHERE kind=? AND subject=?",
+                    (card["kind"], card["subject"]),
+                ).fetchone()
+            ):
+                result.pop("_schedule", None)
+                result["delivery"] = {"status": "duplicate"}
+                card = None
         announced = result.get("_schedule", {}).get("references", [])
         # Complete existing reviews before additions claim their bounded notebook slots.
         for note in sorted(notes.values(), key=lambda item: not item.get("_base_revision")):
@@ -178,17 +234,11 @@ def finish(
             "UPDATE dash_research_jobs SET result_json=? WHERE id=? AND status='complete'",
             (json.dumps(result), identity),
         )
-        if chat_id is not None and result["action"] == "reply":
+        if card:
+            card["text"] = result["text"]
             enqueue_cards(
                 database,
                 str(chat_id),
-                [
-                    {
-                        "kind": "dash_research",
-                        "subject": f"{scope}:{identity}",
-                        "text": result["text"],
-                        "research_job": identity,
-                    }
-                ],
+                [card],
                 at=at,
             )

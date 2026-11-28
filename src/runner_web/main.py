@@ -48,6 +48,7 @@ from runner_web import (
     dash_direction,
     dash_jobs,
     dash_research,
+    dash_stories,
     macro_feed,
     pulse_scoring,
 )
@@ -1021,6 +1022,14 @@ def _start_worker_tasks(
                 macro_feed.BREADTH_REFRESH_SECONDS,
             ),
             name="macro-breadth",
+        ),
+        asyncio.create_task(
+            macro_feed.collect_macro(dash_stories.refresh_filing_windows, 600),
+            name="dash-filing-windows",
+        ),
+        asyncio.create_task(
+            macro_feed.collect_macro(dash_stories.refresh_story_pilot, 600),
+            name="dash-story-pilot",
         ),
         asyncio.create_task(research_job_worker(), name="research-jobs"),
         asyncio.create_task(report_release_worker(), name="report-release"),
@@ -2679,6 +2688,9 @@ def _generate_desk_note(world: dict[str, Any], *, clock: Any = None) -> dict[str
                 "Expand the evidence, form your own take, and save a thesis worth following. "
                 "Review due theses with fresh lookups. Update or close each reviewed thesis. "
                 "Post when you have a material finding, a changed view, or a useful new idea. "
+                "Pass story_node to reply for a ticker, macro or sports story you investigated. "
+                "If continuing a story, report the result of the earlier check up front. "
+                "A new filing or matched window can resolve one question while another stays open. "
                 "Choose how to express the finding. Use set_direction when your focus or "
                 "voice evolves, and choose your next question and check time. Hold when "
                 "quiet is useful. The previous note supplies continuity."
@@ -2770,11 +2782,17 @@ def post_dash_desk_note(
         ):
             return {"status": "waiting", "sent": 0, "items": []}
 
-        def sender(target, text):
+        def sender(target, text, **thread):
             with connection() as database:
                 body, preview = _dash_reply_markup(database, text)
             return send_telegram_reply(
-                target, chat_id, text, html=body, preview_url=preview, confirmed=True
+                target,
+                chat_id,
+                text,
+                html=body,
+                preview_url=preview,
+                confirmed=True,
+                **thread,
             )
 
         result = deliver_outbox(
@@ -2851,6 +2869,8 @@ def post_dash_desk_note(
         return {"status": "error", "detail": type(exc).__name__}
     research = result.get("research", {})
     metadata = {"research_job": identity, "research": research}
+    if result.get("delivery", {}).get("status") == "duplicate":
+        return {"status": "held", "detail": "unchanged_evidence", "researched": True, **metadata}
     if research.get("status") == "incomplete" and result["action"] != "retry":
         return {"status": "research_incomplete", "researched": True, **metadata}
     note = str(result.get("text") or "") if result["action"] == "reply" else ""
@@ -2865,14 +2885,7 @@ def post_dash_desk_note(
         enqueue_cards(
             database,
             str(chat_id),
-            [
-                {
-                    "kind": "dash_research",
-                    "subject": f"{scope}:{identity}",
-                    "text": note,
-                    "research_job": identity,
-                }
-            ],
+            [dash_jobs.desk_card(database, scope, identity, chat_id, result, clock())],
             at=clock(),
         )
     return {**deliver(), "researched": True, **metadata}

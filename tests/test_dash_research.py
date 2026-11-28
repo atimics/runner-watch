@@ -206,6 +206,35 @@ def test_notebook_does_not_save_when_the_implicit_lookup_is_unavailable():
     )
 
 
+def test_notebook_retries_failed_canonical_lookup_and_saves_the_review():
+    readings = iter([{"known": False}, {"known": True, "price": 0.74}])
+    result, _ = run(
+        [
+            turn(("expand", {"node": "stock:AREC"})),
+            turn(("remember_thesis", thesis("arec"))),
+            turn(("reply", {"text": "Watching AREC.\n[review:ticker:AREC]"})),
+        ],
+        expand=lambda node: next(readings),
+    )
+    assert result["action"] == "reply"
+    assert result["review_schedule"]["ticker:AREC"] == (NOW + timedelta(hours=1)).isoformat()
+    assert research.notebook(SCOPE, NOW)[0]["node"] == "ticker:AREC"
+
+
+def test_evidence_read_budget_reserves_one_durable_thesis_save(monkeypatch):
+    monkeypatch.setattr(research, "MAX_TOOLS", 1)
+    result, requests = run(
+        [
+            turn(("expand", {"node": "ticker:AREC"})),
+            turn(("remember_thesis", thesis("ticker:AREC"))),
+            turn(("reply", {"text": "Watching AREC.\n[review:ticker:AREC]"})),
+        ],
+    )
+    assert any(tool["function"]["name"] == "remember_thesis" for tool in requests[1]["tools"])
+    assert result["action"] == "reply"
+    assert research.notebook(SCOPE, NOW)[0]["node"] == "ticker:AREC"
+
+
 @pytest.mark.parametrize(
     "changes,evidence",
     [
