@@ -141,3 +141,39 @@ def test_private_pilot_records_one_session_and_keeps_reviews_out_of_the_outbox(m
     assert report["sessions"][0]["feedback"]["question_to_follow"] == "What changed in the scanner?"
     with connection() as database:
         assert database.execute("SELECT COUNT(*) FROM telegram_outbox").fetchone()[0] == 0
+
+
+def test_arec_is_first_private_notebook_entry_and_keeps_the_two_checks_separate(monkeypatch):
+    from runner_web import dash_research, quotes
+
+    saturday = datetime(2026, 11, 28, 2, tzinfo=UTC)
+    opened = datetime(2026, 11, 30, 14, 30, tzinfo=UTC)
+    first_read = opened + timedelta(minutes=5)
+
+    assert dash_stories.refresh_story_pilot(at=saturday) == 1
+    assert dash_stories.refresh_story_pilot(at=saturday + timedelta(hours=1)) == 0
+    status = dash_stories.story_pilot_status(at=saturday)
+    assert status["sessions"][0]["draft"]["ticker"] == "AREC"
+    assert status["sessions"][0]["review_at"] == opened.isoformat()
+    (note,) = dash_research.notebook(dash_stories.PILOT_NOTEBOOK_SCOPE, at=saturday)
+    assert note["node"] == "ticker:AREC"
+    assert note["review_outcome"] == "planned"
+    assert dash_research.notebook("chat:-100:topic:0", at=saturday) == []
+
+    monkeypatch.setattr(
+        quotes,
+        "market_mark",
+        lambda ticker, at: {
+            "price": 0.8,
+            "source": "quote",
+            "price_source": "yahoo",
+            "observed_at": first_read.isoformat(),
+        },
+    )
+    assert dash_stories.refresh_story_pilot(at=first_read) == 0
+    review = dash_stories.story_pilot_status(at=first_read)["sessions"][0]["review"]
+    assert review["regular_session_print"]["status"] == "observed"
+    assert review["nasdaq_timetable"]["status"] == "unconfirmed"
+    assert review["status"] == "unresolved"
+    with connection() as database:
+        assert database.execute("SELECT COUNT(*) FROM telegram_outbox").fetchone()[0] == 0
