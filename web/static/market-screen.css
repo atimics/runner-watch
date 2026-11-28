@@ -43,6 +43,9 @@ body:has(.detail) .topbar{min-height:80px}main:has(.detail){padding-top:24px}.de
 .account{padding-left:4px}
 
 .ticker-list{border-top:1px solid var(--line)}
+.ratified-meaning{margin:0 0 12px;color:var(--muted);font-size:12px;line-height:1.5}
+.ratified-meaning strong{color:var(--text)}
+.ratified-meaning a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 :is(.market-stocks,.market-memecoins) .ticker{grid-template-columns:96px minmax(0,1fr) 116px 64px 74px 20px}
 .market-sports .ticker{grid-template-columns:96px minmax(0,1fr) 116px 74px 20px}
 .ticker{min-height:66px;padding:10px 6px}

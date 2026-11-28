@@ -93,7 +93,7 @@
     {% endif %}
     {% if screen.updated_label %}<span class="fresh">{{ 'Board refreshed' if screen.market == 'stocks' else 'Updated' }} {{ screen.updated_label }}</span>{% endif %}
     {% if screen.counts or ratified_available %}<div class="tag-filters" data-tag-filters aria-label="Filter results">
-      {% if ratified_available %}<button type="button" class="chip chip-ratified" data-ratified-filter aria-pressed="{{ 'true' if ratified_only else 'false' }}"><span data-ratified-count>{{ screen.ratified_count }}</span> Ratified</button>{% endif %}
+      {% if ratified_available %}<button type="button" class="chip chip-ratified" data-ratified-filter aria-pressed="{{ 'true' if ratified_only else 'false' }}" aria-describedby="ratified-meaning"><span data-ratified-count>{{ screen.ratified_count }}</span> Ratified</button>{% endif %}
       {% for tone in ['running','setup','extended','avoid','watch','paused','lean','pass','model-only','above','below','level','model','pending'] %}{% if screen.counts.get(tone) %}<button type="button" class="chip chip-{{ tone }}" data-tag="{{ tone }}" aria-pressed="false"><i></i><span data-tag-count>{{ screen.counts[tone] }}</span> {{ tone|replace('-', ' ') }}</button>{% endif %}{% endfor %}
       <button type="button" class="chip chip-all" data-tag="" aria-pressed="true" hidden>All</button>
     </div>{% endif %}
@@ -115,6 +115,7 @@
     {% if screen.session_note %}<p class="stock-session-note" role="status">{{ screen.session_note }}</p>{% endif %}
     {% if screen.ranking_status %}<p class="ranking-status" role="status">{{ screen.ranking_status }}</p>{% endif %}
     {% if screen.market == 'stocks' and screen.stale_assessments %}<p class="stock-freshness-note" role="status">{{ screen.stale_assessments }} stock assessment{{ '' if screen.stale_assessments == 1 else 's' }} {{ 'needs' if screen.stale_assessments == 1 else 'need' }} a refresh. The prices shown may be newer than those checks.</p>{% endif %}
+    {% if ratified_available %}<p id="ratified-meaning" class="ratified-meaning"><strong>Ratified</strong> means it passed our checks on the evidence we could verify at the time. <a href="https://trust.rati.chat/">Read the RATi Rules</a>.</p>{% endif %}
     {% if screen.rows %}
       {% if screen.market == 'memecoins' %}<p class="board-scope">Tags compare recent trading with earlier windows. SETUP means volume or buyer activity is speeding up before the price has run. WATCH marks copycat activity while trading pace is quiet. AVOID marks a thin pool, collapsing price, staged buying, or creator selling.</p>{% endif %}
       <div class="ticker-list market-{{ screen.market }}" data-tag-list aria-label="{{ 'Events' if screen.market == 'sports' else 'Tokens' if screen.market == 'memecoins' else 'Tickers' }}">{% for item in screen.rows %}<a class="ticker{% if screen.market == 'sports' %} sports-matchup{% endif %}{% if item.announced %} is-new{% endif %}" href="{{ item.href }}" data-tag="{{ item.tag_tone }}"{% if screen.market in ['stocks', 'memecoins'] %} data-ratified="{{ 'true' if item.ratified else 'false' }}" data-chart-offset="{{ item.chart_offset }}"{% endif %}{% if ratified_only and not item.ratified %} hidden{% endif %}{% if item.eligibility_note %} title="{{ item.eligibility_note }}"{% endif %}>

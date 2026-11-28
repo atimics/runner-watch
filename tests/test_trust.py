@@ -66,6 +66,7 @@ def test_the_trust_page_shows_the_commitment_and_the_rules(client):
     page = client.get("/trust")
 
     assert page.status_code == 200
+    assert "<strong>Ratified</strong> means it passed our checks." in page.text
     assert "9c6c07bf81374496148150148654d0bc8674ca6f262006f172f0a5444b660a88" in page.text
     assert "78312512b3ca22a231e9ebe086fffb0b591552ee4a4a1a036cefbc361bc0a80a" in page.text
     assert "cd0357851f936c3628b12f65b7a62bf24cc0c02d40fe265dea26f98d622b029d" in page.text

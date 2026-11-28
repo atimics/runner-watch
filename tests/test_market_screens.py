@@ -732,10 +732,14 @@ def test_ratified_filter_uses_the_current_badge_and_renders_saved_selection(mark
     assert sum(bool(row.get("ratified")) for row in board["rows"]) == 1
     page = BeautifulSoup(render(board, query_string="ratified=1"), "html.parser")
     assert page.select_one("[data-ratified-filter]")["aria-pressed"] == "true"
+    assert page.select_one("[data-ratified-filter]")["aria-describedby"] == "ratified-meaning"
+    meaning = page.select_one("#ratified-meaning")
+    assert "Ratified means it passed our checks" in meaning.get_text(" ", strip=True)
+    assert meaning.a["href"] == "https://trust.rati.chat/"
     visible = page.select(".ticker:not([hidden])")
     assert len(visible) == 1
     assert visible[0]["data-ratified"] == "true"
-    assert visible[0].select_one(".ratified-mark")
+    assert visible[0].select_one(".ratified-mark")["title"] == "Passed our checks"
     assert len(page.select(".ticker[hidden]")) == 3
     assert not page.select_one('input[name="ratified"]').has_attr("disabled")
     # A filtered render leaves the cached board available to every reader.
