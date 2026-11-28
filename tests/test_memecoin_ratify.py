@@ -477,6 +477,7 @@ def test_the_board_and_page_show_the_mark_and_the_standards():
 
     assert 'class="ratified-mark"' in board
     assert "Ratified · 9 of 9 met" in page
+    assert 'class="standards-scope">Passed our checks' in page
     assert "Top 10 holders own 30% or less · top 10 hold 22%" in page
 
 
