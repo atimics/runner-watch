@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from runner_watch.massive_data import MassiveDailyCache, massive_cache_path
@@ -27,6 +27,109 @@ EASTERN = ZoneInfo("America/New_York")
 BENCHMARK = "SPY"
 PILOT_SESSIONS = 10
 FILING_LOOKBACK = timedelta(days=14)
+PILOT_NOTEBOOK_SCOPE = "dash:private-story-pilot"
+AREC_SESSION = date(2026, 11, 30)
+AREC_KEY = "filing:arec-nasdaq-nov30"
+AREC_NOTICE = "https://www.sec.gov/Archives/edgar/data/1590715/000165495426010103/arec_8k.htm"
+AREC_AMENDMENT = "https://www.sec.gov/Archives/edgar/data/1590715/000147793226007314/arec_8ka.htm"
+
+
+def _save_arec_note(database, draft, review_at, now, review=None):
+    from runner_web.dash_research import store_note
+
+    resolved = (review or {}).get("status") == "resolved"
+    store_note(
+        database,
+        PILOT_NOTEBOOK_SCOPE,
+        {
+            "node": "ticker:AREC",
+            "thesis": draft["finding"],
+            "counter_evidence": "A new Nasdaq decision or appeal extension could change it.",
+            "change_my_mind": "A dated exchange decision or issuer disclosure reporting a change.",
+            "next_check": draft["next_check"],
+            "confidence": "medium",
+            "status": "closed" if resolved else "watching",
+            "review_at": review_at,
+            "reviewed_at": now.isoformat() if review else None,
+            "review_attempted_at": now.isoformat() if review else None,
+            "review_outcome": ("reviewed_quiet" if resolved else "deferred_source")
+            if review
+            else "planned",
+            "review_findings": review,
+            "source_references": [{"source_url": url} for url in draft["source_urls"]],
+        },
+        now,
+    )
+
+
+def _seed_arec(database, now):
+    """Reserve the first pilot session and notebook entry together."""
+    if now.date() < AREC_SESSION - timedelta(days=2):
+        return 0
+    opened = stock_session_open_for_day(AREC_SESSION.isoformat())
+    if opened is None:
+        return 0
+    draft = {
+        "ticker": "AREC",
+        "question": "Did the new filing change the Nasdaq suspension timetable?",
+        "finding": "The Nov. 27 restatements did not change the earlier filing's timetable.",
+        "next_check": "Check for a Nasdaq decision and a usable regular-session print.",
+        "source_urls": [AREC_NOTICE, AREC_AMENDMENT],
+    }
+    inserted = database.execute(
+        "INSERT INTO dash_story_pilot"
+        "(session_date,story_kind,story_key,draft_json,created_at,review_at) "
+        "SELECT ?,'filing',?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM dash_story_pilot) "
+        "ON CONFLICT DO NOTHING RETURNING session_date",
+        (
+            AREC_SESSION.isoformat(),
+            AREC_KEY,
+            json.dumps(draft),
+            now.isoformat(),
+            opened.isoformat(),
+        ),
+    ).fetchone()
+    if inserted:
+        _save_arec_note(database, draft, opened.isoformat(), now)
+    return int(bool(inserted))
+
+
+def _review_arec(row, now):
+    from runner_web.quotes import corroborate_quote, dash_quote_fields, market_mark
+
+    opened = stored_instant(row["review_at"])
+    closed = stock_settlement_close(opened)
+    previous = json.loads(row["review_json"] or "{}")
+    quote = previous.get("regular_session_print") or {"status": "unavailable"}
+    if quote["status"] != "observed" and opened <= now <= closed:
+        mark = market_mark("AREC", at=now)
+        if mark:
+            fields = dash_quote_fields(mark, at=now, lane=mark.get("source") or "scan")
+            observed = stored_instant(fields["quote_as_of"])
+            if fields["quote_freshness"] == "fresh" and observed and opened <= observed <= closed:
+                fields.update(corroborate_quote("AREC", fields))
+                quote = {"status": "observed", **fields}
+    with connection() as database:
+        filings = [
+            dict(item)
+            for item in database.execute(
+                "SELECT form,filed_at,filing_url AS source_url FROM sec_filings "
+                "WHERE ticker='AREC' "
+                "AND filed_at BETWEEN ? AND ? AND (form IN ('25','25-NSE') OR items LIKE ?) "
+                "ORDER BY filed_at DESC,accession DESC LIMIT 3",
+                ("2026-11-27T00:00:00+00:00", now.isoformat(), "%3.01%"),
+            ).fetchall()
+        ]
+    return {
+        "status": "unresolved",
+        "regular_session_print": quote,
+        "nasdaq_timetable": {
+            "status": "new_filing_requires_read" if filings else "unconfirmed",
+            "reported_suspension_session": AREC_SESSION.isoformat(),
+            "new_listing_disclosures": filings,
+            "source_url": AREC_NOTICE,
+        },
+    }
 
 
 def _windows(filing_at: datetime):
@@ -297,6 +400,8 @@ def _pilot_draft(database, session, close, now):
 
 def _pilot_review(row, now):
     draft = json.loads(row["draft_json"])
+    if row["story_key"] == AREC_KEY:
+        return _review_arec(row, now)
     if row["story_kind"] == "filing":
         item = filing_windows([draft["accession"]]).get(draft["accession"], {})
         if item.get("status") == "available":
@@ -386,6 +491,7 @@ def refresh_story_pilot(*, at: datetime | None = None) -> int:
         start = database.execute(
             "SELECT value FROM worker_state WHERE key='dash_story_pilot_start'"
         ).fetchone()["value"]
+        seeded = _seed_arec(database, current)
         existing = database.execute(
             "SELECT * FROM dash_story_pilot ORDER BY session_date"
         ).fetchall()
@@ -405,10 +511,14 @@ def refresh_story_pilot(*, at: datetime | None = None) -> int:
                 "WHERE session_date=?",
                 (stamp, json.dumps(result), row["session_date"]),
             )
+            if row["story_key"] == AREC_KEY:
+                _save_arec_note(
+                    database, json.loads(row["draft_json"]), row["review_at"], current, result
+                )
     if len(existing) >= PILOT_SESSIONS:
-        return 0
+        return seeded
     seen = {row["session_date"] for row in existing}
-    created = 0
+    created = seeded
     for session, close in reversed(recent_stock_closes(current, count=PILOT_SESSIONS)):
         if (
             close.isoformat() < start
@@ -441,6 +551,8 @@ def refresh_story_pilot(*, at: datetime | None = None) -> int:
 
 
 def story_pilot_status(*, at: datetime | None = None) -> dict:
+    from runner_web.dash_research import notebook
+
     current = at or datetime.now(UTC)
     with connection() as database:
         rows = [
@@ -460,6 +572,10 @@ def story_pilot_status(*, at: datetime | None = None) -> dict:
         row["feedback"] = json.loads(row.pop("feedback_json") or "{}")
     return {
         "mode": "private_drafts",
+        "notebook": [
+            {k: v for k, v in note.items() if k != "_base_revision"}
+            for note in notebook(PILOT_NOTEBOOK_SCOPE, at=current)
+        ],
         "target_sessions": PILOT_SESSIONS,
         "recorded_sessions": len(rows),
         "reviews_due": len(due),
